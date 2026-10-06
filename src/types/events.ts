@@ -155,7 +155,17 @@ export type NormalizedEvent =
       autoPlayRequested?: boolean;
     }
   | { kind: 'assistant_delta'; ts: number; engine: string; text: string }
-  | { kind: 'assistant_message'; ts: number; engine: string; text: string }
+  | {
+      kind: 'assistant_message';
+      ts: number;
+      engine: string;
+      /** Everything the model wrote this turn, all rounds — what clients show. */
+      text: string;
+      /** openai-compatible, turns with tool rounds: the text of the last
+       *  reply only. The earlier rounds' text is on their tool_call
+       *  events (`lead`); a rebuilt history uses both. */
+      final?: string;
+    }
   /**
    * The model's reasoning text, separate from the reply. `thinking_delta`
    * is CUMULATIVE for the turn (like assistant_delta) and never persisted;
@@ -254,7 +264,18 @@ export type NormalizedEvent =
         durationSec?: number;
       }>;
     }
-  | { kind: 'tool_call'; ts: number; engine: string; callId: string; tool: string; input: unknown }
+  | {
+      kind: 'tool_call';
+      ts: number;
+      engine: string;
+      callId: string;
+      tool: string;
+      input: unknown;
+      /** openai-compatible: the text the model wrote in the same reply as
+       *  this call (first call of a round only), so a rebuilt history
+       *  puts it where it was said instead of after all the work. */
+      lead?: string;
+    }
   | { kind: 'tool_result'; ts: number; engine: string; callId: string; output: unknown; error?: string }
   // Engine-internal metadata that the agent emits as a side-channel to
   // the conversation. The canonical case is codex-cli's `todo_list`

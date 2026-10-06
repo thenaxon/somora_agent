@@ -167,19 +167,22 @@ message and is not sent as a second one.
 
 ### Tool calls in the history
 
-Earlier turns that used tools are replayed in the native shape: an
-assistant message with `tool_calls`, then one `role: tool` message per
-result.
+Earlier turns that used tools are replayed in the native shape, one
+assistant message per reply of the model: the text it wrote in that
+reply with its `tool_calls`, then one `role: tool` message per result.
+The closing message holds only the last reply.
 
 ```jsonc
-{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function",
+{"role":"assistant","content":"I'll write the note:","tool_calls":[{"id":"c1","type":"function",
   "function":{"name":"file_write","arguments":"{\"path\":\"notes.md\"}"}}]}
 {"role":"tool","tool_call_id":"c1","content":"{\"ok\":true}"}
 {"role":"assistant","content":"Done, the file is written."}
 ```
 
-Three rules apply:
+The rules:
 
+- Each reply keeps its own text next to its own calls. Calls the model
+  made together stay in one message.
 - Each call is followed directly by its result, in order.
 - A call without a recorded result is dropped. A crashed turn leaves
   such calls, and most providers reject them.
@@ -189,6 +192,12 @@ Three rules apply:
 
 The native shape matters for more than the cache. A history in which the
 assistant never calls a tool teaches a weaker model not to call tools.
+
+The same goes for the order of the text: all of a turn's interim text
+replayed after its calls reads as "tool work is narrated", and a model
+then narrates instead of calling. Turns recorded before the text was
+stored per reply therefore come back with their closing reply only, and
+so does a reply that narrates tool work without having called a tool.
 
 The rebuild is deterministic: the same session file gives the same
 request, so the cache holds.

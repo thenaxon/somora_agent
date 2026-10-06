@@ -93,7 +93,12 @@ async function run(): Promise<void> {
 
     const withCalls = msgs.find((m) => m.role === 'assistant' && m.tool_calls);
     check('assistant message carries tool_calls', withCalls !== undefined);
-    check('both calls present', withCalls?.tool_calls?.length === 2, JSON.stringify(withCalls));
+    // One round per model reply: c1 and c2 were two replies (a result
+    // came between them), so two assistant messages in order.
+    const callMsgs = msgs.filter((m) => m.role === 'assistant' && m.tool_calls);
+    check('one assistant message per round', callMsgs.length === 2 && callMsgs[0]!.tool_calls!.length === 1 && callMsgs[1]!.tool_calls!.length === 1, JSON.stringify(callMsgs));
+    const seq = msgs.map((m) => (m.role === 'assistant' && m.tool_calls ? 'A+calls' : m.role)).join(',');
+    check('rounds keep their order: call, result, call, result, text', seq === 'system,user,A+calls,tool,A+calls,tool,assistant,user', seq);
     check('tool result messages emitted', msgs.filter((m) => m.role === 'tool').length === 2);
     check('pairing valid', pairingIsValid(msgs) === null, pairingIsValid(msgs) ?? '');
 
@@ -115,6 +120,54 @@ async function run(): Promise<void> {
     check('arguments are valid JSON', (() => {
       try { return JSON.parse(args[0]!.function.arguments).path === 'tetris.js'; } catch { return false; }
     })());
+  }
+
+  // ── 1b. Round text stays with its round; the closing reply alone ──
+  {
+    const lead = (id: string, tool: string, input: unknown, text: string): NormalizedEvent =>
+      ({ kind: 'tool_call', ts: ts(), engine: 'openai-compatible', callId: id, tool, input, lead: text }) as NormalizedEvent;
+    const history: NormalizedEvent[] = [
+      userMsg('Leg die Notiz an.'),
+      lead('s1', 'skill', { name: 'feedback' }, 'Ich lade den Skill:'),
+      result('s1', { ok: true }),
+      lead('w1', 'file_write', { path: 'a.md' }, 'Format klar, ich schreibe:'),
+      call('w2', 'file_write', { path: 'b.md' }),
+      result('w1', { ok: true }),
+      result('w2', { ok: true }),
+      { kind: 'assistant_message', ts: ts(), engine: 'openai-compatible', text: 'Ich lade den Skill:\n\nFormat klar, ich schreibe:\n\nErledigt.', final: 'Erledigt.' } as NormalizedEvent,
+    ];
+    const msgs = (await buildMessages('SYS', history, undefined, 'native', CAPS)) as unknown as Msg[];
+    const a = msgs.filter((m) => m.role === 'assistant');
+    check('round 1 carries its own text', a[0]?.content === 'Ich lade den Skill:' && a[0]?.tool_calls?.length === 1, JSON.stringify(a[0]));
+    check('a parallel round stays one message', a[1]?.content === 'Format klar, ich schreibe:' && a[1]?.tool_calls?.length === 2, JSON.stringify(a[1]));
+    check('closing message is the last reply only', a[2]?.content === 'Erledigt.' && a.length === 3, JSON.stringify(a[2]));
+    check('pairing valid with rounds', pairingIsValid(msgs) === null, pairingIsValid(msgs) ?? '');
+  }
+
+  // ── 1c. Older records: the joined text is split back where it fits ──
+  {
+    const history: NormalizedEvent[] = [
+      userMsg('los'),
+      call('o1', 'exec', { command: 'ls' }),
+      result('o1', { stdout: 'a' }),
+      call('o2', 'exec', { command: 'pwd' }),
+      result('o2', { stdout: '/' }),
+      asstMsg('Ich schaue nach:\n\n\n\nUnd noch das Verzeichnis:\n\n\n\nAlles da.'),
+    ];
+    const a = ((await buildMessages('SYS', history, undefined, 'native', CAPS)) as unknown as Msg[]).filter((m) => m.role === 'assistant');
+    check('legacy: pieces go back to their rounds', a[0]?.content === 'Ich schaue nach:' && a[1]?.content === 'Und noch das Verzeichnis:' && a[2]?.content === 'Alles da.', JSON.stringify(a));
+    const narrated: NormalizedEvent[] = [userMsg('los'), call('n1', 'exec', {}), result('n1', {}), call('n2', 'exec', {}), result('n2', {}), call('n3', 'exec', {}), result('n3', {}), asstMsg('Lade den Skill:\n\n\n\nDatei geschrieben.')];
+    const c = ((await buildMessages('SYS', narrated, undefined, 'native', CAPS)) as unknown as Msg[]).filter((m) => m.role === 'assistant');
+    check('legacy, no fitting shape but gaps: only the closing reply is kept', c[c.length - 1]?.content === 'Datei geschrieben.' && !JSON.stringify(c).includes('Lade den Skill'), JSON.stringify(c));
+    const fake: NormalizedEvent[] = [userMsg('schreib es'), asstMsg('Ich lade den Skill:\n\n\n\nSkill geladen.\n\n\n\nDatei geschrieben.'), userMsg('und?')];
+    const f = ((await buildMessages('SYS', fake, undefined, 'native', CAPS)) as unknown as Msg[]).filter((m) => m.role === 'assistant');
+    check('narrated tool work without calls: only the last piece is replayed', f.length === 1 && f[0]?.content === 'Datei geschrieben.', JSON.stringify(f));
+    const plain: NormalizedEvent[] = [userMsg('hi'), asstMsg('Absatz eins.\n\nAbsatz zwei.'), userMsg('und?')];
+    const g = ((await buildMessages('SYS', plain, undefined, 'native', CAPS)) as unknown as Msg[]).filter((m) => m.role === 'assistant');
+    check('an ordinary answer is untouched', g[0]?.content === 'Absatz eins.\n\nAbsatz zwei.', JSON.stringify(g));
+    const odd: NormalizedEvent[] = [userMsg('los'), call('p1', 'exec', {}), result('p1', {}), asstMsg('Kein Muster hier, einfach Text.')];
+    const b = ((await buildMessages('SYS', odd, undefined, 'native', CAPS)) as unknown as Msg[]).filter((m) => m.role === 'assistant');
+    check('legacy: no fitting shape → unchanged', b[0]?.content === null && b[1]?.content === 'Kein Muster hier, einfach Text.', JSON.stringify(b));
   }
 
   // ── 2. Unpaired calls are dropped (crashed turn → would 400) ─────

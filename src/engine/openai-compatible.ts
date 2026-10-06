@@ -306,6 +306,31 @@ export function stripScaffold(text: string): string {
     .trim();
 }
 
+/**
+ * Turns recorded before the round text was stored: the closing message
+ * holds every round's text, joined by the blank lines that stood where
+ * the calls were. When the number of pieces is exactly one per tool
+ * round plus the closing reply, give each round its piece back; any
+ * other shape stays as it was (better unsplit than misattributed).
+ */
+/** The text after the last run of blank lines that stood where tool
+ *  calls were; null when the text has no such gap. */
+export function lastRoundPiece(text: string): string | null {
+  const parts = text.split(/\n{4,}/);
+  if (parts.length < 2) return null;
+  const last = parts[parts.length - 1]!.trim();
+  return last || null;
+}
+
+export function splitLegacyRoundText(text: string, toolRounds: number): { leads: string[]; final: string } | null {
+  const parts = text.split(/\n{4,}/);
+  if (parts.length !== toolRounds + 1) return null;
+  const leads = parts.slice(0, toolRounds).map((p) => p.trim());
+  const final = parts[toolRounds]!.trim();
+  if (!final) return null;
+  return { leads, final };
+}
+
 // Exported for the history-rebuild regression tests
 // (./tool-trace.test.mts) — the shape of what we hand a stateless
 // backend is load-bearing enough to assert on directly.
@@ -380,34 +405,51 @@ export async function buildMessages(
   // because sessions recorded during that window carry fabricated ones.
   //
   // Full investigation: private/toolcall-investigation.md.
-  const pendingCalls: Array<{ id: string; name: string; args: string }> = [];
+  // One assistant message per ROUND, as the model produced them: the
+  // text it wrote in that reply plus its calls, then the results. Merging
+  // a whole turn's calls into one message and appending all the text
+  // after the last result taught the model that tool work looks like
+  // narrated text with gaps — measured 2026-10-06 on a Qwen session that
+  // started answering "skill loaded, file written" without calling a
+  // single tool, in exactly that shape.
+  type Round = { calls: Array<{ id: string; name: string; args: string }>; lead?: string };
+  const pendingRounds: Round[] = [];
   const pendingResults = new Map<string, string>();
+  /** A result arrived since the last call: the next call opens a new round. */
+  let roundClosed = true;
 
-  /** Emit the collected tool activity of one turn, ahead of that turn's
-   *  assistant text. Calls without a matching result are dropped: an
-   *  assistant `tool_calls` entry whose result never arrives is a hard
-   *  400 on most backends, and a crashed turn can leave exactly that. */
+  /** Emit the collected tool activity of one turn, round by round, ahead
+   *  of that turn's closing text. Calls without a matching result are
+   *  dropped: an assistant `tool_calls` entry whose result never arrives
+   *  is a hard 400 on most backends, and a crashed turn can leave
+   *  exactly that. */
   const flushToolTurn = () => {
-    if (pendingCalls.length === 0) return;
-    const paired = pendingCalls.filter((c) => pendingResults.has(c.id));
-    pendingCalls.length = 0;
-    if (paired.length === 0) { pendingResults.clear(); return; }
+    if (pendingRounds.length === 0) return;
+    const rounds = pendingRounds.splice(0);
+    roundClosed = true;
     flush(); // close any open text message first — ordering is load-bearing
-    messages.push({
-      role: 'assistant',
-      content: null,
-      tool_calls: paired.map((c) => ({
-        id: c.id,
-        type: 'function' as const,
-        function: { name: c.name, arguments: c.args || '{}' },
-      })),
-    } as unknown as ChatMessage);
-    for (const c of paired) {
+    for (const r of rounds) {
+      const paired = r.calls.filter((c) => pendingResults.has(c.id));
+      if (paired.length === 0) {
+        if (r.lead) messages.push({ role: 'assistant', content: r.lead });
+        continue;
+      }
       messages.push({
-        role: 'tool',
-        tool_call_id: c.id,
-        content: pendingResults.get(c.id)!,
+        role: 'assistant',
+        content: r.lead || null,
+        tool_calls: paired.map((c) => ({
+          id: c.id,
+          type: 'function' as const,
+          function: { name: c.name, arguments: c.args || '{}' },
+        })),
       } as unknown as ChatMessage);
+      for (const c of paired) {
+        messages.push({
+          role: 'tool',
+          tool_call_id: c.id,
+          content: pendingResults.get(c.id)!,
+        } as unknown as ChatMessage);
+      }
     }
     pendingResults.clear();
   };
@@ -502,6 +544,41 @@ export async function buildMessages(
       pendingRole = 'user';
       pendingText = pendingText ? `${pendingText}\n\n${composed}` : composed;
     } else if (ev.kind === 'assistant_message') {
+      // The closing text of a turn with tool rounds: only the last
+      // reply's own text belongs here. New records carry it as `final`
+      // (earlier rounds' text sits on their calls); older ones get it
+      // split back out where possible (splitLegacyRoundText).
+      let closing = ev.text;
+      if (pendingRounds.length === 0) {
+        // A reply without any tool call that still shows the blank-line
+        // gaps where calls would be is a narrated imitation of tool work
+        // ("skill loaded … file written …" — nothing was run). Replaying
+        // it teaches the model to keep doing that; only its last piece
+        // goes back in. On the session where it happened this took the
+        // next turn from 4/8 to 9/10 with real calls (2026-10-06).
+        const last = lastRoundPiece(ev.text);
+        if (last !== null) closing = last;
+      } else {
+        if (ev.final !== undefined) closing = ev.final;
+        else if (!pendingRounds.some((r) => r.lead)) {
+          const split = splitLegacyRoundText(ev.text, pendingRounds.length);
+          if (split) {
+            split.leads.forEach((lead, i) => {
+              if (lead) pendingRounds[i]!.lead = sanitizeAssistantText(lead).text;
+            });
+            closing = split.final;
+          } else {
+            // Pieces that cannot be matched to their rounds: keep the
+            // closing reply only. The interim "loading the skill… —
+            // file written…" lines, replayed after the work, are what the
+            // model learned to imitate instead of calling tools; with
+            // them gone, the same session went from 69 % to 12/12 turns
+            // with real calls (2026-10-06).
+            const last = lastRoundPiece(ev.text);
+            if (last !== null) closing = last;
+          }
+        }
+      }
       // This turn's tool activity happened BEFORE the model's closing
       // text, so it goes out first.
       flushToolTurn();
@@ -509,17 +586,25 @@ export async function buildMessages(
       // block sat in the assistant role contain models' own fabricated
       // <somora-tool-log> blocks. Strip them on the way back in so a
       // poisoned session heals instead of compounding.
-      const cleaned = sanitizeAssistantText(ev.text).text;
+      const cleaned = sanitizeAssistantText(closing).text;
+      if (!cleaned) continue;
       if (pendingRole !== 'assistant') flush();
       pendingRole = 'assistant';
       pendingText = pendingText ? `${pendingText}\n\n${cleaned}` : cleaned;
     } else if (ev.kind === 'tool_call') {
-      pendingCalls.push({
+      if (roundClosed || pendingRounds.length === 0) {
+        pendingRounds.push({ calls: [] });
+        roundClosed = false;
+      }
+      const round = pendingRounds[pendingRounds.length - 1]!;
+      if (ev.lead && !round.lead) round.lead = sanitizeAssistantText(ev.lead).text;
+      round.calls.push({
         id: ev.callId,
         name: ev.tool,
         args: JSON.stringify(ev.input ?? {}),
       });
     } else if (ev.kind === 'tool_result') {
+      roundClosed = true;
       const payload = ev.error !== undefined ? { error: ev.error } : (ev.output ?? null);
       let text: string;
       try {
@@ -875,6 +960,10 @@ export const openAiCompatibleEngine: AgentEngine = {
     // monotonically — matches how claude-cli's SDK presents
     // tool-using turns to us (one final assistant_message at the end).
     let cumulative = '';
+    /** Text of the latest round, and how many rounds ran tools — for
+     *  the `final` field of the closing assistant_message. */
+    let lastRoundContent = '';
+    let toolRoundsRun = 0;
     // Reasoning text across rounds of this turn — see roundThinking.
     let turnThinking = '';
     /** Rounds whose request was sent — the reactive context retry is only
@@ -1529,6 +1618,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         if (roundContent) {
           cumulative = cumulative ? `${cumulative}\n\n${roundContent}` : roundContent;
         }
+        lastRoundContent = roundContent;
         if (roundThinking) {
           turnThinking = turnThinking ? `${turnThinking}\n\n${roundThinking}` : roundThinking;
           roundThinking = '';
@@ -1540,6 +1630,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
 
         lastRoundHadTools = roundToolCalls.size > 0;
+        if (lastRoundHadTools) toolRoundsRun++;
         if (roundToolCalls.size === 0) {
           // Nothing visible and nothing to run, but the model was
           // thinking: the output cap ended the response inside the
@@ -1740,6 +1831,7 @@ export const openAiCompatibleEngine: AgentEngine = {
           // shouldn't request them. Bail with a clear error.
           throw new Error('model requested tool_calls but no tool registry was passed to the engine');
         }
+        let leadPending = roundContent;
         for (const { call, args: parsedArgs, fault, why } of calls) {
           yield {
             kind: 'tool_call',
@@ -1750,7 +1842,11 @@ export const openAiCompatibleEngine: AgentEngine = {
             // The fragment is kept HERE, in the session record, because it
             // is the evidence of what went wrong. It never reaches the wire.
             input: parsedArgs,
+            // What the model said in this reply, stored once per round so
+            // a rebuilt history keeps it next to its calls.
+            ...(leadPending ? { lead: leadPending } : {}),
           };
+          leadPending = '';
           if (fault) {
             // Not run: with half its arguments the call would either fail
             // in a confusing way or, worse, do something partial. The two
@@ -2204,7 +2300,10 @@ export const openAiCompatibleEngine: AgentEngine = {
           yield { kind: 'thinking_message', ts: ts(), engine: ENGINE, text: turnThinking };
           turnThinking = '';
         }
-        yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: cumulative };
+        // After tool rounds, the last reply's own text — the earlier
+        // rounds' text travels on their tool_call events.
+        const final = toolRoundsRun > 0 && lastRoundContent && cumulative.endsWith(lastRoundContent) ? lastRoundContent : undefined;
+        yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: cumulative, ...(final !== undefined ? { final } : {}) };
       } else if (round >= maxRounds) {
         // Loop ended at the cap and the force-summary path didn't
         // populate cumulative either — synthesize a marker so the
