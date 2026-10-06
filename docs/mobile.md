@@ -200,11 +200,15 @@ Use the [web client](web.md) for these:
 - File viewer and pin-note windows
 - Several windows side by side
 - Renaming, archiving or resetting a session
-- Starting REM, Deep or Lucid by hand
 - Switching the project of a session
 - A builder's task panel: plan, Go, task list and questions. You can
   chat with a builder from the phone, but its plan is approved and its
   questions are answered in the web client.
+
+REM, Deep and Lucid have no button in any client. Ask the agent to run
+one, for example "catch up on your memories": it starts the phase with
+`dream_run`. Over HTTP it is `POST /agents/:agent/dream/run-rem`, see the
+[dream phases](dream-phases.md).
 
 ## Settings
 
