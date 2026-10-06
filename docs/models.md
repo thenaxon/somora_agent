@@ -45,7 +45,7 @@ Each engine section has a table with a **checked** column.
 |---|---|
 | full check | The model went through somora's engine check on a live install. |
 | partial | Only the parts named in the row were checked in somora. |
-| backend only | The server was probed directly. The check inside somora is pending. |
+| in use | Runs in somora on a live install. Not taken through every step of the engine check. |
 
 The full check covers: basic tools (`time_now`, `exec`, `file_read`,
 `tmux`, `memory_search`, a deferred tool), tools on an SSH resource
@@ -328,9 +328,9 @@ Sampling is given as temperature / top_p / top_k.
 |---|---|---|---|---|
 | **DeepSeek V4 Flash** (284B MoE, 13B active) | SGLang, TP=4 | the server's `--context-length`: 700000 on a two GPU profile, 1M only with the whole box | 1.0 / 0.95 (DeepSeek's recommendation for agents and coding) | full check, image attachment refused as intended |
 | **DeepSeek V4.1 Flash** | SGLang, TP=4, community SM120 runtime, Engram NVMe offload | `--context-length` 700000 | 1.0 / 0.95 (model card; `top_k` and penalties unset) | partial: thinking levels, native image, tools, several turns |
-| **GLM-5.3-Flash** (321B MoE, 18B active) | vLLM, TP=4, native FP8, MTP-4, fp8 KV | `--max-model-len` 700000 (KV pool 1.16M tokens with `--kv-cache-memory` 7.5 GiB) | 1.0 / 0.95 (the model's `generation_config.json`) | backend only |
-| **DeepSeek-V4-Flash-Vision-Exp** (284B MoE, 13B active, 0.5B ViT) | SGLang, TP=2, preview image with sm_120 patches | `--context-length` 700000 (pool 859k at mem-fraction 0.90; 0.85 gives only 203k) | 1.0 / 0.95 | backend only |
-| **Qwen3.8-Flash-Next** FP8 (176B, 6B active) | vLLM, TP=4 | `--max-model-len`, 524288 with YaRN 2.0 | 0.6 / 0.95 / 20, `min_p` 0 (Qwen's thinking mode defaults) | full check |
+| **GLM-5.3-Flash** (321B MoE, 18B active) | vLLM, TP=4, native FP8, MTP-4, fp8 KV | `--max-model-len` 700000 (KV pool 1.16M tokens with `--kv-cache-memory` 7.5 GiB) | 1.0 / 0.95 (the model's `generation_config.json`) | in use |
+| **DeepSeek-V4-Flash-Vision-Exp** (284B MoE, 13B active, 0.5B ViT) | SGLang, TP=2, preview image with sm_120 patches | `--context-length` 700000 (pool 859k at mem-fraction 0.90; 0.85 gives only 203k) | 1.0 / 0.95 | in use |
+| **Qwen3.8-Flash-Next** FP8 (176B, 6B active) | vLLM, TP=4 | `--max-model-len`, 524288 with YaRN 2.0; 1048576 with YaRN 4.0 on a four GPU server | 0.6 / 0.95 / 20, `min_p` 0 (Qwen's thinking mode defaults) | full check |
 | **Qwen3.5-397B-A17B** AWQ INT4 | vLLM, TP=4 | 262144 (`max_model_len`) | as Qwen3.8-Flash-Next | full check |
 | **Qwen3.8-27B** FP8, dense | vLLM, 1 GPU | 262144 | as Qwen3.8-Flash-Next | full check |
 | **Gemma 4** 31B and 26B-A4B | oMLX | 131072 | 1.0 / 0.95 / 64 (Gemma team recommendation) | full check |
