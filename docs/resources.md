@@ -102,6 +102,28 @@ somora keeps one connection per resource and reuses it.
 | Config change | a new `host`, `port`, `user`, `keyPath` or `hostKey` reconnects on the next call |
 | Server stop | all connections are closed |
 
+## Commands that start something in the background
+
+A command sent with `exec` (without `background: true`) returns when the
+remote shell has finished and its output is closed. A process the
+command starts with a bare `&` inherits that output and keeps it open.
+
+| Case | What happens |
+|---|---|
+| The command ends normally | The result comes back at once. |
+| It exits, but a process it started still holds the output | The result comes back about 3 seconds after the exit, with the exit code and a note. That process keeps running. |
+| It is still running at the time limit | It is stopped, the channel is closed, and the result says so with the real duration. Processes it started may keep running. |
+
+To leave something running on the remote machine, detach all three
+streams:
+
+```bash
+nohup my-server </dev/null >/tmp/my-server.log 2>&1 &
+```
+
+For long work you want to follow, use `exec` with `background: true`
+instead. It returns a job id, and `process` reads its output later.
+
 ## Allowing blocked commands
 
 `exec` refuses a short list of dangerous commands on every target:

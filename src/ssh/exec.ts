@@ -9,6 +9,9 @@
 import type { Client } from 'ssh2';
 
 const DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024;
+/** After the remote shell exited: how long to wait for the channel to
+ *  close before concluding a background process holds it open. */
+export const HELD_OPEN_GRACE_MS = 3_000;
 
 export interface RemoteExecResult {
   stdout: string;
@@ -67,16 +70,48 @@ export async function remoteExec(
       const stderrChunks: Buffer[] = [];
       let totalBytes = 0;
       let truncated = false;
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        try {
-          stream.signal('KILL');
-          stream.end();
-        } catch {
-          /* best-effort */
+      let done = false;
+      let exitCode: number | null = null;
+      let exitSignal: string | null = null;
+      let afterExitTimer: NodeJS.Timeout | undefined;
+
+      // One way out, whichever comes first: the channel closes (normal
+      // end), the deadline passes, or the command exited but a process
+      // it left in the background still holds stdout/stderr open — the
+      // channel would then stay open until that process ends.
+      const finish = (how: 'closed' | 'timeout' | 'held-open', code: number | null, signal: string | null): void => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (afterExitTimer) clearTimeout(afterExitTimer);
+        if (how !== 'closed') {
+          try {
+            if (how === 'timeout') stream.signal('KILL');
+            stream.close();
+          } catch {
+            /* best-effort */
+          }
         }
-      }, timeoutMs);
+        const ms = Date.now() - start;
+        const result: RemoteExecResult = {
+          stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+          stderr: Buffer.concat(stderrChunks).toString('utf8'),
+          code: how === 'timeout' ? null : code,
+          signal: how === 'timeout' ? 'TIMEOUT' : signal,
+          truncated,
+          ms,
+        };
+        if (how === 'timeout') {
+          result.stderr = `${result.stderr}\n[somora] command exceeded ${timeoutMs}ms — stopped and the channel closed after ${ms}ms. Processes it started in the background on the remote may still be running.`;
+        } else if (how === 'held-open') {
+          result.stderr =
+            `${result.stderr}\n[somora] the command exited (code ${code ?? 'none'}), but a process it left in the background still held its output open — returned without waiting. ` +
+            'That process keeps running. To detach cleanly: `nohup cmd </dev/null >/tmp/cmd.log 2>&1 &`, or use background: true.';
+        }
+        resolve(result);
+      };
+
+      const timer = setTimeout(() => finish('timeout', null, null), timeoutMs);
 
       const onData = (data: Buffer, sink: Buffer[]): void => {
         if (truncated) return;
@@ -99,20 +134,18 @@ export async function remoteExec(
       if (stream.stderr) {
         stream.stderr.on('data', (d: Buffer) => onData(d, stderrChunks));
       }
+      // The remote shell reports its exit status before the channel
+      // closes. Normally 'close' follows at once; if it does not within
+      // a few seconds, something the command left in the background
+      // still holds the output open, and waiting would block until it
+      // ends (or the connection idles out).
+      stream.on('exit', (code: number | null, signal?: string | null) => {
+        exitCode = code;
+        exitSignal = signal ?? null;
+        afterExitTimer = setTimeout(() => finish('held-open', exitCode, exitSignal), HELD_OPEN_GRACE_MS);
+      });
       stream.on('close', (code: number | null, signal: string | null) => {
-        clearTimeout(timer);
-        const result: RemoteExecResult = {
-          stdout: Buffer.concat(stdoutChunks).toString('utf8'),
-          stderr: Buffer.concat(stderrChunks).toString('utf8'),
-          code: timedOut ? null : code,
-          signal: timedOut ? 'TIMEOUT' : signal,
-          truncated,
-          ms: Date.now() - start,
-        };
-        if (timedOut) {
-          result.stderr = `${result.stderr}\n[somora] command exceeded ${timeoutMs}ms — killed`;
-        }
-        resolve(result);
+        finish('closed', code ?? exitCode, signal ?? exitSignal);
       });
     };
     if (execOpts) {

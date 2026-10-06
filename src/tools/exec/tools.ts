@@ -247,6 +247,9 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
     'Remote targets have NO assumed binaries beyond POSIX core (sh, ls, cat, cp, mv, find, …). ' +
     'jq, python, node, rg etc. may be missing — probe first with `which <bin>` or `command -v` ' +
     'before relying on them, or pipe a JSON post-processor through stdin on the local side. ' +
+    'To leave something running on a remote target from a sync call, detach all three streams: ' +
+    '`nohup cmd </dev/null >/tmp/cmd.log 2>&1 &` — a bare `cmd &` keeps the call open, and it returns ' +
+    'a few seconds after your command exits with a note; or use background:true. ' +
     '\n\n' +
     'Output: a sync result carries about 60 000 chars of stdout+stderr. Longer output comes back as ' +
     'the first and last part of each stream with the cut marked in the text and truncated:true — ' +
