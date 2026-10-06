@@ -40,6 +40,9 @@ export interface SessionSummary {
   messageCount: number;
   /** Currently-pinned project slug, if any (Phase Projects v1). */
   projectSlug?: string;
+  /** Present in a list fetched with `include_archived=true`. */
+  isArchived?: boolean;
+  archivedAt?: string;
 }
 
 // ─── Projects (Phase Projects v1) ────────────────────────────────────

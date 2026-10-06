@@ -69,10 +69,23 @@ export class Api {
     }
   }
 
-  async fetchSessions(agent: string): Promise<SessionSummary[]> {
-    const res = await loopbackFetch(`${this.base}/agents/${encodeURIComponent(agent)}/sessions`);
+  async fetchSessions(agent: string, opts: { includeArchived?: boolean } = {}): Promise<SessionSummary[]> {
+    const query = opts.includeArchived ? '?include_archived=true' : '';
+    const res = await loopbackFetch(`${this.base}/agents/${encodeURIComponent(agent)}/sessions${query}`);
     if (!res.ok) return [];
     return (await res.json()) as SessionSummary[];
+  }
+
+  /** Bring an archived session back. Returns the name it is listed
+   *  under now (a reset archive comes back as `<name>-archive`). */
+  async unarchiveSession(agent: string, session: string): Promise<{ session: string; slug: string }> {
+    const res = await loopbackFetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/unarchive`,
+      { method: 'POST' },
+    );
+    const body = (await res.json().catch(() => ({}))) as { session?: string; slug?: string; error?: string };
+    if (!res.ok || !body.session) throw new Error(body.error ?? `unarchive failed (HTTP ${res.status})`);
+    return { session: body.session, slug: body.slug ?? body.session };
   }
 
   async createSession(agent: string, slug: string): Promise<string> {

@@ -80,6 +80,9 @@ export interface SessionSummary {
   unreadAt?: string | null;
   /** ISO timestamp of when any client last viewed this session. */
   seenAt?: string | null;
+  /** Only in a list fetched with archived sessions included. */
+  isArchived?: boolean;
+  archivedAt?: string;
 }
 
 // Project surface — mirror of the server's project frontmatter, kept lean

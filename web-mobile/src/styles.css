@@ -1218,3 +1218,17 @@ button { cursor: pointer; }
 .sheet-row-tag.warn { color: var(--warn); border-color: var(--warn); }
 .sheet-row-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .sheet-thinking { display: block; padding: 2px 4px 6px 24px; }
+.archived-row:active { background: transparent; }
+.archived-restore {
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  /* 36px tall: a comfortable tap target inside a 40px row */
+  min-height: 36px;
+  padding: 0 10px;
+}
+.archived-restore:disabled { opacity: 0.4; }

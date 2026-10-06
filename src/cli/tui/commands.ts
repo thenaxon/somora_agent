@@ -48,8 +48,9 @@ export const COMMANDS: readonly CommandMeta[] = [
   { name: '/help', usage: '/help' },
   { name: '/agents', usage: '/agents' },
   { name: '/agent', usage: '/agent <name> [session]' },
-  { name: '/sessions', usage: '/sessions' },
+  { name: '/sessions', usage: '/sessions [archived]' },
   { name: '/session', usage: '/session <slug-or-id>' },
+  { name: '/unarchive', usage: '/unarchive <slug-or-id>' },
   { name: '/new', usage: '/new <slug>' },
   { name: '/main', usage: '/main' },
   { name: '/reset', usage: '/reset [YES]' },
@@ -102,8 +103,9 @@ const HELP_TEXT_BASE = `Available commands:
   /help                       — show this help
   /agents                     — list agents
   /agent <name> [session]     — switch agent (defaults to main session)
-  /sessions                   — list sessions of current agent
+  /sessions [archived]        — list sessions of current agent (archived: the archived ones)
   /session <slug-or-id>       — switch to another session of current agent
+  /unarchive <slug-or-id>     — bring an archived session back and switch to it
   /new <slug>                 — create new session and switch to it
   /main                       — back to main session of current agent
   /reset                      — preview reset of current session
@@ -193,6 +195,15 @@ async function applySamplingPatch(
   }
 }
 
+/** `2026-10-06 23:00` in the terminal's own time zone (the server
+ *  sends UTC). Empty for a missing or unreadable timestamp. */
+function localStamp(iso: string | null | undefined): string {
+  const t = iso ? new Date(iso) : null;
+  if (!t || Number.isNaN(t.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;
+}
+
 export async function runCommand(
   line: string,
   ctx: CommandContext,
@@ -255,6 +266,27 @@ export async function runCommand(
     }
 
     case '/sessions': {
+      if (args[0] === 'archived') {
+        const archived = (await ctx.api.fetchSessions(ctx.agent, { includeArchived: true }))
+          .filter((s) => s.isArchived)
+          .sort((a, b) => (b.archivedAt ?? b.lastActivity ?? '').localeCompare(a.archivedAt ?? a.lastActivity ?? ''));
+        if (archived.length === 0) {
+          out.push({ kind: 'notice', text: `No archived sessions for ${ctx.agent}.`, tone: 'info' });
+          return out;
+        }
+        const lines = [`Archived sessions for ${ctx.agent} (newest first):`];
+        for (const s of archived) {
+          const stamp = localStamp(s.archivedAt ?? s.lastActivity) || '—';
+          lines.push(`    ${s.slug.padEnd(24)}  ${String(s.messageCount).padStart(3)} msgs  archived ${stamp}  ${s.id}`);
+        }
+        lines.push('  /unarchive <slug-or-id> brings one back.');
+        out.push({ kind: 'notice', text: lines.join('\n'), tone: 'info' });
+        return out;
+      }
+      if (args[0]) {
+        out.push({ kind: 'notice', text: 'usage: /sessions [archived]', tone: 'warn' });
+        return out;
+      }
       const sessions = await ctx.api.fetchSessions(ctx.agent);
       const lines = [`Sessions for ${ctx.agent}:`];
       for (const s of sessions) {
@@ -266,7 +298,7 @@ export async function runCommand(
           typeof s.unreadAt === 'string' &&
           (typeof s.seenAt !== 'string' || s.unreadAt > s.seenAt);
         const unreadGlyph = isUnread ? '📬' : '  ';
-        const stamp = s.lastActivity ? s.lastActivity.slice(0, 16).replace('T', ' ') : 'empty';
+        const stamp = localStamp(s.lastActivity) || 'empty';
         const project = s.projectSlug ? `  📁 ${s.projectSlug}` : '';
         lines.push(
           `  ${marker} ${unreadGlyph} ${s.slug.padEnd(24)}  ${String(s.messageCount).padStart(3)} msgs  ${stamp}${project}`,
@@ -283,8 +315,9 @@ export async function runCommand(
         return out;
       }
       if (ref !== 'main') {
-        const sessions = await ctx.api.fetchSessions(ctx.agent);
-        if (!sessions.find((s) => s.id === ref || s.slug === ref)) {
+        const sessions = await ctx.api.fetchSessions(ctx.agent, { includeArchived: true });
+        const hit = sessions.find((s) => s.id === ref) ?? sessions.find((s) => s.slug === ref && !s.isArchived) ?? sessions.find((s) => s.slug === ref);
+        if (!hit) {
           out.push({
             kind: 'notice',
             text: `session '${ref}' not found. /sessions to list, or /new <slug>.`,
@@ -292,8 +325,50 @@ export async function runCommand(
           });
           return out;
         }
+        if (hit.isArchived) {
+          out.push({
+            kind: 'notice',
+            text: `session '${ref}' is archived. /unarchive ${hit.id} brings it back.`,
+            tone: 'warn',
+          });
+          return out;
+        }
       }
       out.push({ kind: 'switchTo', agent: ctx.agent, session: ref });
+      return out;
+    }
+
+    case '/unarchive': {
+      const ref = args[0];
+      if (!ref) {
+        out.push({ kind: 'notice', text: 'usage: /unarchive <slug-or-id>   (/sessions archived lists them)', tone: 'warn' });
+        return out;
+      }
+      const archived = (await ctx.api.fetchSessions(ctx.agent, { includeArchived: true })).filter((s) => s.isArchived);
+      const byId = archived.find((s) => s.id === ref);
+      const matches = byId ? [byId] : archived.filter((s) => s.slug === ref);
+      if (matches.length === 0) {
+        out.push({ kind: 'notice', text: `no archived session '${ref}'. /sessions archived lists them.`, tone: 'warn' });
+        return out;
+      }
+      if (matches.length > 1) {
+        // Every /reset of main leaves a `main-archive`: the name alone
+        // does not say which one.
+        const lines = [`'${ref}' matches ${matches.length} archived sessions. Use the id:`];
+        for (const s of matches) {
+          const stamp = localStamp(s.archivedAt ?? s.lastActivity) || '—';
+          lines.push(`    /unarchive ${s.id}   ${String(s.messageCount).padStart(3)} msgs  archived ${stamp}`);
+        }
+        out.push({ kind: 'notice', text: lines.join('\n'), tone: 'warn' });
+        return out;
+      }
+      try {
+        const restored = await ctx.api.unarchiveSession(ctx.agent, matches[0]!.id);
+        out.push({ kind: 'notice', text: `[unarchived] back as '${restored.slug}'. Switching to it.`, tone: 'info' });
+        out.push({ kind: 'switchTo', agent: ctx.agent, session: restored.session });
+      } catch (err) {
+        out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
+      }
       return out;
     }
 
@@ -325,8 +400,8 @@ export async function runCommand(
             : '';
         const text =
           `[/reset] would archive the CURRENT session (${ctx.agent}:${ctx.session}) and start fresh.` +
-          `\n        Existing JSONL + meta are preserved as a timestamped archive` +
-          `\n        you can resume any time with /session <id>.` +
+          `\n        The conversation is kept as an archive: /sessions archived` +
+          `\n        lists it, /unarchive brings it back as <name>-archive.` +
           altHint +
           `\n        To commit: /reset YES`;
         out.push({ kind: 'notice', text, tone: 'info' });
@@ -341,7 +416,7 @@ export async function runCommand(
           out.push({
             kind: 'notice',
             text:
-              `[reset done] archived as: ${result.archivedId}` +
+              `[reset done] archived as: ${result.archivedId}  (/unarchive ${result.archivedId} brings it back)` +
               `\n             current session is now empty + clean.${dreamLine}`,
             tone: 'info',
           });

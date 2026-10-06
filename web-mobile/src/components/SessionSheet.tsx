@@ -1,7 +1,7 @@
 // Session and model on the phone: the header shows "agent · session"
 // and the model, a tap opens this bottom sheet — the agent's sessions
-// (tap to switch, "+ New" to start one) and the model list for the
-// open session. One sheet for both: two small tap targets side by side
+// (tap to switch, "+ New" to start one, "Archived" to bring one back)
+// and the model list for the open session. One sheet for both: two small tap targets side by side
 // in the header are easy to miss.
 //
 // Thin client: lists come from GET /agents/:agent/sessions and
@@ -23,6 +23,7 @@ import {
 type ModelRow = ModelOption & { unavailable?: { since: number; until: number; reason: string } };
 
 const SESSION_LIMIT = 6;
+const ARCHIVE_LIMIT = 20;
 
 interface Props {
   open: boolean;
@@ -61,6 +62,10 @@ export function SessionSheet({
   const [note, setNote] = useState<string | null>(null);
   const [switching, setSwitching] = useState<string | null>(null);
   const [thinking, setThinking] = useState<{ effective: string | null; source: string; modelSupportsReasoning: boolean } | null>(null);
+  // null = the archived list is closed; an array once it was opened.
+  const [archived, setArchived] = useState<SessionSummary[] | null>(null);
+  const [archiveAll, setArchiveAll] = useState(false);
+  const [restoring, setRestoring] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Fresh lists every time the sheet opens — sessions come and go from
@@ -74,6 +79,9 @@ export function SessionSheet({
     setNote(null);
     setLoadError(null);
     setSwitching(null);
+    setArchived(null);
+    setArchiveAll(false);
+    setRestoring(null);
     fetch(`/agents/${encodeURIComponent(agent)}/sessions`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -152,6 +160,41 @@ export function SessionSheet({
       setNote(err instanceof Error ? err.message : String(err));
     } finally {
       setCreating(false);
+    }
+  };
+
+  const openArchive = async () => {
+    setNote(null);
+    try {
+      const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions?include_archived=true`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const list = ((await res.json()) as SessionSummary[]).filter((s) => s.isArchived);
+      const when = (s: SessionSummary) => s.archivedAt ?? s.lastActivity ?? '';
+      setArchived(list.sort((a, b) => when(b).localeCompare(when(a))));
+    } catch (err) {
+      setNote(`Could not load the archived sessions (${err instanceof Error ? err.message : String(err)})`);
+    }
+  };
+
+  // Restoring brings the session back as a normal one (a /reset archive
+  // as "<name>-archive") and opens it.
+  const restore = async (s: SessionSummary) => {
+    if (restoring) return;
+    setRestoring(s.id);
+    setNote(null);
+    try {
+      const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(s.id)}/unarchive`, { method: 'POST' });
+      const body = (await res.json().catch(() => ({}))) as { session?: string; slug?: string; error?: string };
+      if (res.ok && body.session) {
+        onPick({ id: body.session, slug: body.slug ?? s.slug });
+        onClose();
+        return;
+      }
+      setNote(body.error ?? `Could not restore the session (HTTP ${res.status})`);
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRestoring(null);
     }
   };
 
@@ -248,6 +291,38 @@ export function SessionSheet({
             <button type="button" className="sheet-row more" onClick={() => setShowAll(true)}>
               <span className="sheet-row-mark" aria-hidden="true" />
               <span className="sheet-row-name">Show all ({ordered.length})</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="sheet-row more archive-toggle"
+            aria-expanded={archived !== null}
+            onClick={() => (archived === null ? void openArchive() : setArchived(null))}
+          >
+            <span className="sheet-row-mark" aria-hidden="true">{archived === null ? '▸' : '▾'}</span>
+            <span className="sheet-row-name">Archived</span>
+          </button>
+          {archived !== null && archived.length === 0 && <div className="work-sheet-empty">no archived sessions</div>}
+          {(archived ?? []).slice(0, archiveAll ? undefined : ARCHIVE_LIMIT).map((s) => (
+            <div key={s.id} className="sheet-row archived-row">
+              <span className="sheet-row-mark" aria-hidden="true" />
+              <span className="sheet-row-name">{s.slug}</span>
+              <span className="sheet-row-meta">{relativeTime(s.archivedAt ?? s.lastActivity, now)}</span>
+              <button
+                type="button"
+                className="archived-restore"
+                disabled={restoring !== null}
+                onClick={() => void restore(s)}
+                aria-label={`Restore ${s.slug}`}
+              >
+                {restoring === s.id ? '…' : 'Restore'}
+              </button>
+            </div>
+          ))}
+          {archived !== null && !archiveAll && archived.length > ARCHIVE_LIMIT && (
+            <button type="button" className="sheet-row more" onClick={() => setArchiveAll(true)}>
+              <span className="sheet-row-mark" aria-hidden="true" />
+              <span className="sheet-row-name">Show all archived ({archived.length})</span>
             </button>
           )}
         </section>
