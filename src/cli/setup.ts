@@ -30,6 +30,7 @@ import {
 import { isOperatorError, tailscaleState } from '../setup/tailscale.ts';
 import { SOMORA_VERSION } from '../version.ts';
 import { launchdPlistPath } from './launchd.ts';
+import { bundledClaudeBinary, claudeBinaryForLogin } from './claude-bin.ts';
 import { isUtf8Locale, renderBanner } from './banner.ts';
 
 const HOME = homedir();
@@ -195,11 +196,10 @@ export function addToShellPath(dir: string, home: string = HOME, envPath: string
   return changed;
 }
 
+// The person's own Claude Code when installed, else the one bundled
+// with somora (see claude-bin.ts). Either can run the login.
 function claudeBinary(): string | null {
-  const local = join(HOME, '.local', 'bin', 'claude');
-  if (existsSync(local)) return local;
-  const r = capture('sh', ['-c', 'command -v claude']);
-  return r.code === 0 ? r.stdout.trim() : null;
+  return claudeBinaryForLogin()?.path ?? null;
 }
 
 function claudeLoggedIn(): boolean {
@@ -225,8 +225,12 @@ async function pickModels(p: Prompter, title: string, models: ModelPreset[], hav
 async function setupClaude(ctx: Ctx, config: YamlFile): Promise<void> {
   const { p } = ctx;
   let bin = claudeBinary();
+  if (bin && bin === bundledClaudeBinary()) {
+    ok('Claude Code comes bundled with somora — nothing to install');
+  }
   if (!bin) {
-    explain('Claude runs through Anthropic\'s own program, Claude Code. It is not installed yet.');
+    // Only when the bundled binary is missing (an incomplete install).
+    explain('Claude runs through Anthropic\'s own program, Claude Code. The copy bundled with somora is missing.');
     if (await p.confirm('Install Claude Code now? (official installer from claude.ai, into ~/.local/bin)')) {
       p.handOver('sh', ['-c', 'curl -fsSL https://claude.ai/install.sh | bash']);
       bin = claudeBinary();
@@ -252,7 +256,7 @@ async function setupClaude(ctx: Ctx, config: YamlFile): Promise<void> {
       p.handOver(bin, ['auth', 'login']);
     }
     if (!claudeLoggedIn()) {
-      warn(`no login yet — the models are added anyway; log in later with:  ${bin} auth login`);
+      warn('no login yet — the models are added anyway; log in later with:  somora auth login');
     } else {
       ok('logged in');
     }
@@ -396,7 +400,7 @@ async function stepModels(ctx: Ctx): Promise<void> {
   }
   const engines = new Set(before.map((a) => a.engine));
   const choices: Array<Choice<'claude' | 'codex' | 'own'>> = [
-    { label: 'Claude subscription (Pro / Max)', value: 'claude', hint: claudeLoggedIn() ? 'login found on this machine' : claudeBinary() ? 'Claude Code installed, not logged in' : 'installs Claude Code' },
+    { label: 'Claude subscription (Pro / Max)', value: 'claude', hint: claudeLoggedIn() ? 'login found on this machine' : 'log in with your subscription' },
     { label: 'ChatGPT subscription (Plus / Pro / Business)', value: 'codex', hint: codexLoggedIn() ? 'login found on this machine' : 'Codex is bundled' },
     { label: 'My own model server or an API key', value: 'own', hint: 'Ollama, LM Studio, vLLM, OpenRouter, …' },
   ];

@@ -261,7 +261,7 @@ sudo apt install tmux ripgrep build-essential   # Debian/Ubuntu
 npm install -g somora
 
 # 3. Log in to at least one LLM backend (pick one or more)
-curl -fsSL https://claude.ai/install.sh | bash  &&  claude auth login   # Claude subscription
+somora auth login                         # Claude subscription; Claude Code is bundled
 somora codex login                        # ChatGPT subscription; Codex is bundled
 # local models: run Ollama / LM Studio / oMLX and add the endpoint to
 # ~/.somora/config.yaml after step 4

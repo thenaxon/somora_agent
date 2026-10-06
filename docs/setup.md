@@ -82,7 +82,7 @@ somora setup access     # one step only
 
 | Step | What it does |
 |---|---|
-| `models` | Connects a Claude subscription (installs Claude Code if missing and runs its login), a ChatGPT subscription (the bundled Codex login, in the browser or with a device code), or your own server. For a server it asks the address and key, lists the models and asks each one's context window. |
+| `models` | Connects a Claude subscription (runs the login of the Claude Code bundled with somora), a ChatGPT subscription (the bundled Codex login, in the browser or with a device code), or your own server. For a server it asks the address and key, lists the models and asks each one's context window. |
 | `search` | Asks for a Brave Search API key, checks it with one real search and stores it as `web.brave.apiKey`. That gives the agents the `web_search` tool. |
 | `agent` | Creates an agent: name, what it calls you, answer language, model and backup model. On an existing install it lists the agents and offers to repair one whose model is gone. |
 | `memory` | Turns on REM per agent with a model and a backup model, offers the duplicate check for new notes, and sets up the shared wiki with Deep and Lucid, their model and a backup model. The wiki goes into a new folder or your Obsidian vault. |
@@ -198,7 +198,7 @@ blocks for you. By hand, edit `providers` in `~/.somora/config.yaml`.
 
 | Kind | Engine | Login |
 |---|---|---|
-| Claude subscription | `claude-cli` | Install Claude Code with `curl -fsSL https://claude.ai/install.sh \| bash`, then `claude auth login`. No API key. |
+| Claude subscription | `claude-cli` | `somora auth login`. Claude Code is bundled with somora. A Claude Code you installed yourself, and its login, is used instead when present. No API key. |
 | ChatGPT subscription | `codex-cli` | `somora codex login`. Codex is bundled with somora. A login made with a global Codex is picked up too. |
 | Grok subscription | `grok-cli` | Install the Grok CLI with `curl -fsSL https://x.ai/cli/install.sh \| bash`, then `grok login`. |
 | Own server or API key | `openai-compatible` | Ollama, LM Studio, vLLM, oMLX, OpenRouter or any other server with a `/v1/chat/completions` endpoint. |
@@ -725,6 +725,7 @@ in the agents guide.
 | `somora config check [file]` | Validates `config.yaml` (or another file) exactly as the server does. Exit code 0 valid, 1 invalid, 2 unreadable. |
 | `somora config path` | Prints the path of the config file. |
 | `somora telemetry show [--json]` | Shows what the daily update check sends and when it last ran. |
+| `somora auth login` | Logs in with a Claude subscription, through the bundled Claude Code or your own. |
 | `somora auth status` | Shows both Claude credential stores. |
 | `somora auth sync` | Reconciles the two stores now. |
 | `somora codex <args>` | Runs the bundled Codex: `login`, `logout`, `debug models`, `features list`, `--version`. |
@@ -806,7 +807,7 @@ service's environment.
 | `SOMORA_LOG_LEVEL` | `info` | Log level. |
 | `SOMORA_ENV_FILE` | `~/.somora/somora.env` | Another env file to load at start. |
 | `DO_NOT_TRACK` | unset | `1` turns the daily update check off. A set `CI` does the same. |
-| `SOMORA_CLAUDE_BIN` | `~/.local/bin/claude` | Path of the Claude Code binary. |
+| `SOMORA_CLAUDE_BIN` | `~/.local/bin/claude`, else the bundled one | Path of the Claude Code binary. |
 | `CLAUDE_CONFIG_DIR` | `~/.somora/claude-home` | Config folder of the Claude engine. |
 | `SOMORA_CODEX_BIN` | unset | Uses another Codex binary instead of the bundled one. For debugging. |
 | `SOMORA_GROK_BIN` | `~/.local/bin/grok`, else `grok` on `PATH` | Path of the Grok CLI. |

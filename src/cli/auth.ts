@@ -1,6 +1,8 @@
 // `somora auth` — visibility + manual control for the shared claude-cli
 // login (see src/server/claude-credential-sync.ts for the mechanism).
 //
+//   somora auth login    log in with the Claude subscription (the
+//                        bundled Claude Code, or your own when installed)
 //   somora auth status   read-only view of both credential stores
 //   somora auth sync     one-shot reconcile (what the running server's
 //                        watcher does continuously)
@@ -10,6 +12,8 @@
 // bootstrap) just for the sharedUserCredentials gate.
 
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { claudeBinaryForLogin } from './claude-bin.ts';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { load as parseYaml } from 'js-yaml';
@@ -40,6 +44,7 @@ function usage(): string {
   return `somora auth — shared claude-cli login utilities
 
 Usage:
+  somora auth login    log in with your Claude subscription (uses the bundled Claude Code)
   somora auth status   show both credential stores (mtime, OAuth expiry, divergence)
   somora auth sync     reconcile now (newest OAuth chain wins, other side is overwritten)
 `;
@@ -60,6 +65,23 @@ export function runAuthCli(args: string[]): number {
       warn: (d) => process.stderr.write(`${JSON.stringify(d)}\n`),
     },
   });
+
+  if (cmd === 'login') {
+    const bin = claudeBinaryForLogin();
+    if (!bin) {
+      process.stderr.write('no Claude Code binary found — the bundled one is missing; reinstall somora, or install Claude Code: curl -fsSL https://claude.ai/install.sh | bash\n');
+      return 1;
+    }
+    process.stdout.write(`Claude Code ${bin.bundled ? '(bundled with somora)' : `at ${bin.path}`} — it shows a link: open it in any browser, approve, paste the code back here.\n`);
+    const r = spawnSync(bin.path, ['auth', 'login'], { stdio: 'inherit' });
+    if (r.status !== 0) return r.status ?? 1;
+    if (enabled) {
+      const result = reconcileClaudeCredentials();
+      if (result === 'unavailable') return 1;
+    }
+    process.stdout.write('logged in. somora uses this login for the claude-cli engine.\n');
+    return 0;
+  }
 
   if (cmd === 'status') {
     const s = credentialSyncStatus();

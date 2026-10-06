@@ -73,7 +73,7 @@ Usage:
   somora tui                         launch the TUI against the running server
   somora skill <subcommand>          list/check/add/update/remove skills
                                      (run \`somora skill\` for sub-help)
-  somora auth status|sync            shared claude-cli login: inspect / reconcile
+  somora auth login|status|sync      Claude subscription login (bundled Claude Code) / inspect / reconcile
                                      the two credential stores
   somora codex [args...]             run the bundled Codex CLI (e.g. \`somora codex login\`,
                                      \`somora codex debug models\`); somora mirrors the login
