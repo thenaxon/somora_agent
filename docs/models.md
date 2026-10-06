@@ -308,6 +308,14 @@ providers:
         sampling: { temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0 }
         reasoning:
           levels: { "off": low, high: xhigh }
+      - id: kolibri-1                     # vLLM with Aleph Alpha's inference plugin, FP8
+        alias: kolibri
+        contextWindow: 262144             # = --max-model-len (the model is validated up to 1M)
+        capabilities: [text, reasoning]   # no vision
+        sampling: { temperature: 1.0, top_p: 0.97, top_k: 128 }   # the model's generation_config.json
+        maxTokens: 16384
+        reasoning:
+          levels: { "off": none }         # the other levels pass as they are
       - id: gemma-4-31b-it-8bit           # oMLX (Apple Silicon)
         alias: gemma4big
         contextWindow: 131072
@@ -333,6 +341,7 @@ Sampling is given as temperature / top_p / top_k.
 | **Qwen3.8-Flash-Next** FP8 (176B, 6B active) | vLLM, TP=4 | `--max-model-len`, 524288 with YaRN 2.0; 1048576 with YaRN 4.0 on a four GPU server | 0.6 / 0.95 / 20, `min_p` 0 (Qwen's thinking mode defaults) | full check |
 | **Qwen3.5-397B-A17B** AWQ INT4 | vLLM, TP=4 | 262144 (`max_model_len`) | as Qwen3.8-Flash-Next | full check |
 | **Qwen3.8-27B** FP8, dense | vLLM, 1 GPU | 262144 | as Qwen3.8-Flash-Next | full check |
+| **Kolibri-1** FP8 (78B MoE, 3.5B active), German and English | vLLM 0.29 with Aleph Alpha's inference plugin, 1 GPU | `--max-model-len` 262144 (validated up to 1M) | 1.0 / 0.97 / 128 (the model's `generation_config.json`) | in use |
 | **Gemma 4** 31B and 26B-A4B | oMLX | 131072 | 1.0 / 0.95 / 64 (Gemma team recommendation) | full check |
 
 ### Reasoning levels per family
@@ -343,6 +352,7 @@ Sampling is given as temperature / top_p / top_k.
 | DeepSeek V4.1 Flash | `none`, `low`, `high`, `max` | is ignored | `off: none`, `medium: high`, `high: max` |
 | GLM-5.3-Flash | `low`, `high`, `max` only | silently becomes `max`, also `none` and `medium` | `off: low`, `medium: high`, `high: max` |
 | Qwen 3.x | `none`, `low`, `medium`, `xhigh` | answers 400, so `high` fails unless mapped | `high: xhigh` and `off: low` or `off: none`, see below |
+| Kolibri-1 | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | unchecked | `off: none`. `none` gives zero reasoning. |
 | Gemma 4 | none, no `reasoning` capability | not sent | nothing |
 
 Details that matter when you pick a mapping:
@@ -382,6 +392,7 @@ or on purpose to a different one.
 | DeepSeek V4.1 Flash | Unchecked. | Leave it unset until you have compared the lengths. |
 | GLM-5.3-Flash | Unchecked. An unknown word becomes `max`, which is expensive. | Compare first. `default: medium` sends `high`. |
 | Qwen3.8-Flash-Next | Reasons as much as with `xhigh`. | `default: high`: the same behaviour, now shown as `high`. |
+| Kolibri-1 | Reasons: its chat template defaults to `high`. | `default: high`: the same behaviour, now shown as `high`. |
 | Gemma 4 | No reasoning capability. | None. |
 
 ```yaml
@@ -405,6 +416,7 @@ come first. The [thinking guide](thinking.md) lists the order.
 | Qwen3.8-Flash-Next | yes | `maxTokens: 16384`, because reasoning otherwise eats short answers. Parsers `qwen3` and `qwen3_xml`. |
 | Qwen3.5-397B-A17B | yes | `hermes` tool parser. |
 | Qwen3.8-27B | yes | `qwen3_coder` tool parser. |
+| Kolibri-1 | no | Tool calls work over many turns, with several tools per turn. Without `off: none` an agent set to `off` still reasons. |
 | Gemma 4 | yes | A prefill memory guard answers 400 on long prompts. somora's reactive compaction handles it. |
 
 ### What is special about this engine
