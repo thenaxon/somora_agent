@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { readDimensions } from './dimensions.ts';
+import { logger } from '../server/logger.ts';
 
 export const DEFAULT_MAX_IMAGE_EDGE = 2048;
 /** With scaling on, the largest source image somora reads or accepts as
@@ -80,6 +81,14 @@ export async function fitImageForModel(bytes: Buffer, mimeType: string, maxEdge:
           ? pipeline.webp({ quality: 88 })
           : pipeline.png({ compressionLevel: 8 });
     const { data, info } = await pipeline.toBuffer({ resolveWithObject: true });
+    logger.info({
+      msg: 'image.scaled_for_model',
+      from: dims ? `${dims.width}x${dims.height}` : undefined,
+      to: `${info.width}x${info.height}`,
+      bytesBefore: bytes.length,
+      bytesAfter: data.length,
+      maxEdge,
+    });
     return {
       bytes: data,
       mimeType: outMime,
