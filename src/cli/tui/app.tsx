@@ -7,6 +7,7 @@ import { openStream, type StreamHandle } from './stream.ts';
 import { openActivityStream } from './activity-stream.ts';
 import { matchCommands, runCommand } from './commands.ts';
 import { Header } from './header.tsx';
+import { resolveEngineMetaLabel, summariseEngineMeta } from '../../engine/engine-meta-labels.ts';
 import { Footer } from './footer.tsx';
 import { Separator } from './separator.tsx';
 import { SlashAutocomplete } from './autocomplete.tsx';
@@ -541,13 +542,11 @@ export function App({
         typeof ev.engine === 'string' &&
         typeof ev.itemType === 'string'
       ) {
-        // Resolve label client-side from a tiny mapping. Keep in sync
-        // with src/engine/engine-meta-labels.ts — known item types get
-        // friendly names, unknowns fall back to the raw itemType.
-        const knownLabels: Record<string, Record<string, string>> = {
-          'codex-cli': { todo_list: 'plan' },
-        };
-        const label = knownLabels[ev.engine]?.[ev.itemType] ?? ev.itemType;
+        // The same label and one-liner the server puts on the live
+        // event (pure formatting, no server state), so a row reads the
+        // same after a reload as it did when it arrived.
+        const label = resolveEngineMetaLabel(ev.engine, ev.itemType);
+        const summary = summariseEngineMeta(ev.engine, ev.itemType, ev.payload);
         let details: string | undefined;
         try {
           details = JSON.stringify(ev.payload, null, 2);
@@ -560,6 +559,7 @@ export function App({
           engine: ev.engine,
           itemType: ev.itemType,
           label,
+          ...(summary ? { summary } : {}),
           ...(details ? { details } : {}),
         });
       }
@@ -768,7 +768,9 @@ export function App({
         return;
       }
       case 'engine_meta': {
-        if (!showToolsRef.current) return;
+        // somora's own notes (model switched, compacted by hand) are for
+        // the reader, not engine internals: shown with tools hidden too.
+        if (!showToolsRef.current && ev.engine !== 'somora') return;
         let details: string | undefined;
         try {
           details = JSON.stringify(ev.payload, null, 2);

@@ -20,6 +20,9 @@ export interface Compaction {
   tokensBefore?: number;
   /** Output-token count of the summary itself. */
   tokensAfter?: number;
+  /** Set when a person asked for it (`/compact`); absent for the
+   *  automatic compaction before a turn. */
+  trigger?: 'manual';
 }
 
 export interface CompactionConfig {

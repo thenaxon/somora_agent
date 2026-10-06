@@ -54,6 +54,7 @@ export const COMMANDS: readonly CommandMeta[] = [
   { name: '/new', usage: '/new <slug>' },
   { name: '/main', usage: '/main' },
   { name: '/reset', usage: '/reset [YES]' },
+  { name: '/compact', usage: '/compact [what to keep]' },
   { name: '/models', usage: '/models' },
   { name: '/model', usage: '/model [<alias>|default]' },
   { name: '/show', usage: '/show [memory|tools] [on|off]' },
@@ -110,6 +111,7 @@ const HELP_TEXT_BASE = `Available commands:
   /main                       — back to main session of current agent
   /reset                      — preview reset of current session
   /reset YES                  — archive current session, start fresh
+  /compact [what to keep]     — compact this session now and keep talking (optional focus for the summary)
   /models                     — list all configured models with aliases
   /model                      — show current effective model for this session
   /model <alias-or-ref>       — override model for this session
@@ -366,6 +368,24 @@ export async function runCommand(
         const restored = await ctx.api.unarchiveSession(ctx.agent, matches[0]!.id);
         out.push({ kind: 'notice', text: `[unarchived] back as '${restored.slug}'. Switching to it.`, tone: 'info' });
         out.push({ kind: 'switchTo', agent: ctx.agent, session: restored.session });
+      } catch (err) {
+        out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
+      }
+      return out;
+    }
+
+    case '/compact': {
+      const focus = args.join(' ').trim();
+      try {
+        const r = await ctx.api.compactSession(ctx.agent, ctx.session, focus || undefined);
+        if (r.status === 'error') {
+          out.push({ kind: 'notice', text: r.error ?? 'compaction failed', tone: r.busy ? 'warn' : 'error' });
+        } else if (r.status === 'compacted') {
+          // The chat row (context compacted) arrives over the stream.
+          if (r.note) out.push({ kind: 'notice', text: r.note, tone: 'info' });
+        } else {
+          out.push({ kind: 'notice', text: r.note ?? `nothing compacted (${r.status})`, tone: 'warn' });
+        }
       } catch (err) {
         out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
       }

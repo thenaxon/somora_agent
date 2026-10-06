@@ -1014,3 +1014,88 @@ export const claudeCliEngine: AgentEngine = {
     }
   },
 };
+
+/** Outcome of a compaction asked for by hand. */
+export interface ManualCompactionResult {
+  status: 'compacted' | 'nothing_to_compact';
+  tokensBefore?: number;
+  tokensAfter?: number;
+  /** Why nothing happened, in the engine's own words. */
+  note?: string;
+}
+
+/**
+ * `/compact [focus]` on a claude-cli session: Claude Code compacts its
+ * own session (the same as typing /compact in Claude Code), the focus
+ * goes along as its custom instructions. Runs outside a turn; the
+ * caller holds the session lock.
+ */
+export async function compactClaudeSession(args: {
+  agent: string;
+  session: string;
+  resolvedModel: TurnInput['resolvedModel'];
+  systemPrompt: string;
+  metaStore: TurnInput['metaStore'];
+  focus?: string;
+  timeoutMs?: number;
+}): Promise<ManualCompactionResult> {
+  const { agent, session, resolvedModel, metaStore } = args;
+  const meta = (await metaStore.get(agent, session)) as ClaudeCliMeta;
+  // Nothing to compact when Claude never held this session, or when the
+  // next turn rebuilds it anyway (MCP server renamed).
+  if (!meta.sdkSessionId || meta.mcpServerName !== MCP_SERVER_NAME) {
+    return { status: 'nothing_to_compact', note: 'Claude has no conversation for this session yet.' };
+  }
+  reconcileClaudeCredentials();
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), args.timeoutMs ?? 300_000);
+  let sessionId = meta.sdkSessionId;
+  let boundary: { pre_tokens?: number; post_tokens?: number } | undefined;
+  let resultText = '';
+  try {
+    const stream = query({
+      prompt: args.focus ? `/compact ${args.focus}` : '/compact',
+      options: {
+        model: resolvedModel.modelId,
+        systemPrompt: args.systemPrompt,
+        settingSources: [],
+        tools: ['ToolSearch'],
+        disallowedTools: KNOWN_ACCOUNT_TOOLS,
+        mcpServers: {
+          [MCP_SERVER_NAME]: somoraMemoryServerSpawn({
+            agent,
+            session,
+            activeModelRef: `${resolvedModel.providerName}/${resolvedModel.modelId}`,
+          }),
+        },
+        canUseTool: somoraToolGate,
+        strictMcpConfig: true,
+        abortController: abort,
+        managedSettings: { autoMemoryEnabled: false },
+        ...(CLAUDE_BIN ? { pathToClaudeCodeExecutable: CLAUDE_BIN } : {}),
+        resume: meta.sdkSessionId,
+      },
+    });
+    for await (const msg of stream as AsyncIterable<SDKMessage>) {
+      const m = msg as { type: string; subtype?: string; session_id?: string; compact_metadata?: { pre_tokens?: number; post_tokens?: number }; result?: string };
+      if (typeof m.session_id === 'string') sessionId = m.session_id;
+      if (m.type === 'system' && m.subtype === 'compact_boundary') boundary = m.compact_metadata;
+      if (m.type === 'result' && typeof m.result === 'string') resultText = m.result;
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+  if (sessionId !== meta.sdkSessionId) {
+    await metaStore.update(agent, session, (fresh) => ({ ...fresh, sdkSessionId: sessionId }));
+  }
+  if (!boundary) {
+    logger.info({ msg: 'engine.manual_compaction_skipped', engine: ENGINE, agent, session, result: resultText.slice(0, 200) });
+    return { status: 'nothing_to_compact', note: resultText.trim() || 'Claude did not compact.' };
+  }
+  logger.info({ msg: 'engine.manual_compaction_done', engine: ENGINE, agent, session, tokensBefore: boundary.pre_tokens, tokensAfter: boundary.post_tokens });
+  return {
+    status: 'compacted',
+    ...(typeof boundary.pre_tokens === 'number' ? { tokensBefore: boundary.pre_tokens } : {}),
+    ...(typeof boundary.post_tokens === 'number' ? { tokensAfter: boundary.post_tokens } : {}),
+  };
+}

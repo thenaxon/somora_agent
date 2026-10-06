@@ -67,6 +67,8 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
   somora: {
     // An agent switched (or cleared) this session's model.
     session_model: 'model switched',
+    // Someone compacted the session by hand (`/compact`), on any engine.
+    context_compacted: 'context compacted',
   },
   voice: {
     // The call moved to another agent. This is the only row a call

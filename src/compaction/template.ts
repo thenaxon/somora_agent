@@ -10,12 +10,16 @@ export interface BuildSummaryPromptInput {
   pairs: ReplayPair[];
   /** Optional: prior summary that this compaction should subsume. */
   priorSummary?: string;
+  /** Optional: what a person who compacted by hand asked the summary to
+   *  keep (`/compact keep every path and open question`). */
+  focus?: string;
 }
 
 export function buildSummaryPrompt({
   systemPrompt,
   pairs,
   priorSummary,
+  focus,
 }: BuildSummaryPromptInput): { system: string; user: string } {
   const system = [
     'You write a structured summary of an ongoing conversation for an',
@@ -84,6 +88,17 @@ export function buildSummaryPrompt({
   }
   userParts.push('</conversation-to-summarize>');
   userParts.push('');
+  if (focus) {
+    userParts.push(
+      '<focus>',
+      focus,
+      '</focus>',
+      'The user compacted this conversation by hand and asked the summary',
+      'to pay particular attention to the focus above. Keep everything it',
+      'names, verbatim where the history allows.',
+      '',
+    );
+  }
   userParts.push('Write the seven sections now.');
 
   return { system, user: userParts.join('\n') };

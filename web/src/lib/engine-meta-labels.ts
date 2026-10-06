@@ -19,6 +19,7 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
   },
   somora: {
     session_model: 'model switched',
+    context_compacted: 'context compacted',
   },
   'openai-compatible': {
     context_compacted: 'context compacted',

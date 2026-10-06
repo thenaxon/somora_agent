@@ -67,6 +67,10 @@ whole history. A session `/reset` archived comes back as
 `<name>-archive`. Several archives can share that name, for example one
 per reset of `main`: the time tells them apart.
 
+**Compact this conversation.** Shortens the session right away: the
+earlier conversation is summarised and you keep talking. Greyed out
+while a turn runs. See [Compact by hand](compaction.md#compact-by-hand).
+
 **Model for this session.** Tap a model to use it for this session
 only. The agent's own model is tagged `default`. Choosing it again
 removes the session's own choice. A model somora cannot reach at the

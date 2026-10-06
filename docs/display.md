@@ -126,7 +126,7 @@ switch and `/verbose` as the zoom.
 |---|---|
 | `/show` | Lists the current state. |
 | `/show memory on\|off` | Shows or hides the `◇ memory` lines. |
-| `/show tools on\|off` | Shows or hides tool calls, tool results and the `◌` engine lines. |
+| `/show tools on\|off` | Shows or hides tool calls, tool results and the `◌` engine lines. somora's own lines, `model switched` and `context compacted`, stay visible. |
 | `/verbose` | Lists the current state. |
 | `/verbose tools on\|off` | Adds the full input and output below each tool call and result. Engine lines expand to their full content. |
 | `/verbose memory on\|off` | Adds the full recalled text below each memory line, as the model received it. |
@@ -231,6 +231,7 @@ A path only works after the format word.
 | `/unarchive <slug-or-id>` | Brings an archived session back as a normal session and switches to it. A session `/reset` archived comes back as `<name>-archive`. When several archives share the name, the client lists their ids: run it again with the id. |
 | `/new <slug>` | Creates a session and switches to it. |
 | `/main` | Returns to the `main` session. |
+| `/compact [what to keep]` | Compacts this session now and the conversation goes on. The sentence is the focus of the summary. See [Compact by hand](compaction.md#compact-by-hand). |
 | `/reset [YES]` | Without `YES`: explains what would happen. With `YES`: archives the current session and starts it fresh. `/unarchive` brings the archive back. |
 | `/models` | Lists the configured models with alias, engine, context size and capabilities. |
 | `/model [<alias>\|default]` | No argument: shows the model in effect and where it comes from. An alias or `provider/id`: sets it for this session. `default` or `-`: back to the agent's own model. |

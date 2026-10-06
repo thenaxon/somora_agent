@@ -76,6 +76,22 @@ export class Api {
     return (await res.json()) as SessionSummary[];
   }
 
+  /** Compact the session by hand. Resolves with the server's outcome;
+   *  a running turn answers 409 with `busy: true`. */
+  async compactSession(
+    agent: string,
+    session: string,
+    instructions?: string,
+  ): Promise<{ status: string; engine?: string; note?: string; tokensBefore?: number; tokensAfter?: number; error?: string; busy?: boolean }> {
+    const res = await loopbackFetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/compact`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(instructions ? { instructions } : {}) },
+    );
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok && typeof body.error === 'string') return { status: 'error', error: body.error, ...(body.busy === true ? { busy: true } : {}) };
+    return body as { status: string };
+  }
+
   /** Bring an archived session back. Returns the name it is listed
    *  under now (a reset archive comes back as `<name>-archive`). */
   async unarchiveSession(agent: string, session: string): Promise<{ session: string; slug: string }> {

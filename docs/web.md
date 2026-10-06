@@ -198,7 +198,7 @@ turn runs and the work badge. The second line reads from left to right:
 | `⇄ <model>` | The last turn was answered by a backup model, the agent's `fallback:` in `agent.yaml`. The tooltip says why. |
 | `🧠 <level>` | The thinking level. `(dormant)` means the model cannot reason, so the level has no effect. Hidden at `off`. |
 | `🧠 auto` | No level is set for the session, the agent or the model. Nothing is sent and the model decides: reasoning models usually think. See the [thinking guide](thinking.md). |
-| **tools** | Shows or hides tool calls, tool results and the engine's own plan rows. |
+| **tools** | Shows or hides tool calls, tool results and the engine's own plan rows. somora's own notes, such as `model switched` or `context compacted`, stay visible. |
 | **memory** | Shows or hides the line that lists the notes recalled for a turn. |
 | **voice** | Spoken replies on or off. Only when text-to-speech is configured. |
 | `▣ 21%` | How full the context window was on the turn's last request. Amber above 75 %, red above 90 %. |
@@ -362,6 +362,7 @@ closes. Commands are not available while a turn is running.
 | `/temp <0–2>\|default` | Short for `/sampling temperature=<n>`. |
 | `/verbose thinking on\|off` | Shows or hides the thinking block in this session. Display only. |
 | `/projekt <slug>` | Pins a project to this session. `/projekt unlink` clears it. `/project` is an alias. Only with `projects.enabled`. |
+| `/compact [what to keep]` | Compacts this session now and the conversation goes on. The sentence is the focus of the summary. See [Compact by hand](compaction.md#compact-by-hand). |
 | `/reset YES` | Archives this session and starts fresh. `YES` is the confirmation. |
 
 There is no `/agent` command. To talk to another agent, open its
@@ -369,13 +370,14 @@ window.
 
 ### The session menu
 
-The `•••` button opens a menu with three parts. Click outside or press
+The `•••` button opens a menu with four parts. Click outside or press
 Esc to close it.
 
 | Part | What it does |
 |---|---|
 | **Model** | Shows the current model, its engine and context window. **Switch model…** opens a filterable list. A click sets the model for this session, like `/model`. |
 | **Thinking** | Shows the level and where it comes from. Buttons set off, low, medium or high for this session. **Reset to default** removes the override. **Show thinking in replies** is the same switch as `/verbose thinking`. |
+| **Conversation** | **Compact now** compacts this session, like `/compact` without a focus. The header shows `compacting…` while it runs. Greyed out while a turn runs. |
 | **Danger zone** | **Reset session** archives the conversation as `<timestamp>_<session>-archive` and starts fresh, after a second click to confirm. With REM enabled for the agent, REM reads the archived part. |
 
 ## The Sessions window

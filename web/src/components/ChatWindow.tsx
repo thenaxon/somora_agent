@@ -523,7 +523,11 @@ export function ChatWindow({
       // invisible and a session would carry questions from a call
       // nobody can see arriving (the operator, 2026-09-12).
       const isVoiceRow = m.role === 'engine_meta' && m.meta.engine === 'voice';
-      if (!showTools && !isVoiceRow && (m.role === 'tool_call' || m.role === 'tool_result' || m.role === 'engine_meta')) return false;
+      // somora's own notes about the conversation (an agent switched the
+      // model, someone compacted by hand) are for the person reading
+      // it, not engine internals: they stay visible too.
+      const isSomoraRow = m.role === 'engine_meta' && m.meta.engine === 'somora';
+      if (!showTools && !isVoiceRow && !isSomoraRow && (m.role === 'tool_call' || m.role === 'tool_result' || m.role === 'engine_meta')) return false;
       if (!showMemory && m.role === 'memory_inject') return false;
       return true;
     });
@@ -532,6 +536,9 @@ export function ChatWindow({
   // Run a slash command resolved by the popup. Returns nothing — the
   // result is communicated via systemNotice (transient banner above
   // the input) or a thrown error. Either way the draft gets cleared.
+  // A compaction by hand can take half a minute; the header says so
+  // for that long (the notice line clears itself after a few seconds).
+  const [compacting, setCompacting] = useState(false);
   const dispatchSlash = useCallback(
     async (cmd: SlashCommand) => {
       try {
@@ -598,6 +605,17 @@ export function ChatWindow({
               : 'reset → session was empty, nothing to archive',
             tone: 'info',
           });
+        } else if (cmd.kind === 'compact') {
+          setCompacting(true);
+          const r = await api.compactSession(agent.name, sessionId, cmd.focus || undefined).finally(() => setCompacting(false));
+          // A finished compaction also arrives as a chat row
+          // ("context compacted") over the stream.
+          setSystemNotice(
+            r.status === 'compacted'
+              ? { text: r.note ? `compacted · ${r.note}` : 'compacted', tone: 'info' }
+              : { text: r.note ?? `nothing compacted (${r.status})`, tone: 'error' },
+          );
+          refreshSessionInfo();
         } else if (cmd.kind === 'projekt') {
           await api.setSessionProject(agent.name, sessionId, cmd.slug);
           void chat.refreshProject();
@@ -1048,6 +1066,19 @@ export function ChatWindow({
                 streaming…
               </span>
             )}
+            {compacting && !chat.streaming && (
+              <span
+                style={{
+                  fontSize: 9,
+                  fontFamily: '"JetBrains Mono", monospace',
+                  color: 'var(--accent)',
+                  letterSpacing: '0.05em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                compacting…
+              </span>
+            )}
             <WorkBadge
               work={work}
               open={workOpen}
@@ -1351,6 +1382,7 @@ export function ChatWindow({
         anchorRect={menuAnchorRect}
         model={model}
         streaming={chat.streaming}
+        compacting={compacting}
         runningTurnModel={runningTurnModel}
         thinking={thinking}
         showThinking={showThinking}

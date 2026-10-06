@@ -737,6 +737,21 @@ export const api = {
     }
     return (await res.json()) as { id: string; slug: string };
   },
+  /** Compact the session by hand (`/compact [focus]`). Throws with the
+   *  server's message on a refusal (a running turn answers 409). */
+  compactSession: async (
+    agent: string,
+    session: string,
+    instructions?: string,
+  ): Promise<{ status: 'compacted' | 'nothing_to_compact' | 'unsupported'; engine: string; note?: string; tokensBefore?: number; tokensAfter?: number }> => {
+    const res = await fetch(
+      `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/compact`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(instructions ? { instructions } : {}) },
+    );
+    const body = (await res.json().catch(() => ({}))) as { error?: string; status?: string; note?: string };
+    if (!res.ok && body.status !== 'unsupported') throw new Error(body.error ?? `compact ${res.status}`);
+    return body as { status: 'compacted' | 'nothing_to_compact' | 'unsupported'; engine: string; note?: string };
+  },
   resetSession: async (
     agent: string,
     session: string,

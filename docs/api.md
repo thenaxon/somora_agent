@@ -1025,6 +1025,28 @@ the archived part a second time.
 The web client's Sessions window, the mobile app's session sheet and
 the TUI's `/unarchive` all use this route.
 
+### `POST /agents/:agent/sessions/:session/compact`
+
+Compacts the session now, on the engine of its model. See
+[Compact by hand](compaction.md#compact-by-hand).
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `instructions` | no | What the summary should keep. Used on `openai-compatible` and `claude-cli`, at most 2000 characters. |
+
+| Status | Body |
+|---|---|
+| `200` | `{agent, session, status: "compacted", engine, tokensBefore?, tokensAfter?, note?}`. `note` says when the engine ignored the instructions (`codex-cli`). |
+| `200` | `{agent, session, status: "nothing_to_compact", engine, note}`. The session is too short, or the engine has no conversation for it yet. |
+| `400` | `{status: "unsupported", engine, note}`. The engine cannot compact by hand (`grok-cli`). |
+| `409` | `{error, busy: true}`. A turn or another compaction is running. |
+| `502` | `{error}`. The engine failed while compacting. |
+
+A finished compaction is stored as an `engine_meta` row with engine
+`somora` and `itemType: "context_compacted"`, and sent to every client
+on the session. Its `payload` holds `text`, `manual: true`, the `engine`,
+the token counts and the `focus`.
+
 ### `POST /agents/:agent/sessions/:session/reset`
 
 Archives the session's content and starts the session empty. If REM is

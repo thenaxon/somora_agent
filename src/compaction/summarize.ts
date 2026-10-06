@@ -531,6 +531,8 @@ export interface RunCompactionInput {
   /** Test seam: run the summary through this instead of the real engine
    *  dispatcher, so the cascade can be exercised without a provider. */
   summarize?: (worker: ResolvedModel) => Promise<SummarizeViaResult>;
+  /** A compaction asked for by hand (`/compact [focus]`). */
+  manual?: { focus?: string };
 }
 
 export async function runCompaction(
@@ -556,6 +558,7 @@ export async function runCompaction(
     systemPrompt,
     pairs: range.pairs,
     priorSummary: range.priorSummary,
+    ...(input.manual?.focus ? { focus: input.manual.focus } : {}),
   });
 
   const tokensBefore = estimateTokens(system + user);
@@ -690,6 +693,7 @@ export async function runCompaction(
     summary: summaryResult.text,
     byEngine: worker.provider.engine,
     byModel: `${worker.providerName}/${worker.modelId}`,
+    ...(input.manual ? { trigger: 'manual' as const } : {}),
     tokensBefore,
     tokensAfter: summaryResult.tokensOut ?? estimateTokens(summaryResult.text),
   };

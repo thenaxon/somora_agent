@@ -66,6 +66,7 @@ export function SessionSheet({
   const [archived, setArchived] = useState<SessionSummary[] | null>(null);
   const [archiveAll, setArchiveAll] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
+  const [compacting, setCompacting] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Fresh lists every time the sheet opens — sessions come and go from
@@ -198,6 +199,31 @@ export function SessionSheet({
     }
   };
 
+  // Compact by hand: summarise the earlier conversation and keep
+  // talking. The result also arrives as a chat row over the stream.
+  const compact = async () => {
+    if (compacting || streaming) return;
+    setCompacting(true);
+    setNote(null);
+    try {
+      const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session.id)}/compact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      const body = (await res.json().catch(() => ({}))) as { status?: string; note?: string; error?: string };
+      if (res.ok && body.status === 'compacted') {
+        setNote(body.note ? `Compacted. ${body.note}` : 'Compacted.');
+      } else {
+        setNote(body.error ?? body.note ?? `Could not compact (HTTP ${res.status})`);
+      }
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCompacting(false);
+    }
+  };
+
   const pickModel = async (m: ModelRow) => {
     if (switching) return;
     if (isActiveModel(modelInfo, m)) return;
@@ -293,6 +319,16 @@ export function SessionSheet({
               <span className="sheet-row-name">Show all ({ordered.length})</span>
             </button>
           )}
+          <button
+            type="button"
+            className="sheet-row more compact-row"
+            disabled={streaming || compacting}
+            onClick={() => void compact()}
+          >
+            <span className="sheet-row-mark" aria-hidden="true">{compacting ? '…' : ''}</span>
+            <span className="sheet-row-name">{compacting ? 'Compacting…' : 'Compact this conversation'}</span>
+            <span className="sheet-row-meta">{streaming ? 'after the turn' : 'keeps the session'}</span>
+          </button>
           <button
             type="button"
             className="sheet-row more archive-toggle"

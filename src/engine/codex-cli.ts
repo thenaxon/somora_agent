@@ -1012,3 +1012,76 @@ export const codexCliEngine: AgentEngine = {
     }
   },
 };
+
+/**
+ * `/compact` on a codex-cli session: Codex compacts its own thread
+ * (`thread/compact/start`), which runs as a short turn of its own.
+ * Codex takes no instructions for it, so a focus is not passed on —
+ * the caller says so. Runs outside a turn; the caller holds the
+ * session lock.
+ */
+export async function compactCodexThread(args: {
+  agent: string;
+  session: string;
+  resolvedModel: TurnInput['resolvedModel'];
+  metaStore: TurnInput['metaStore'];
+  timeoutMs?: number;
+}): Promise<{ status: 'compacted' | 'nothing_to_compact'; tokensBefore?: number; note?: string }> {
+  const { agent, session, metaStore } = args;
+  const meta = (await metaStore.get(agent, session)) as CodexCliMeta;
+  if (!meta.codexSessionId) {
+    return { status: 'nothing_to_compact', note: 'Codex has no thread for this session yet.' };
+  }
+  const logCtx = { engine: ENGINE, agent, session };
+  syncCodexAuth();
+  const launch = resolveCodexLaunch();
+  const workspace = join(somoraCodexHome(), 'workspace');
+  mkdirSync(workspace, { recursive: true });
+  let settle: ((how: 'done' | 'failed') => void) | null = null;
+  const finished = new Promise<'done' | 'failed'>((resolve) => (settle = resolve));
+  let compactedItem = false;
+  // The compaction request's own input: the thread's size before.
+  let tokensBefore: number | undefined;
+  const client = await CodexAppServerClient.start({
+    command: launch.command,
+    args: codexAppServerArgv(launch),
+    env: codexChildEnv(),
+    cwd: workspace,
+    logCtx,
+    onServerRequest: async () => ({}),
+    onNotification: (method, params) => {
+      const p = params as { item?: { type?: string }; turn?: { status?: string }; tokenUsage?: { last?: { inputTokens?: number } } };
+      if (method === 'item/completed' && p.item?.type === 'contextCompaction') compactedItem = true;
+      if (method === 'thread/compacted') compactedItem = true;
+      if (method === 'thread/tokenUsage/updated' && typeof p.tokenUsage?.last?.inputTokens === 'number') tokensBefore = p.tokenUsage.last.inputTokens;
+      if (method === 'turn/completed') settle?.(p.turn?.status === 'completed' ? 'done' : 'failed');
+    },
+  });
+  const timer = setTimeout(() => settle?.('failed'), args.timeoutMs ?? 300_000);
+  try {
+    await client.request(
+      'thread/resume',
+      {
+        threadId: meta.codexSessionId,
+        excludeTurns: true,
+        model: meta.codexRecordedModel ?? args.resolvedModel.modelId,
+        cwd: workspace,
+        approvalPolicy: 'never',
+        sandbox: 'danger-full-access',
+        personality: 'none',
+      },
+      { timeoutMs: 60_000 },
+    );
+    await client.request('thread/compact/start', { threadId: meta.codexSessionId }, { timeoutMs: 60_000 });
+    const how = await finished;
+    if (how !== 'done' || !compactedItem) {
+      logger.warn({ msg: 'engine.manual_compaction_failed', ...logCtx, how, compactedItem });
+      throw new Error('Codex did not finish the compaction.');
+    }
+    logger.info({ msg: 'engine.manual_compaction_done', ...logCtx, tokensBefore });
+    return { status: 'compacted', ...(tokensBefore !== undefined ? { tokensBefore } : {}) };
+  } finally {
+    clearTimeout(timer);
+    client.close();
+  }
+}

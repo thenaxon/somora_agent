@@ -229,6 +229,11 @@ export function historyEventToMessages(e: HistoryEvent): ChatMessage[] {
     if (engine === 'codex-cli' && e.itemType === 'todo_list') {
       const items = extractTodoListItems(e.payload);
       if (items) summary = summariseTodoList(items);
+    } else {
+      // Rows that carry their own sentence (model switched, compacted,
+      // fallback notes) read the same from history as they did live.
+      const text = (e.payload as { text?: unknown } | null | undefined)?.text;
+      if (typeof text === 'string') summary = text;
     }
     return [
       {

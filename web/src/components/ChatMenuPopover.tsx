@@ -23,6 +23,8 @@ interface Props {
   model: SessionModelInfo | null;
   /** A turn is running: a switch made now applies from the next turn. */
   streaming?: boolean;
+  /** A compaction by hand is running. */
+  compacting?: boolean;
   /** The model the running turn started with, when it differs from `model`. */
   runningTurnModel?: string | null;
   thinking: SessionThinkingInfo | null;
@@ -41,6 +43,7 @@ export function ChatMenuPopover({
   anchorRect,
   model,
   streaming,
+  compacting,
   runningTurnModel,
   thinking,
   showThinking,
@@ -297,6 +300,34 @@ export function ChatMenuPopover({
           onClick={onToggleShowThinking}
           title="Display only, this session — the text is still captured and exported. Same as /verbose thinking on|off"
         />
+      </Section>
+
+      <Divider />
+
+      {/* CONVERSATION */}
+      <Section title="CONVERSATION">
+        <div
+          role="button"
+          aria-disabled={streaming || compacting}
+          onClick={() => {
+            if (streaming || compacting) return;
+            void onSlash({ kind: 'compact', focus: '' });
+            onClose();
+          }}
+          style={{
+            ...toggleRowStyle,
+            color: streaming || compacting ? 'var(--text-3)' : 'var(--text-1)',
+            cursor: streaming || compacting ? 'default' : 'pointer',
+          }}
+          title="Summarise the earlier conversation now and keep talking. /compact <what to keep> sets a focus."
+        >
+          {compacting ? 'Compacting…' : 'Compact now'}
+        </div>
+        <Hint>
+          {streaming
+            ? 'a turn is running: compact after it has ended'
+            : 'summarises the earlier conversation; the session goes on. /compact <what to keep> sets a focus'}
+        </Hint>
       </Section>
 
       <Divider />

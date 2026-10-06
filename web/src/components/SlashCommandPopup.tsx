@@ -40,6 +40,7 @@ export type SlashCommand =
   // Render preference, client-side only (mirrors the TUI's /verbose).
   | { kind: 'verbose'; topic: 'thinking'; value: 'on' | 'off' }
   | { kind: 'reset' }
+  | { kind: 'compact'; focus: string }
   | { kind: 'projekt'; slug: string }
   | { kind: 'projekt-unlink' };
 
@@ -67,6 +68,11 @@ const COMMANDS: CommandSpec[] = [
   },
   { name: '/projekt', usage: '/projekt <slug>', hint: 'pin a project to this session (or "unlink" to clear)' },
   { name: '/project', usage: '/project <slug>', hint: 'alias of /projekt' },
+  {
+    name: '/compact',
+    usage: '/compact [what to keep]',
+    hint: 'compact this session now and keep talking — optional focus for the summary',
+  },
   {
     name: '/reset',
     usage: '/reset YES',
@@ -221,6 +227,18 @@ export function SlashCommandPopup({
           label: `create session "${slug}"`,
           detail: 'POST /agents/.../sessions, then switch this window to it',
           resolved: { kind: 'new', slug } as SlashCommand,
+        },
+      ];
+    }
+
+    if (cmd === '/compact') {
+      const focus = argPrefix.trim();
+      return [
+        {
+          commit: focus ? `/compact ${focus}` : '/compact',
+          label: 'compact this session now',
+          detail: focus ? `the summary keeps a focus on: ${focus}` : 'summarise the earlier conversation; the session goes on',
+          resolved: { kind: 'compact', focus } as SlashCommand,
         },
       ];
     }

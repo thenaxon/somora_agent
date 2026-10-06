@@ -196,6 +196,7 @@ import {
   listSessionWaiters,
   getSessionLockStatus,
 } from './session-queue.ts';
+import { compactSessionByHand, manualCompactionText } from './session-compact.ts';
 import { findWaitCycle, registerWait } from './ask-wait-graph.ts';
 import { getTurnOrigin } from './turn-origin.ts';
 import { readPersonaFiles, writePersonaFile } from '../persona/files.ts';
@@ -1935,18 +1936,15 @@ app.put('/agents/:agent/persona/:file', async (c) => {
   return c.json({ ok: true, hash: r.hash, backup: r.backup, chars: body.content.length });
 });
 
-// The system prompt exactly as the next turn on `session` would send it,
-// split into its parts, plus the tool schemas the agent can see (they
-// travel on the API tool channel, not in this text — but they cost
-// context all the same). Read-only: the wiki snapshot is not persisted.
-app.get('/agents/:agent/prompt-preview', async (c) => {
-  const agent = c.req.param('agent');
-  const persona = await loadPersona(agent);
-  if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
-  const sessionRef = c.req.query('session') || 'main';
-  const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
-  const sessionMeta = await sessionMetaStore.get(agent, session);
+// The system prompt and tool list the NEXT turn of a session would send.
+// Read-only: the wiki snapshot is not persisted. Shared by the prompt
+// preview and the manual compaction (which summarises against it).
+async function nextTurnPrompt(
+  agent: string,
+  session: string,
+  persona: NonNullable<Awaited<ReturnType<typeof loadPersona>>>,
+  sessionMeta: Awaited<ReturnType<typeof sessionMetaStore.get>>,
+) {
   // The preview has to answer with the tools the NEXT TURN would send,
   // so it needs the same active model that turn resolves. Without it a
   // capability-gated tool shows up here and then is not offered — the
@@ -1968,10 +1966,6 @@ app.get('/agents/:agent/prompt-preview', async (c) => {
   const available = (await tools.listAvailable(toolCtx)).filter(
     (t) => isToolAllowed(t.name, t.toolset, persona.toolGating) && builderSessionAllows(previewBuilderState, t.name),
   );
-  const toolSchemaChars = available.reduce(
-    (n, t) => n + JSON.stringify({ name: t.name, description: t.description, parameters: t.jsonSchema }).length,
-    0,
-  );
   const assembled = await assembleSystemPrompt({
     agent,
     session,
@@ -1983,6 +1977,26 @@ app.get('/agents/:agent/prompt-preview', async (c) => {
     toolNames: available.map((t) => t.name),
     persistWikiSnapshot: false,
   });
+  return { assembled, available };
+}
+
+// The system prompt exactly as the next turn on `session` would send it,
+// split into its parts, plus the tool schemas the agent can see (they
+// travel on the API tool channel, not in this text — but they cost
+// context all the same). Read-only: the wiki snapshot is not persisted.
+app.get('/agents/:agent/prompt-preview', async (c) => {
+  const agent = c.req.param('agent');
+  const persona = await loadPersona(agent);
+  if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const sessionRef = c.req.query('session') || 'main';
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
+  const sessionMeta = await sessionMetaStore.get(agent, session);
+  const { assembled, available } = await nextTurnPrompt(agent, session, persona, sessionMeta);
+  const toolSchemaChars = available.reduce(
+    (n, t) => n + JSON.stringify({ name: t.name, description: t.description, parameters: t.jsonSchema }).length,
+    0,
+  );
   return c.json({
     agent,
     session,
@@ -2544,6 +2558,65 @@ app.put('/agents/:agent/sessions/:session/model', async (c) => {
     data: { model: body.model, resolved: `${resolved.providerName}/${resolved.modelId}`, source: 'session-override' },
   });
   return c.json({ agent, session, model: body.model, resolved: `${resolved.providerName}/${resolved.modelId}` });
+});
+
+// Compact a session by hand (`/compact [focus]`). Refused while a turn
+// runs; while it works it holds the session's lock, so a message sent
+// meanwhile waits behind it like behind any turn.
+app.post('/agents/:agent/sessions/:session/compact', async (c) => {
+  const agent = c.req.param('agent');
+  const persona = await loadPersona(agent);
+  if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const sessionRef = c.req.param('session');
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
+  const body = (await c.req.json().catch(() => ({}))) as { instructions?: unknown };
+  const focus = typeof body.instructions === 'string' ? body.instructions.trim().slice(0, 2000) : '';
+  if (getSessionLockStatus(agent, session).busy) {
+    return c.json({ error: 'This session is busy (a turn or a compaction is running). Compact after it has finished.', busy: true }, 409);
+  }
+  const sessionMeta = await sessionMetaStore.get(agent, session);
+  const resolvedModel = resolveEffectiveModel(config, persona, sessionMeta);
+  if (!resolvedModel) return c.json({ error: `the session's model cannot be resolved from config.yaml` }, 400);
+  const release = await acquireSessionLock(agent, session, { priority: 'user', turnId: `compact-${Date.now()}` });
+  const started = Date.now();
+  try {
+    const outcome = await compactSessionByHand(
+      {
+        config,
+        metaStore: sessionMetaStore,
+        getHistory,
+        systemPrompt: async () => (await nextTurnPrompt(agent, session, persona, sessionMeta)).assembled.text,
+      },
+      { agent, session, resolvedModel, ...(focus ? { focus } : {}) },
+    );
+    logger.info({ msg: 'session.compacted_by_hand', agent, session, engine: outcome.engine, status: outcome.status, ms: Date.now() - started, focus: Boolean(focus), ...(outcome.status === 'compacted' ? { tokensBefore: outcome.tokensBefore, tokensAfter: outcome.tokensAfter } : {}) });
+    if (outcome.status === 'compacted') {
+      const ev = {
+        kind: 'engine_meta',
+        ts: Date.now(),
+        engine: 'somora',
+        itemType: 'context_compacted',
+        payload: {
+          text: manualCompactionText(outcome, focus || undefined),
+          manual: true,
+          engine: outcome.engine,
+          ...(outcome.tokensBefore !== undefined ? { tokensBefore: outcome.tokensBefore } : {}),
+          ...(outcome.tokensAfter !== undefined ? { tokensAfter: outcome.tokensAfter } : {}),
+          ...(focus ? { focus } : {}),
+        },
+      } as NormalizedEvent;
+      await appendEvent(agent, session, ev);
+      const sse = serializeSessionEvent(ev);
+      if (sse) await publish(agent, session, sse);
+    }
+    return c.json({ agent, session, ...outcome }, outcome.status === 'unsupported' ? 400 : 200);
+  } catch (err) {
+    logger.warn({ msg: 'session.compact_failed', agent, session, err: (err as Error).message });
+    return c.json({ error: `Compaction failed: ${(err as Error).message}` }, 502);
+  } finally {
+    release();
+  }
 });
 
 // Reset a session: archive current jsonl + meta, fresh-start the

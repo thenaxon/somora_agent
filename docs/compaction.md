@@ -17,6 +17,8 @@ is called compaction.
   summaries, in the order they are tried.
 - **A backup when a model is down.** If one summariser refuses, the next
   one is asked.
+- **Compact by hand.** `/compact` shortens a session right away, with an
+  optional focus for the summary, and the conversation goes on.
 
 ## Set it up
 
@@ -47,6 +49,47 @@ kind. REM reads it independently.
 
 The rest of this page, up to [Which model summarises](#which-model-summarises),
 describes the `openai-compatible` path.
+
+## Compact by hand
+
+`/compact` compacts the open session now, instead of waiting for the
+automatic compaction. Use it when a long conversation should go on with
+less weight, or before you change the subject within the same session.
+A sentence after the command tells the summary what to keep:
+
+```text
+/compact
+/compact keep every file path and the open questions
+```
+
+| Client | How |
+|---|---|
+| Web client | `/compact [what to keep]` in the chat, or **Compact now** in the `•••` session menu. |
+| Mobile app | **Compact this conversation** in the session sheet. |
+| TUI | `/compact [what to keep]`. |
+| HTTP | `POST /agents/:agent/sessions/:session/compact`, see the [API](api.md#post-agentsagentsessionssessioncompact). |
+
+What happens depends on the engine of the session's model:
+
+| Engine | Who compacts | The focus sentence |
+|---|---|---|
+| `openai-compatible` | somora, with the same summary as the automatic compaction. The last exchanges (`safetyCushionPairs`) stay as they are. | Goes into the summary prompt. |
+| `claude-cli` | Claude Code compacts its own session, as `/compact` does in Claude Code. | Passed to Claude as its instructions. |
+| `codex-cli` | Codex compacts its own thread. | Not used: Codex takes no instructions for it. The reply says so. |
+| `grok-cli` | Not available. | |
+
+Good to know:
+
+- **Not during a turn.** While a turn runs, the command is refused with
+  `This session is busy`. Compact once the turn has ended. A message
+  you send while a compaction runs waits until it is done.
+- **The chat says what happened.** A row reads, for example,
+  `Compacted by hand: Claude compacted its session (17.2k → 1.5k
+  tokens).` It shows in every client, also with the tool rows hidden.
+- **A short session stays as it is.** With too little conversation the
+  reply says so and nothing changes.
+- **Nothing is lost on disk.** As with the automatic compaction, the
+  session file keeps every message and REM reads all of it.
 
 ## Before a turn
 
@@ -342,6 +385,8 @@ Environment variables override the file:
 | Summaries cost subscription usage | `compaction.worker_chosen` shows a CLI model | Set `compaction.workers`. |
 | Compaction fails | `compaction.worker_failed`, `compaction.all_workers_failed`, `compaction.no_model_fits`, `engine.compaction_fail` | Check that the workers are reachable and that one has a large enough window. |
 | A listed worker is never asked | `compaction.workers_unresolved` or `model.unavailable` | Fix the name, or wait until the model is tried again. |
+| `/compact` answers `This session is busy` | A turn or another compaction is running | Wait until it has ended, then run it again. |
+| `/compact` changes nothing | `session.compacted_by_hand` with `status: nothing_to_compact` | The session is too short, or the engine has no conversation for it yet. |
 
 ## See also
 
