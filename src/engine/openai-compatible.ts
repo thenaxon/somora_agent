@@ -43,6 +43,7 @@ import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 import { buildOpenAiUserContent } from '../multimodal/user-content.ts';
 import { resolveAttachmentForModel } from '../attachments/store.ts';
 import { DEFAULT_MAX_IMAGE_EDGE } from '../multimodal/model-image.ts';
+import { withoutMemoryBlock } from '../memory/inject.ts';
 import { openAiReasoningState, withReasoningRetry } from './reasoning-retry.ts';
 import { formatSampling, isSamplingParamError, samplingBody } from './sampling.ts';
 import { insideOpenThink, splitInlineThink } from './inline-think.ts';
@@ -321,6 +322,8 @@ export async function buildMessages(
   /** attachments.maxImageEdge: replayed images go out scaled, like the
    *  turn they were first sent in. */
   maxImageEdge: number = DEFAULT_MAX_IMAGE_EDGE,
+  /** Turns before this ts lose their memory block in the replay. */
+  memoryDropBefore = 0,
 ): Promise<ChatMessage[]> {
   // The latest compaction summary is appended to the ONE leading system
   // message instead of travelling as a second `system` entry. Strict
@@ -430,7 +433,12 @@ export async function buildMessages(
       // openai-compatible backends. Engines with stateful resumed
       // sessions (claude-cli/codex-cli) don't reconstruct full
       // history so they ignore this code path.
-      const composed = ev.ephemeral ? `${ev.ephemeral}\n\n${headed}` : headed;
+      // Dropped after a pause (memoryDropBefore): the turn keeps its
+      // framing, only the recalled notes go — the cache they protected
+      // has expired, and stale recall in every replayed turn costs
+      // context and measurably suppresses tool calls.
+      const eph = ev.ephemeral && ev.ts < memoryDropBefore ? withoutMemoryBlock(ev.ephemeral) : ev.ephemeral;
+      const composed = eph ? `${eph}\n\n${headed}` : headed;
       // Phase Y.B — when this past turn carried attachments, it must
       // become its own array-content message (can't be collapsed with
       // siblings). Resolve refs from disk and build the content parts;
@@ -836,6 +844,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       pdfMode,
       resolvedModel.model.capabilities,
       input.maxImageEdge,
+      input.memoryDropBefore ?? 0,
     );
     const estTokens = estimateTokens(messages);
     const ctxRatio = estTokens / resolvedModel.model.contextWindow;

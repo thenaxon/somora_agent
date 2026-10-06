@@ -263,6 +263,10 @@ export interface TurnInput {
   /** attachments.maxImageEdge — engines that replay past attachments
    *  from disk scale them the same way. */
   maxImageEdge?: number;
+  /** openai-compatible: past turns before this ts are replayed without
+   *  their memory block (dropped after a pause, see
+   *  providers.<name>.dropMemoryBlocksAfterIdleMinutes). */
+  memoryDropBefore?: number;
 }
 
 export interface AgentEngine {

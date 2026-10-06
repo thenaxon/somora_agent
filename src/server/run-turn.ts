@@ -60,7 +60,7 @@ import {
   refreshLoopActivity,
   resetWikiCallCounter,
 } from '../dream/loop-state.ts';
-import { injectMemoryContext } from '../memory/inject.ts';
+import { injectMemoryContext, injectedKeysInHistory } from '../memory/inject.ts';
 import { getMemoryManager } from '../memory/registry.ts';
 import { logger } from './logger.ts';
 import { loadPersona, type Persona } from '../persona/loader.ts';
@@ -518,6 +518,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   // codex-cli) ignore this field — they inline the block once into
   // the outgoing message and the provider remembers everything.
   const historyBeforeTurn = await getHistory(agent, session);
+  /** openai-compatible: memory blocks of turns before this ts are left out of the replay. */
+  let memoryDropBefore = 0;
 
   // Self-heal: if the previous turn died mid-flight (engine subprocess
   // crash after tool_use but before tool_result), the JSONL tail will
@@ -543,6 +545,28 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     });
   }
 
+  // Which past memory blocks are still in front of the model: none
+  // before the last compaction, and — on an openai-compatible provider
+  // that drops them after a pause — none before the drop point. A pause
+  // longer than the provider's cache lifetime moves the drop point to
+  // now: the cache is gone anyway, so dropping costs nothing.
+  const memoryContextSince = await (async (): Promise<number> => {
+    let since = 0;
+    const compactions = (sessionMeta as { compactions?: Array<{ throughTs: number }> }).compactions;
+    for (const c of compactions ?? []) if (typeof c.throughTs === 'number' && c.throughTs > since) since = c.throughTs;
+    if (resolvedModel.provider.engine !== 'openai-compatible') return since;
+    const idleMin = (resolvedModel.provider as { dropMemoryBlocksAfterIdleMinutes?: number }).dropMemoryBlocksAfterIdleMinutes ?? 60;
+    let dropBefore = typeof sessionMeta.memoryDropBefore === 'number' ? sessionMeta.memoryDropBefore : 0;
+    const last = historyBeforeTurn.length > 0 ? historyBeforeTurn[historyBeforeTurn.length - 1]!.ts : 0;
+    if (idleMin > 0 && last > 0 && Date.now() - last > idleMin * 60_000) {
+      dropBefore = Date.now();
+      await deps.sessionMetaStore.update(agent, session, (m) => ({ ...m, memoryDropBefore: dropBefore }));
+      logger.info({ msg: 'memory.blocks_dropped_after_pause', turnId, agent, session, idleMinutes: Math.round((Date.now() - last) / 60_000), setting: idleMin });
+    }
+    memoryDropBefore = dropBefore;
+    return Math.max(since, dropBefore);
+  })();
+
   let ephemeralContext: string | undefined;
   let memoryHits: Array<{ source: string; slug: string; score: number }> = [];
   let memoryInjectedCount = 0;
@@ -563,6 +587,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       history: historyBeforeTurn,
       userMessage: text,
       cfg: deps.config.memory.autoInject,
+      alreadyInContext: injectedKeysInHistory(historyBeforeTurn, memoryContextSince),
     });
     ephemeralContext = inject.ephemeralContext;
     memoryInjectedCount = inject.injectedCount;
@@ -576,7 +601,10 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         count: inject.injectedCount,
         slugs: inject.hits.map((h) => `${h.source}/${h.slug}`),
         topScore: inject.hits[0]?.score,
+        ...(inject.skippedRepeats > 0 ? { skippedRepeats: inject.skippedRepeats } : {}),
       });
+    } else if (inject.skippedRepeats > 0) {
+      logger.info({ msg: 'memory.inject_all_repeats', turnId, agent, session, skippedRepeats: inject.skippedRepeats });
     }
   } catch (err) {
     logger.warn({ msg: 'memory.inject_failed', turnId, agent, err: (err as Error).message });
@@ -1027,6 +1055,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ...(signal ? { signal } : {}),
         ...(resolvedAttachments.length > 0 ? { attachments: resolvedAttachments } : {}),
         maxImageEdge: deps.config.attachments.maxImageEdge,
+        ...(memoryDropBefore > 0 ? { memoryDropBefore } : {}),
       },
     });
 

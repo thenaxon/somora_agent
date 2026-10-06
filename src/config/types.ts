@@ -221,6 +221,16 @@ export const OpenAiCompatibleProviderSchema = z.object({
    * agent or session names.
    */
   sendUserTag: z.boolean().default(true).optional(),
+  /**
+   * The memory block of every past turn is replayed with the history so
+   * the provider's prompt cache keeps hitting. After a pause the cache
+   * has expired anyway — then the old blocks are dropped from the
+   * history, once, and the session continues without them. Minutes of
+   * silence that count as such a pause; 0 keeps them for good. Set it
+   * to the provider's cache lifetime: about 60 for a paid API, a few
+   * minutes for your own server.
+   */
+  dropMemoryBlocksAfterIdleMinutes: z.number().int().min(0).max(10080).default(60).optional(),
 });
 
 /** The one provider variant that carries baseUrl + apiKey. Named so
@@ -314,7 +324,14 @@ export const MemoryAutoInjectConfigSchema = z.object({
    * is the remainder. `null` = use `memory.hybrid` as for every query.
    */
   shortQueryBm25Weight: z.number().min(0).max(1).nullable().default(0.5),
-}).default({ queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500, historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8, historyTurnChars: 800, shortQueryBm25Weight: 0.5 });
+  /**
+   * Leave out hits the model still has in front of it: a note section
+   * already injected in an earlier turn of this session that is still
+   * in the context (not compacted away, not dropped after a pause). Its
+   * place goes to the next hit. Off = every turn gets the full block.
+   */
+  skipRepeats: z.boolean().default(true),
+}).default({ queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500, historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8, historyTurnChars: 800, shortQueryBm25Weight: 0.5, skipRepeats: true });
 
 export const MemoryHybridConfigSchema = z.object({
   vectorWeight: z.number().min(0).max(1).default(0.7),
@@ -371,7 +388,7 @@ export const MemoryConfigSchema = z.object({
 }).default({
   embedding: { provider: 'local', model: 'all-MiniLM-L6-v2' },
   chunking: { targetTokens: 400, overlapTokens: 80 },
-  autoInject: { queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500, historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8, historyTurnChars: 800, shortQueryBm25Weight: 0.5 },
+  autoInject: { queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500, historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8, historyTurnChars: 800, shortQueryBm25Weight: 0.5, skipRepeats: true },
   hybrid: { vectorWeight: 0.7, bm25Weight: 0.3, slugMatchBoost: 1.5, logDemotion: 0.5, pageSupport: 0.3, slugFullNameBoost: 1.5 },
   rescanMinutes: 10,
 });

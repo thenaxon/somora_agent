@@ -41,7 +41,56 @@ type AutoInjectCfg = {
   historyWeightEmpty: number;
   historyTurnChars: number;
   shortQueryBm25Weight: number | null;
+  skipRepeats?: boolean;
 };
+
+/** How a hit is shown in the block: the first 600 characters. */
+function snippetOf(text: string): string {
+  return text.length > 600 ? text.slice(0, 600).trimEnd() + '…' : text;
+}
+
+/** Identity of an injected note section: where it is from and what was
+ *  shown. The same section shown again is a repeat; another section of
+ *  the same note is not. */
+export function memoryHitKey(source: string, slug: string, snippet: string): string {
+  snippet = snippet.trimEnd();
+  let h = 0;
+  for (let i = 0; i < snippet.length; i++) h = (Math.imul(h, 31) + snippet.charCodeAt(i)) | 0;
+  return `${source}/${slug}#${(h >>> 0).toString(36)}`;
+}
+
+const BLOCK_RE = /<memory-context>[\s\S]*?<\/memory-context>/g;
+const HIT_HEAD = /^### \[([a-z]+)\/(.+?) · score=[0-9.]+\]$/;
+
+/**
+ * The note sections already in front of the model: parsed from the
+ * memory blocks stored with this session's user messages after `sinceTs`
+ * (the last compaction, or the point where old blocks were dropped).
+ */
+export function injectedKeysInHistory(history: NormalizedEvent[], sinceTs: number): Set<string> {
+  const keys = new Set<string>();
+  for (const ev of history) {
+    if (ev.kind !== 'user_message' || ev.ts <= sinceTs) continue;
+    const eph = (ev as { ephemeral?: string }).ephemeral;
+    if (!eph || !eph.includes('<memory-context>')) continue;
+    for (const block of eph.match(BLOCK_RE) ?? []) {
+      const body = block.replace(/\n?<\/memory-context>$/, '');
+      for (const part of body.split(/\n(?=### \[)/)) {
+        const nl = part.indexOf('\n');
+        if (nl < 0) continue;
+        const head = HIT_HEAD.exec(part.slice(0, nl));
+        if (head) keys.add(memoryHitKey(head[1]!, head[2]!, part.slice(nl + 1)));
+      }
+    }
+  }
+  return keys;
+}
+
+/** Remove the memory block(s) from a stored ephemeral text, keeping the
+ *  rest (turn framing, review block). '' when nothing else is left. */
+export function withoutMemoryBlock(ephemeral: string): string {
+  return ephemeral.replace(BLOCK_RE, '').replace(/\n{3,}/g, '\n\n').trim();
+}
 
 export interface InjectResult {
   /**
@@ -60,10 +109,13 @@ export async function injectMemoryContext(args: {
   history: NormalizedEvent[];
   userMessage: string;
   cfg: AutoInjectCfg;
-}): Promise<InjectResult> {
+  /** Note sections the model still has in context (skipRepeats). */
+  alreadyInContext?: Set<string>;
+}): Promise<InjectResult & { skippedRepeats: number }> {
+  const skip = args.cfg.skipRepeats !== false ? args.alreadyInContext : undefined;
   const query = args.userMessage;
   if (!query.trim()) {
-    return { ephemeralContext: undefined, injectedCount: 0, hits: [] };
+    return { ephemeralContext: undefined, injectedCount: 0, hits: [], skippedRepeats: 0 };
   }
   const context = buildRecallContext(args.history, args.cfg.queryTurns, args.cfg.historyTurnChars);
   const contextWeight = historyWeightFor(query, args.cfg);
@@ -75,24 +127,31 @@ export async function injectMemoryContext(args: {
   const shortBm25 = terms > 0 && terms <= 2 && args.cfg.shortQueryBm25Weight !== null
     ? args.cfg.shortQueryBm25Weight
     : undefined;
-  const hits = await args.mgr.search(query, {
-    limit: args.cfg.maxResults,
+  // Ask for a few more when repeats will be left out, so their places go
+  // to the next hits instead of shrinking the block.
+  const extra = skip && skip.size > 0 ? Math.min(skip.size, 10) : 0;
+  const found = await args.mgr.search(query, {
+    limit: args.cfg.maxResults + extra,
     minScore: args.cfg.minScore,
     ...(context ? { context, contextWeight, alsoQueryAlone } : {}),
     ...(shortBm25 !== undefined ? { bm25Weight: shortBm25 } : {}),
   });
 
+  const fresh = skip ? found.filter((h) => !skip.has(memoryHitKey(h.source, h.slug, snippetOf(h.text)))) : found;
+  const skippedRepeats = found.length - fresh.length;
+  const hits = fresh.slice(0, args.cfg.maxResults);
   if (hits.length === 0) {
-    return { ephemeralContext: undefined, injectedCount: 0, hits: [] };
+    return { ephemeralContext: undefined, injectedCount: 0, hits: [], skippedRepeats };
   }
   const block = formatMemoryBlock(hits, args.cfg.maxTokens);
   if (!block) {
-    return { ephemeralContext: undefined, injectedCount: 0, hits };
+    return { ephemeralContext: undefined, injectedCount: 0, hits, skippedRepeats };
   }
   return {
     ephemeralContext: block,
     injectedCount: hits.length,
     hits,
+    skippedRepeats,
   };
 }
 
@@ -180,7 +239,7 @@ function formatMemoryBlock(hits: Hit[], maxTokens: number): string {
     used += '## Relevant hits for this turn\n\n'.length;
     for (const h of hits) {
       const ref = `[${h.source}/${h.slug} · score=${h.score.toFixed(2)}]`;
-      const snippet = h.text.length > 600 ? h.text.slice(0, 600).trimEnd() + '…' : h.text;
+      const snippet = snippetOf(h.text);
       const block = `### ${ref}\n${snippet}`;
       const cost = block.length + 2;
       if (used + cost > maxChars && kept > 0) break;

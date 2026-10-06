@@ -108,6 +108,31 @@ rather than answering from these notes.
 Up to 5 hits with a score of at least 0.35 are included, capped at 1500
 tokens. All three limits are settings.
 
+### No repeats in one session
+
+Each block stays in the conversation, so a section shown in an earlier
+turn is still in front of the model. It is not injected again: its
+place goes to the next hit, and when every hit is a repeat no block is
+added at all. Sections count as shown until the session is compacted,
+or until their blocks are dropped after a pause (see below).
+`memory.autoInject.skipRepeats: false` brings back the full block on
+every turn.
+
+### Old blocks after a pause
+
+On an `openai-compatible` provider, somora rebuilds the conversation for
+every request, with each earlier turn's block, so the provider's prompt
+cache keeps hitting. That cache expires after some idle time anyway.
+When a session was silent longer than
+`dropMemoryBlocksAfterIdleMinutes` of its provider (60 by default),
+the earlier blocks are dropped from the conversation, once, and the
+session goes on without them. The rest of each turn stays.
+
+Set the minutes to the cache lifetime of the provider: around 60 for a
+paid API, a few minutes for your own server, `0` to keep the blocks.
+The Claude and ChatGPT subscriptions keep the conversation themselves,
+so there the old blocks leave only when the session is compacted.
+
 > **Note:** The wording of the block header matters. It calls the notes
 > recollection, not observation, and says they never replace a tool.
 > Wording such as "no tool call required" makes smaller models stop
@@ -289,6 +314,7 @@ memory:
     historyWeightEmpty: 0.8
     historyTurnChars: 800
     shortQueryBm25Weight: 0.5
+    skipRepeats: true
   rescanMinutes: 10
   hybrid:
     vectorWeight: 0.7
@@ -318,6 +344,8 @@ wiki:
 | `memory.autoInject.historyWeightEmpty` | The same for a message with none. |
 | `memory.autoInject.historyTurnChars` | How much of each earlier turn is used. |
 | `memory.autoInject.shortQueryBm25Weight` | Share of the word search for a one- or two-word question. `null` uses `bm25Weight`. |
+| `memory.autoInject.skipRepeats` | Leave out sections the model still has in context from an earlier turn of the session. |
+| `providers.<name>.dropMemoryBlocksAfterIdleMinutes` | `openai-compatible` only: after this many idle minutes the earlier blocks leave the replayed conversation (default 60, `0` keeps them). |
 | `memory.rescanMinutes` | Full sweep of vault and wiki every N minutes. `0` switches it off. Unchanged files are skipped. |
 | `memory.hybrid.vectorWeight` | Share of the meaning search. |
 | `memory.hybrid.bm25Weight` | Share of the word search. |

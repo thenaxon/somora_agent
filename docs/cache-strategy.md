@@ -146,6 +146,14 @@ new.
 The price is a larger session file: each user message also stores its
 block, typically 500 to 2000 characters.
 
+Two things keep the blocks from piling up. A section that is still in
+the conversation is not injected again (`memory.autoInject.skipRepeats`).
+And after a pause longer than the provider's
+`dropMemoryBlocksAfterIdleMinutes`, the earlier blocks are dropped from
+the rebuilt conversation, once. The cache has expired by then, so the
+one changed prefix costs nothing extra; from the next turn on the cache
+holds again.
+
 ### Why not a second system message
 
 Putting the recalled notes in a late system message looks cleaner and
@@ -231,6 +239,7 @@ providers:
     baseUrl: ...
     apiKey: ...
     memoryInjectMode: inline-user
+    dropMemoryBlocksAfterIdleMinutes: 60
     models: [...]
 
 agentLoop:
@@ -245,6 +254,7 @@ wiki:
 | Setting | Default | Meaning |
 |---|---|---|
 | `providers.<name>.memoryInjectMode` | `inline-user` | Only for `openai-compatible` providers. `inline-user` puts the per-turn block in front of the user message and keeps the cache. `system` appends it to the system prompt and loses the cache on every turn. |
+| `providers.<name>.dropMemoryBlocksAfterIdleMinutes` | `60` | Only for `openai-compatible` providers. After this many minutes without a turn, the earlier memory blocks are dropped from the rebuilt conversation. Match it to the provider's cache lifetime. `0` keeps them. |
 | `agentLoop.toolUsageReminder` | `true` | Adds the constant tool reminder to the system prompt when the agent has tools. Switching it changes the prefix once. |
 | `wiki.search.overviewMaxChars` | `4000` | Size limit of the wiki overview. A larger value means a larger constant prefix, paid once per session. |
 | `wiki.search.overviewTopNSlugs` | `30` | Most sections listed when the overview falls back to section names and counts. |

@@ -522,6 +522,7 @@ engines take `engine` and `models` and nothing else.
 | `pdfMode` | `rasterize` | `rasterize` sends PDF pages as images and works with every vision model. `native` sends the PDF itself: only for a backend that accepts it. |
 | `memoryInjectMode` | `inline-user` | Where recalled notes go: `inline-user` puts them in the user message and keeps the prefix cache, `system` appends them to the system prompt. |
 | `sendUserTag` | `true` | Sends `user` on every request so a gateway can group cost per agent and session. `false` withholds it. |
+| `dropMemoryBlocksAfterIdleMinutes` | `60` | After this many idle minutes the memory blocks of earlier turns leave the rebuilt conversation. Match it to the provider's cache lifetime; `0` keeps them. See [Memory](memory.md#old-blocks-after-a-pause). |
 
 The `user` value that `sendUserTag` sends:
 
