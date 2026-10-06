@@ -919,6 +919,19 @@ export function ChatWindow({
   }, [ttsAvailable, autoPlay, chat]);
 
   const modelLabel = model?.alias ?? model?.modelId ?? '—';
+  // A switch during a running turn applies from the next turn: the
+  // running one keeps the model it started with. Say so, instead of a
+  // header that reads as if the turn had changed model mid-answer.
+  const modelKey = model ? `${model.provider}/${model.modelId}` : null;
+  const [turnModel, setTurnModel] = useState<{ key: string; label: string } | null>(null);
+  useEffect(() => {
+    if (!chat.streaming) {
+      setTurnModel(null);
+      return;
+    }
+    if (modelKey) setTurnModel((prev) => prev ?? { key: modelKey, label: modelLabel });
+  }, [chat.streaming, modelKey, modelLabel]);
+  const runningTurnModel = turnModel && modelKey && turnModel.key !== modelKey ? turnModel.label : null;
   // Three-state thinking display: active (model supports reasoning + level set),
   // dormant (level set but active model has no 'reasoning' capability — TUI
   // shows the same dormant label), or hidden (no level / off).
@@ -1073,6 +1086,14 @@ export function ChatWindow({
             <span title={model?.modelId ?? 'no model resolved'} style={{ color: 'var(--text-1)' }}>
               {modelLabel}
             </span>
+            {runningTurnModel && (
+              <span
+                style={{ color: 'var(--text-2)' }}
+                title={`The running turn still uses ${runningTurnModel}. ${modelLabel} applies from the next turn.`}
+              >
+                (next turn · now {runningTurnModel})
+              </span>
+            )}
             {chat.lastFallback && (
               <>
                 <Sep />
@@ -1329,6 +1350,8 @@ export function ChatWindow({
         onClose={() => setMenuOpen(false)}
         anchorRect={menuAnchorRect}
         model={model}
+        streaming={chat.streaming}
+        runningTurnModel={runningTurnModel}
         thinking={thinking}
         showThinking={showThinking}
         onToggleShowThinking={() => setShowThinking((v) => !v)}

@@ -88,6 +88,20 @@ export function App({
   const [streaming, setStreaming] = useState(false);
   const [connected, setConnected] = useState(false);
   const [stats, setStats] = useState<TurnStats | null>(null);
+  // The model the session's next turn uses. `stats.model` is the last
+  // turn's; a switch from another client or an agent shows up here at
+  // once (session_model event), not only after the next turn.
+  const [nextModel, setNextModel] = useState<{ label: string; modelId: string } | null>(null);
+  const refreshNextModel = (a: string, s: string): void => {
+    apiRef.current
+      .fetchSessionModel(a, s)
+      .then((info) => {
+        if (info) setNextModel({ label: info.alias ?? info.modelId, modelId: info.modelId });
+      })
+      .catch(() => {
+        /* keep the previous value */
+      });
+  };
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [agentIcons, setAgentIcons] = useState<Record<string, string>>({});
@@ -365,6 +379,8 @@ export function App({
     let cancelled = false;
     setTurns([]);
     setStats(null);
+    setNextModel(null);
+    refreshNextModel(agent, session);
     setPendingQueued([]);
     pendingQueuedBufferRef.current.clear();
     setWork(null);
@@ -602,6 +618,9 @@ export function App({
     switch (ev.kind) {
       case 'connected':
         setConnected(true);
+        return;
+      case 'session-model':
+        refreshNextModel(agent, session);
         return;
       case 'agent-start':
         refreshWork(agent, session);
@@ -1199,6 +1218,7 @@ export function App({
         project={project}
         unreadOtherAgents={unreadOtherAgents}
         workCounters={formatWorkCounters(work)}
+        nextModel={nextModel}
       />
       <SlashAutocomplete matches={slashMatches} selectedIndex={safeAutocompleteIndex} />
       <Box>

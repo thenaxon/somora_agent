@@ -194,6 +194,7 @@ turn runs and the work badge. The second line reads from left to right:
 |---|---|
 | Session | The session name, with the full id beside it in grey when the two differ. |
 | Model | The model the next turn uses. |
+| `(next turn · now <model>)` | The model was switched while a turn runs. The running turn finishes on the model it started with, the menu says the same. |
 | `⇄ <model>` | The last turn was answered by a backup model, the agent's `fallback:` in `agent.yaml`. The tooltip says why. |
 | `🧠 <level>` | The thinking level. `(dormant)` means the model cannot reason, so the level has no effect. Hidden at `off`. |
 | `🧠 auto` | No level is set for the session, the agent or the model. Nothing is sent and the model decides: reasoning models usually think. See the [thinking guide](thinking.md). |

@@ -48,7 +48,8 @@ list while you type a `/`, the input, and a line of hints.
 
 | Part | Meaning |
 |---|---|
-| `🐨 somora · <agent>:<session> · <model>` | Where you are, and the model that answered the last turn. |
+| `🐨 somora · <agent>:<session> · <model>` | Where you are, and the model that answered the last turn. Before the first turn: the model the session will use. |
+| `→ <model> (next turn)` | The session's model was switched since the last turn, here, in another client or by an agent. The next turn uses it. |
 | `Σ↑ 12k+80k¢` | Input tokens the last turn spent, summed over all its requests. The green part with `¢` was read from the cache. |
 | `▣ 45k/200k` | How full the context is. Yellow above 75 %, red above 90 %, magenta when it is over the window. |
 | `↓ 1.2k (300 🧠)` | Output tokens, with reasoning tokens in brackets. A `~` marks an estimate. |

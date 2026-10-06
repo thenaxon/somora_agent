@@ -21,6 +21,10 @@ interface Props {
   /** Snapshot of the ••• button's bounding rect — drives popover position. */
   anchorRect: DOMRect | null;
   model: SessionModelInfo | null;
+  /** A turn is running: a switch made now applies from the next turn. */
+  streaming?: boolean;
+  /** The model the running turn started with, when it differs from `model`. */
+  runningTurnModel?: string | null;
   thinking: SessionThinkingInfo | null;
   /** Display preference for the 🧠 thinking block (per session, stored
    *  client-side by ChatWindow). Same switch as `/verbose thinking`. */
@@ -36,6 +40,8 @@ export function ChatMenuPopover({
   onClose,
   anchorRect,
   model,
+  streaming,
+  runningTurnModel,
   thinking,
   showThinking,
   onToggleShowThinking,
@@ -178,6 +184,11 @@ export function ChatMenuPopover({
             {model.source === 'session-override' ? ' · session override' : ''}
           </Hint>
         )}
+        {runningTurnModel ? (
+          <Hint>the running turn still uses {runningTurnModel}; this model applies from the next turn</Hint>
+        ) : streaming ? (
+          <Hint>a turn is running: a switch applies from the next turn</Hint>
+        ) : null}
         <ToggleRow
           label="Switch model…"
           open={showModelPicker}

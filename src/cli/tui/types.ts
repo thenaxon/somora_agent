@@ -406,6 +406,11 @@ export type StreamEvent =
       turnId: string;
     }
   | {
+      // The session's model was set or cleared from somewhere (another
+      // client, an agent, the API). The client re-reads it.
+      kind: 'session-model';
+    }
+  | {
       // Project focus change broadcast (HTTP-route initiated). MCP-routed
       // agent project_focus tool calls don't reach SSE — clients catch
       // those up via fetch on next chat:final.

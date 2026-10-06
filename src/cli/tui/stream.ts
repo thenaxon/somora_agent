@@ -255,6 +255,8 @@ export function openStream(
           ...(typeof data.summary === 'string' ? { summary: data.summary } : {}),
           payload: data.payload,
         };
+      case 'session_model':
+        return { kind: 'session-model' };
       case 'model_fallback':
         if (typeof data.requested !== 'string' || typeof data.actual !== 'string') return null;
         return {

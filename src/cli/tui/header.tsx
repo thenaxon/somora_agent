@@ -46,6 +46,9 @@ interface Props {
   /** Session work counters (`⌛3 ▶1 🤖2`), empty when idle. Text is
    *  pre-formatted by work-queue.ts; /queue shows the list. */
   workCounters?: string;
+  /** The model the session's next turn uses (alias or id), read from
+   *  the server and refreshed on every switch. */
+  nextModel?: { label: string; modelId: string } | null;
 }
 
 // Status line. Sits right above the input, NOT at the top of the terminal —
@@ -69,6 +72,7 @@ export function Header({
   project,
   unreadOtherAgents,
   workCounters,
+  nextModel,
 }: Props) {
   const tokenSegment = renderTokenSegment(stats);
   const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
@@ -99,6 +103,16 @@ export function Header({
         <>
           <Text color="gray"> · </Text>
           <Text color="magentaBright">{stats.model}</Text>
+          {nextModel && !sameModel(stats.model, nextModel.modelId) ? (
+            // Switched since the last turn (here or elsewhere): the
+            // model shown is the last turn's, the arrow the next one's.
+            <Text color="gray"> → {nextModel.label} (next turn)</Text>
+          ) : null}
+        </>
+      ) : nextModel ? (
+        <>
+          <Text color="gray"> · </Text>
+          <Text color="magentaBright">{nextModel.label}</Text>
         </>
       ) : null}
       {tokenSegment ? (
@@ -276,4 +290,10 @@ function renderTokenSegment(stats: TurnStats | null): ReactElement | null {
       {reasoningSegment}
     </Text>
   );
+}
+
+/** The last turn's model (an id, or `provider/id` after a fallback)
+ *  against the session's next model id. */
+function sameModel(turnModel: string, nextModelId: string): boolean {
+  return turnModel === nextModelId || turnModel.endsWith(`/${nextModelId}`);
 }
