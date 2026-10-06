@@ -281,10 +281,19 @@ export const claudeCliEngine: AgentEngine = {
     // letterbox poll, and records waiting to be yielded from the loop.
     let steerInput: SteerableInput | undefined;
     let steerPoll: ReturnType<typeof setInterval> | undefined;
-    // Messages handed to the SDK beyond the first, and results seen:
-    // the input closes when results === 1 + pushedSteers.
+    // Steers the SDK has not answered yet. The SDK folds a message that
+    // arrives while a tool runs into its next request (right after the
+    // tool result) — the model answers it within the current leg, and
+    // no extra result follows. Only a message that arrives after the
+    // last tool result, while the final answer is written, gets a leg
+    // of its own. Counting every push as a leg left the turn waiting
+    // for a result that never came, until the idle watchdog ended it
+    // as an error (report 2026-10-04; probed against the SDK).
     let pushedSteers = 0;
+    let unansweredSteers = 0;
     let resultsSeen = 0;
+    let sawSuccessResult = false;
+    let closedAfterResult = false;
     const pendingSteerEvents: NormalizedEvent[] = [];
     if (signal) {
       if (signal.aborted) sdkAbortController.abort();
@@ -318,6 +327,27 @@ export const claudeCliEngine: AgentEngine = {
       if (idleTimer) clearTimeout(idleTimer);
       const threshold = pendingToolCalls > 0 ? TOOL_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS;
       idleTimer = setTimeout(() => {
+        // After a successful result with no tool outstanding, silence
+        // means the SDK has nothing left to do — not a dead child. End
+        // the turn normally by closing the input; if the iterator still
+        // does not finish, the next firing aborts as usual.
+        if (sawSuccessResult && pendingToolCalls === 0 && !closedAfterResult && steerInput) {
+          closedAfterResult = true;
+          logger.warn({
+            msg: 'engine.steer_leg_never_started',
+            engine: ENGINE,
+            agent,
+            session,
+            turnId,
+            results: resultsSeen,
+            pushed_steers: pushedSteers,
+            unanswered_steers: unansweredSteers,
+            hint: 'the answer was complete; closing the input instead of failing the turn',
+          });
+          steerInput.close();
+          armIdleTimer();
+          return;
+        }
         watchdogFired = true;
         logger.error({
           msg: 'engine.watchdog_idle_timeout',
@@ -326,7 +356,10 @@ export const claudeCliEngine: AgentEngine = {
           session,
           idleMs: threshold,
           pendingToolCalls,
-          hint: 'no SDK events received — likely underlying claude-cli child died silently after tool_use; aborting to surface as error',
+          hint:
+            pendingToolCalls > 0
+              ? 'no SDK events while a tool call was outstanding — the claude-cli child likely died; aborting to surface as error'
+              : 'no SDK events received — the claude-cli child likely died silently; aborting to surface as error',
         });
         sdkAbortController.abort();
       }, threshold);
@@ -395,6 +428,7 @@ export const claudeCliEngine: AgentEngine = {
               message: { role: 'user', content: steer.frame(m) },
             });
             pushedSteers += 1;
+            unansweredSteers += 1;
           }
           pendingSteerEvents.push({ kind: 'steer_applied', ts: Date.now(), engine: ENGINE, messages: msgs });
         }, 300);
@@ -596,6 +630,14 @@ export const claudeCliEngine: AgentEngine = {
           }
         } else if (msg.type === 'stream_event') {
           const ev = msg.event;
+          // A new request after a result: the SDK is answering the steers
+          // that came in while the final answer was written.
+          if (ev.type === 'message_start' && resultsSeen > 0) {
+            unansweredSteers = 0;
+            // The steer's answer continues the same bubble: keep it a
+            // paragraph of its own instead of gluing it to the last word.
+            if (cumulative && !cumulative.endsWith('\n\n')) cumulative += cumulative.endsWith('\n') ? '\n' : '\n\n';
+          }
           if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta') {
             cumulative += ev.delta.text;
             receivedTextViaStream = true;
@@ -648,6 +690,9 @@ export const claudeCliEngine: AgentEngine = {
         } else if (msg.type === 'user') {
           for (const block of msg.message.content) {
             if (typeof block === 'object' && 'type' in block && block.type === 'tool_result') {
+              // Every steer pushed so far rides along with this tool
+              // result into the next request — the model answers it there.
+              unansweredSteers = 0;
               // Tool finished — drop back toward the normal idle threshold
               // once no tools are outstanding (re-armed below at loop top).
               if (pendingToolCalls > 0) pendingToolCalls--;
@@ -689,7 +734,8 @@ export const claudeCliEngine: AgentEngine = {
             clearInterval(steerPoll);
             steerPoll = undefined;
           }
-          if (resultsSeen >= 1 + pushedSteers) {
+          if (msg.subtype === 'success') sawSuccessResult = true;
+          if (unansweredSteers === 0) {
             steerInput?.close();
           } else {
             logger.info({
@@ -700,6 +746,7 @@ export const claudeCliEngine: AgentEngine = {
               turnId,
               results: resultsSeen,
               pushed_steers: pushedSteers,
+              unanswered_steers: unansweredSteers,
             });
           }
           if (msg.subtype === 'success') {
