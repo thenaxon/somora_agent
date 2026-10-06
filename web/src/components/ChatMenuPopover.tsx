@@ -136,13 +136,18 @@ export function ChatMenuPopover({
   }
 
   const currentModelLabel = model ? model.alias ?? `${model.provider}/${model.modelId}` : '—';
-  const currentThinking = thinking?.effective ?? 'off';
+  // Nothing set means nothing is sent and the model decides — showing
+  // that as "off" made people believe thinking was off while the model
+  // kept thinking (2026-10-06). No segment is lit in that state.
+  const currentThinking = thinking?.effective ?? null;
   const thinkingSource =
     thinking?.source === 'session-override'
-      ? 'session override'
+      ? 'set for this session'
       : thinking?.source === 'persona-default'
-        ? 'persona default'
-        : 'engine default';
+        ? "the agent's default (agent.yaml)"
+        : thinking?.source === 'model-default'
+          ? "the model's default (config.yaml)"
+          : 'nothing set — the model decides; reasoning models usually think';
 
   const node = (
     <div
@@ -239,7 +244,7 @@ export function ChatMenuPopover({
 
       {/* THINKING */}
       <Section title="THINKING">
-        <CurrentLine label="current" value={currentThinking} />
+        <CurrentLine label="current" value={currentThinking ?? 'model decides'} />
         <Hint>{thinkingSource}</Hint>
         <div style={{ display: 'flex', gap: 3, marginTop: 6 }}>
           {(['off', 'low', 'medium', 'high'] as const).map((lvl) => {
@@ -270,7 +275,7 @@ export function ChatMenuPopover({
             color: 'var(--text-3)',
             fontSize: 11,
           }}
-          title="Remove session override, fall back to persona / engine default"
+          title="Remove the session's own choice: the agent's default applies, else the model's default, else the model decides"
         >
           Reset to default
         </div>

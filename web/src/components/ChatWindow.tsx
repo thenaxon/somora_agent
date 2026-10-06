@@ -925,6 +925,9 @@ export function ChatWindow({
   const thinkingLevelSet = thinking?.effective && thinking.effective !== 'off';
   const thinkingActive = thinkingLevelSet && thinking?.modelSupportsReasoning;
   const thinkingDormant = thinkingLevelSet && !thinking?.modelSupportsReasoning;
+  // Nothing set on a reasoning model: nothing is sent, the model decides
+  // — say so instead of showing nothing, which read as "off".
+  const thinkingModelDecides = !thinking?.effective && thinking?.modelSupportsReasoning;
   // No sampling badge in the header: the temperature is configuration,
   // not conversation (the operator 2026-09-03). `/sampling` reports it on
   // demand, same as the TUI.
@@ -1097,6 +1100,17 @@ export function ChatWindow({
                 >
                   🧠 {thinking?.effective}
                   {thinking?.wire ? <span style={{ color: 'var(--text-2)' }}>→{thinking.wire}</span> : null}
+                </span>
+              </>
+            )}
+            {thinkingModelDecides && (
+              <>
+                <Sep />
+                <span
+                  style={{ color: 'var(--text-2)' }}
+                  title="No thinking level set (session, agent or model default): nothing is sent and the model decides — reasoning models usually think. Set one in the chat menu or with /thinking."
+                >
+                  🧠 auto
                 </span>
               </>
             )}

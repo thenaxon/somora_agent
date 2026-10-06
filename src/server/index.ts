@@ -29,6 +29,7 @@ import {
 } from 'node:os';
 import { resolve as resolvePath } from 'node:path';
 import { WebSocketServer } from 'ws';
+import { resolveThinking, VALID_THINKING_LEVELS } from './thinking-resolve.ts';
 import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, currentConfigProblem, getFreshConfig, loadConfig, primeFreshConfig } from '../config/loader.ts';
 import { diffConfigSections, restartRequiredFor, RESTART_REQUIRED_SECTIONS } from '../config/reload.ts';
 import { spawn as spawnChild, spawnSync as spawnSyncChild } from 'node:child_process';
@@ -422,21 +423,6 @@ function resolveEffectiveModel(
   const ref = (typeof override === 'string' && override.length > 0 ? override : persona.model);
   if (!ref) return null;
   return resolveAnyRef(config, ref);
-}
-
-// Resolve effective thinking depth: per-session override beats persona
-// default. Returns undefined if neither set — engines treat that as
-// "use whatever the model defaults to".
-const VALID_THINKING_LEVELS = new Set<ThinkingLevel>(['off', 'low', 'medium', 'high']);
-function resolveEffectiveThinking(
-  persona: Persona,
-  sessionMeta: Record<string, unknown>,
-): ThinkingLevel | undefined {
-  const override = sessionMeta.thinkingOverride;
-  if (typeof override === 'string' && VALID_THINKING_LEVELS.has(override as ThinkingLevel)) {
-    return override as ThinkingLevel;
-  }
-  return persona.thinking;
 }
 
 // Runs the primary engine. If the primary fails before yielding any
@@ -2668,7 +2654,8 @@ app.get('/agents/:agent/sessions/:session/thinking', async (c) => {
     VALID_THINKING_LEVELS.has(meta.thinkingOverride as ThinkingLevel)
       ? (meta.thinkingOverride as ThinkingLevel)
       : null;
-  const effective = resolveEffectiveThinking(persona, meta) ?? null;
+  const thinking = resolveThinking(persona, meta, resolved?.model);
+  const effective = thinking.level ?? null;
   // Wire value the engine sends for this level (per-model
   // `reasoning.levels`); null when identical to the level or not applicable.
   // openai-compatible: the reasoning_effort body value. codex-cli: the
@@ -2689,7 +2676,11 @@ app.get('/agents/:agent/sessions/:session/thinking', async (c) => {
     effective,
     override,
     personaDefault: persona.thinking ?? null,
-    source: override ? 'session-override' : effective ? 'persona-default' : 'engine-default',
+    // The active model's `reasoning.default`, if it has one.
+    modelDefault: resolved?.model.reasoning?.default ?? null,
+    // session-override | persona-default | model-default | engine-default
+    // (nothing set: nothing is sent, the model decides — not "off").
+    source: thinking.source,
     modelSupportsReasoning,
     wire: wireValue !== null && wireValue !== effective ? wireValue : null,
   });

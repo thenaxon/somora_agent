@@ -429,13 +429,15 @@ export async function runCommand(
           out.push({ kind: 'notice', text: 'could not fetch thinking state', tone: 'error' });
           return out;
         }
-        const eff = info.effective ?? '(engine default)';
+        const eff = info.effective ?? 'model decides';
         const sourcePart =
           info.source === 'session-override'
-            ? ` — session-override (persona default: ${info.personaDefault ?? '(none)'})`
+            ? ` — set for this session (agent default: ${info.personaDefault ?? 'none'}, model default: ${info.modelDefault ?? 'none'})`
             : info.source === 'persona-default'
-              ? ' — persona default'
-              : ' — no setting, engine default';
+              ? " — the agent's default (agent.yaml)"
+              : info.source === 'model-default'
+                ? " — the model's default (config.yaml)"
+                : ' — nothing set: nothing is sent and the model decides (reasoning models usually think)';
         const dormantPart = info.effective && !info.modelSupportsReasoning
           ? `\n  warning: active model has no 'reasoning' capability — setting is dormant`
           : '';

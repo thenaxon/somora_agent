@@ -36,6 +36,12 @@ export type ThinkingLevel = z.infer<typeof ThinkingLevelSchema>;
  * `reasoning_effort`). See docs/thinking.md → Per-model vocabulary.
  */
 export const ModelReasoningSchema = z.object({
+  /** The thinking level this model runs with when neither the session
+   *  (/thinking) nor the agent (`thinking:` in agent.yaml) sets one, in
+   *  somora's words. Sent explicitly and shown as the model's default in
+   *  every client. Unset = nothing is sent and the model decides — many
+   *  reasoning models then think. Applies on every engine. */
+  default: z.enum(['off', 'low', 'medium', 'high']).optional(),
   /** Body shape. `reasoning_effort` (top-level, default), `reasoning`
    *  (OpenRouter's nested `{ reasoning: { effort } }`), or
    *  `chat_template_kwargs` (vLLM templates that only read kwargs). */
@@ -100,7 +106,8 @@ export const ModelSchema = z.object({
    * injected memory block).
    */
   maxTokens: z.number().int().positive().optional(),
-  /** Reasoning vocabulary + wire shape for this model (openai-compatible only). */
+  /** Reasoning default for every engine; vocabulary + wire shape
+   *  (`levels`, `param`) apply to openai-compatible, codex-cli, grok-cli. */
   reasoning: ModelReasoningSchema.optional(),
   /** Vendor-recommended sampling defaults for this model (openai-compatible
    *  only). agent.yaml `sampling:` and the session override win per key. */

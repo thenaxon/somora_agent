@@ -60,6 +60,7 @@ export function SessionSheet({
   const [creating, setCreating] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [switching, setSwitching] = useState<string | null>(null);
+  const [thinking, setThinking] = useState<{ effective: string | null; source: string; modelSupportsReasoning: boolean } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Fresh lists every time the sheet opens — sessions come and go from
@@ -95,6 +96,22 @@ export function SessionSheet({
       cancelled = true;
     };
   }, [open, agent]);
+
+  // The thinking level shown under the models follows the session and
+  // its model (a model may bring its own default).
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session.id)}/thinking`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((t) => {
+        if (!cancelled) setThinking(t);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open, agent, session.id, modelInfo?.provider, modelInfo?.modelId]);
 
   // Another agent's list must not flash while the new one loads.
   useEffect(() => {
@@ -240,6 +257,19 @@ export function SessionSheet({
             <h3>Model for this session</h3>
             {streaming && <span className="sheet-row-meta">applies from the next turn</span>}
           </div>
+          {thinking?.modelSupportsReasoning && (
+            <div className="sheet-row-meta sheet-thinking">
+              thinking: {thinking.effective ?? 'model decides'}
+              {' · '}
+              {thinking.source === 'session-override'
+                ? 'set for this session'
+                : thinking.source === 'persona-default'
+                  ? "agent's default"
+                  : thinking.source === 'model-default'
+                    ? "model's default"
+                    : 'nothing set'}
+            </div>
+          )}
           {models === null && !loadError && <div className="work-sheet-empty">loading…</div>}
           {(models ?? []).map((m) => {
             const active = isActiveModel(modelInfo, m);

@@ -75,6 +75,7 @@ import { resolveOpenAiReasoning } from '../engine/thinking-params.ts';
 import { mergeSampling } from '../engine/sampling.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
 import { currentConfigProblem, getFreshConfig } from '../config/loader.ts';
+import { resolveThinking } from './thinking-resolve.ts';
 
 /** `agent::session` → mtime of the broken config.yaml it was told about. */
 const configProblemNoticed = new Map<string, number>();
@@ -88,7 +89,6 @@ export function configProblemNotice(message: string): string {
   );
 }
 
-const VALID_THINKING_LEVELS = new Set<ThinkingLevel>(['off', 'low', 'medium', 'high']);
 
 // Injected into the system prompt when the agent has tools and
 // `agentLoop.toolUsageReminder` is on. Kept short and constant — it has
@@ -151,17 +151,6 @@ function pickToolIdleTimeoutForEngine(
     case 'openai-compatible':
       return undefined;
   }
-}
-
-function resolveEffectiveThinking(
-  persona: Persona,
-  sessionMeta: Record<string, unknown>,
-): ThinkingLevel | undefined {
-  const override = sessionMeta.thinkingOverride;
-  if (typeof override === 'string' && VALID_THINKING_LEVELS.has(override as ThinkingLevel)) {
-    return override as ThinkingLevel;
-  }
-  return persona.thinking;
 }
 
 /** Sampling: model default < agent.yaml < session override, per key. */
@@ -806,7 +795,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   deps.onActivity(agent);
 
   const modelSupportsReasoning = resolvedModel.model.capabilities.includes('reasoning');
-  const effectiveThinking = resolveEffectiveThinking(persona, sessionMeta);
+  const effectiveThinking = resolveThinking(persona, sessionMeta, resolvedModel.model).level;
   const effectiveSampling = resolveEffectiveSampling(resolvedModel.model, persona, sessionMeta);
   // What the openai-compatible engine will actually put on the wire for
   // this level (per-model `reasoning.levels`). Only sent to clients when

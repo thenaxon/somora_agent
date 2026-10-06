@@ -160,7 +160,11 @@ export interface SessionThinkingInfo {
   effective: ThinkingLevel | null;
   override: ThinkingLevel | null;
   personaDefault: ThinkingLevel | null;
-  source: 'session-override' | 'persona-default' | 'engine-default';
+  /** The active model's `reasoning.default` in config.yaml. */
+  modelDefault?: ThinkingLevel | null;
+  /** engine-default = nothing set: nothing is sent and the model decides
+   *  (many reasoning models think) — never shown as "off". */
+  source: 'session-override' | 'persona-default' | 'model-default' | 'engine-default';
   modelSupportsReasoning: boolean;
   /** Value the engine actually sends when it differs from `effective`
    *  (per-model reasoning vocabulary, e.g. high → xhigh); 'off' = omitted. */

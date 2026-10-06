@@ -37,7 +37,8 @@ export interface SessionThinkingInfo {
   effective: ThinkingLevel | null;
   override: ThinkingLevel | null;
   personaDefault: ThinkingLevel | null;
-  source: 'session-override' | 'persona-default' | 'engine-default';
+  modelDefault?: ThinkingLevel | null;
+  source: 'session-override' | 'persona-default' | 'model-default' | 'engine-default';
   modelSupportsReasoning: boolean;
   wire?: string | null;
 }

@@ -1217,3 +1217,4 @@ button { cursor: pointer; }
 }
 .sheet-row-tag.warn { color: var(--warn); border-color: var(--warn); }
 .sheet-row-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.sheet-thinking { display: block; padding: 2px 4px 6px 24px; }

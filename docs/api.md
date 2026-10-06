@@ -1119,9 +1119,9 @@ The thinking level in force.
 
 | Field | Meaning |
 |---|---|
-| `effective` | The level that applies: `off`, `low`, `medium`, `high`, or `null` for the engine's default. |
-| `override`, `personaDefault` | The session's and the agent's setting, or `null`. |
-| `source` | `session-override`, `persona-default` or `engine-default`. |
+| `effective` | The level that applies: `off`, `low`, `medium`, `high`, or `null` when nothing is set and the model decides. |
+| `override`, `personaDefault`, `modelDefault` | The session's setting, the agent's, and the active model's `reasoning.default`, or `null`. |
+| `source` | `session-override`, `persona-default`, `model-default`, or `engine-default` (nothing set: nothing is sent; show it as "model decides", not "off"). |
 | `modelSupportsReasoning` | Whether the current model uses the setting at all. |
 | `wire` | The value actually sent when it differs from the level, for example `xhigh` for `high`. Else `null`. |
 

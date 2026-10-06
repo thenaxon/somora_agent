@@ -499,6 +499,7 @@ providers:
 | `contextWindow` | required | compaction trigger, worker choice, display. Use the server's limit. | worker choice, display. The native window is right. | worker choice, display. Use the Codex session window, 258400. | worker choice, display |
 | `capabilities` | `[text]` | `image` and `pdf` gate attachments, `reasoning` decides whether a thinking level is sent | same | same | same |
 | `alias` | none | short name for `model:` in `agent.yaml`, letters, digits, `-` and `_` | same | same | same |
+| `reasoning.default` | unset | the thinking level used when session and agent set none, in somora's words; sent explicitly and shown as the model's default | same | same | same |
 | `reasoning.levels` | unset | somora level to the word the model gets, for `off`, `low`, `medium`, `high`. `null` leaves the parameter out. | not used | applied, for example `xhigh` and `max` | applied |
 | `reasoning.param` | `reasoning_effort` | where the word goes: `reasoning_effort`, nested `reasoning` for OpenRouter, or `chat_template_kwargs` | not used | not used | not used |
 | `sampling` | unset | sent on every call, dropped once when the server rejects a key | not used | not used | not used |

@@ -46,13 +46,34 @@ The first source that has a value wins.
 |---|---|---|
 | 1 | The session | `/thinking <level>`, or the THINKING section of the `•••` session menu in the web client |
 | 2 | The agent | `thinking:` in `agent.yaml` |
-| 3 | Nothing set | somora sends no level and the model uses its own default |
+| 3 | The model | `reasoning.default` of the model in `config.yaml` |
+| 4 | Nothing set | somora sends no level and the model uses its own default |
 
-In the TUI, `/thinking -` does the same as `/thinking default`.
+In the TUI, `/thinking -` does the same as `/thinking default`: it
+removes the session's level, and the next source applies.
 
-> **Warning:** "Nothing set" is not "off". A Qwen 3.x thinking model
-> reasons by default, so an agent without `thinking:` runs it at full
-> depth. Give such agents an explicit level.
+"Nothing set" is not "off". Many reasoning models think by default,
+Qwen 3.x among them, so an agent without a level runs them
+at full depth. Every client shows this state as **model decides**,
+never as off. To make "off" (or any level) the rule for a model, give
+it a default:
+
+```yaml
+providers:
+  gpu-box:
+    models:
+      - id: my-thinking-model
+        alias: thinker
+        capabilities: [text, reasoning]
+        reasoning:
+          default: "off"          # sent when session and agent set nothing
+          levels: { "off": none, high: high }
+```
+
+The default is written in somora's words (`off`, `low`, `medium`,
+`high`) and goes through the model's `levels` like any other level. It
+applies on every engine. The session menu, `/thinking` and the phone's
+model sheet name it as the model's default.
 
 ## The reasoning capability
 
@@ -250,13 +271,15 @@ Lucid work on the wiki that all agents share, so they are set once.
 | `🧠 medium` | The level is applied. |
 | `🧠 high→xhigh` | Applied, and the model receives a different word than the level. `🧠 high→off` means the parameter is omitted. |
 | `thinking=medium (dormant)` | A level is stored, but the model has no `reasoning` capability. It has no effect. |
+| `🧠 auto` | Web client: nothing is set on a reasoning model, so the model decides. |
 | `thinking` with a spinner | TUI only: the turn runs and no reply text has arrived yet. |
 | `↓ 412 (1.2k 🧠)` | Reasoning tokens of the turn, next to the output tokens. |
 | `(~1.2k 🧠)` | The same as an estimate, see below. |
 
-The TUI and the web client show the same badges. Two differences: the
-web client hides the badge when the level is `off`, and the TUI shows
-the arrow only on `openai-compatible` models. Dream runs are background
+The TUI and the web client show the same badges. Three differences: the
+web client hides the badge when the level is `off`, shows `🧠 auto`
+when nothing is set, and the TUI shows the arrow only on
+`openai-compatible` models. Dream runs are background
 work and have no badge.
 
 ## Reasoning tokens
@@ -337,6 +360,7 @@ Where a level is set:
 | `thinking` | `agent.yaml` | `off`, `low`, `medium`, `high`. Unset: nothing is sent. |
 | `rem.thinking` | `agent.yaml` | the same |
 | `rem.dedup.judge.thinking`, `wiki.deep.thinking`, `wiki.lucid.thinking` | `config.yaml` | the same |
+| `reasoning.default` | per model in `config.yaml` | `off`, `low`, `medium`, `high`. Used when session and agent set nothing. Unset: nothing is sent. |
 | `reasoning.param`, `reasoning.levels` | per model in `config.yaml` | see [Mapping levels per model](#mapping-levels-per-model) |
 
 ## Commands
@@ -365,6 +389,7 @@ All three answer 404 for an unknown agent or session. A GET response:
   "effective": "high",
   "override": "high",
   "personaDefault": "medium",
+  "modelDefault": "off",
   "source": "session-override",
   "modelSupportsReasoning": true,
   "wire": "xhigh"
@@ -376,7 +401,8 @@ All three answer 404 for an unknown agent or session. A GET response:
 | `effective` | The level in effect, or `null` when nothing is set. |
 | `override` | The session's level, or `null`. |
 | `personaDefault` | The agent's level, or `null`. |
-| `source` | `session-override`, `persona-default` or `engine-default`. |
+| `modelDefault` | The active model's `reasoning.default`, or `null`. |
+| `source` | `session-override`, `persona-default`, `model-default`, or `engine-default` (nothing set: nothing is sent, the model decides). |
 | `modelSupportsReasoning` | `false` means the level is dormant. |
 | `wire` | The word the engine sends when it differs from `effective`, else `null`. `"off"` means the parameter is omitted. Reported for `openai-compatible` and `codex-cli`. |
 
