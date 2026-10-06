@@ -74,6 +74,19 @@ import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { resolveOpenAiReasoning } from '../engine/thinking-params.ts';
 import { mergeSampling } from '../engine/sampling.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
+import { currentConfigProblem, getFreshConfig } from '../config/loader.ts';
+
+/** `agent::session` → mtime of the broken config.yaml it was told about. */
+const configProblemNoticed = new Map<string, number>();
+
+/** The note an agent gets while config.yaml does not validate. */
+export function configProblemNotice(message: string): string {
+  return (
+    '[system: config] ~/.somora/config.yaml does not validate, so somora keeps running on the last valid version. ' +
+    'Changes since then are not in effect. Fix the file (check it with `somora config check`):\n' +
+    message.replace(/^config\.yaml is invalid \([^)]*\):\n/, '')
+  );
+}
 
 const VALID_THINKING_LEVELS = new Set<ThinkingLevel>(['off', 'low', 'medium', 'high']);
 
@@ -584,6 +597,22 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   // turn — it explains the shape of the turn, so it is read first.
   if (turnPrefix && turnPrefix.trim().length > 0) {
     ephemeralContext = ephemeralContext ? `${turnPrefix}\n\n${ephemeralContext}` : turnPrefix;
+  }
+
+  // config.yaml on disk does not validate: the last valid version keeps
+  // running (getFreshConfig). Tell the agent once per session and broken
+  // version — it is often the one who just edited the file and can fix it.
+  try {
+    await getFreshConfig();
+    const problem = currentConfigProblem();
+    const key = `${agent}::${session}`;
+    if (problem && configProblemNoticed.get(key) !== problem.mtimeMs) {
+      configProblemNoticed.set(key, problem.mtimeMs);
+      const notice = configProblemNotice(problem.message);
+      ephemeralContext = ephemeralContext ? `${notice}\n\n${ephemeralContext}` : notice;
+    }
+  } catch {
+    /* no valid config at all — the turn fails elsewhere with the reason */
   }
 
   // Loop-holder gets the active Lucid review block prepended to the

@@ -293,6 +293,32 @@ export function MobileApp() {
   // foreground, because the browser drops it whenever the page hides.
   const wakeLock = useWakeLock();
 
+  // A broken config.yaml: the server keeps the last valid version and
+  // edits do nothing — say so on the phone too. Checked on start, when
+  // the app comes back to the front, and every minute.
+  const [configProblem, setConfigProblem] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const check = () =>
+      fetch('/config/status')
+        .then((r) => (r.ok ? (r.json() as Promise<{ invalid?: unknown }>) : null))
+        .then((d) => {
+          if (alive && d) setConfigProblem(Boolean(d.invalid));
+        })
+        .catch(() => undefined);
+    void check();
+    const t = setInterval(check, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void check();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
   return (
     <div className="mobile-shell">
       <header className="mobile-header">
@@ -427,6 +453,11 @@ export function MobileApp() {
       )}
 
       {error && <div className="banner error">{error}</div>}
+      {configProblem && (
+        <div className="banner error" role="alert">
+          config.yaml does not validate — somora keeps running on the last valid version. Fix the file (somora config check).
+        </div>
+      )}
       {loading && agents.length === 0 && (
         <div className="banner info">Loading agents…</div>
       )}

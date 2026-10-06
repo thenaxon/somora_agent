@@ -477,6 +477,43 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .taskbar-menu-item:hover:not(:disabled) { background: rgba(255,255,255,0.06); }
 .taskbar-menu-item:disabled { opacity: 0.45; cursor: default; }
 .taskbar-menu-hint { font-style: normal; color: var(--warn, #e0a94a); }
+.taskbar-gear-alert {
+  position: absolute;
+  top: 2px;
+  right: 1px;
+  min-width: 12px;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 12px;
+  text-align: center;
+}
+.taskbar-menu-problem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 420px;
+  padding: 8px 9px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  color: var(--text-0);
+  font-size: 12px;
+}
+.taskbar-menu-problem strong { color: var(--danger); }
+.taskbar-menu-problem span { color: var(--text-1); font-size: 11px; }
+.taskbar-menu-problem pre {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--text-1);
+}
 .taskbar-menu-meta {
   padding: 5px 9px 2px;
   font-family: 'JetBrains Mono', monospace;

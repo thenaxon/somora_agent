@@ -156,6 +156,37 @@ providers:
 #     system: false
 `;
 
+/** One schema problem: the dotted path and what is wrong. */
+export interface ConfigIssue {
+  path: string;
+  message: string;
+}
+
+/** Validate config.yaml text exactly as the server does at start and on
+ *  reload: YAML syntax, the schema, unique model aliases. Never throws. */
+export function validateConfigText(raw: string): { ok: true; config: Config } | { ok: false; issues: ConfigIssue[] } {
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(raw);
+  } catch (err) {
+    return { ok: false, issues: [{ path: '(yaml)', message: (err as Error).message.split('\n')[0] ?? String(err) }] };
+  }
+  const result = ConfigSchema.safeParse(parsed);
+  if (!result.success) {
+    return { ok: false, issues: result.error.issues.map((i) => ({ path: i.path.join('.') || '(root)', message: i.message })) };
+  }
+  try {
+    assertUniqueAliases(result.data);
+  } catch (err) {
+    return { ok: false, issues: [{ path: 'providers', message: (err as Error).message }] };
+  }
+  return { ok: true, config: result.data };
+}
+
+export function formatConfigIssues(issues: ConfigIssue[]): string {
+  return issues.map((i) => `  - ${i.path}: ${i.message}`).join('\n');
+}
+
 export async function loadConfig(): Promise<Config> {
   await mkdir(SOMORA_HOME, { recursive: true });
   let raw: string;
@@ -166,16 +197,11 @@ export async function loadConfig(): Promise<Config> {
     await writeFile(CONFIG_PATH, DEFAULT_CONFIG, 'utf8');
     raw = DEFAULT_CONFIG;
   }
-  const parsed = parseYaml(raw);
-  const result = ConfigSchema.safeParse(parsed);
-  if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
-      .join('\n');
-    throw new Error(`config.yaml is invalid (${CONFIG_PATH}):\n${issues}`);
+  const checked = validateConfigText(raw);
+  if (!checked.ok) {
+    throw new Error(`config.yaml is invalid (${CONFIG_PATH}):\n${formatConfigIssues(checked.issues)}`);
   }
-  assertUniqueAliases(result.data);
-  return result.data;
+  return checked.config;
 }
 
 // Lazy hot-reload cache for config.yaml. Tools that legitimately need
@@ -201,11 +227,27 @@ export async function loadConfig(): Promise<Config> {
 let cachedFreshConfig: Config | null = null;
 let cachedFreshMtimeMs = 0;
 
+/** The file on disk does not validate; the last valid config stays in
+ *  use. `since` = when this version of the file was first seen. */
+export interface ConfigProblem {
+  mtimeMs: number;
+  since: string;
+  message: string;
+}
+let configProblem: ConfigProblem | null = null;
+
+/** Set while config.yaml on disk is invalid and the last valid version
+ *  is in use; null once the file validates again. */
+export function currentConfigProblem(): ConfigProblem | null {
+  return configProblem;
+}
+
 /** After POST /config/reload: make getFreshConfig() hand out the same
  *  object the server just switched to, instead of re-parsing once more. */
 export function primeFreshConfig(cfg: Config, mtimeMs: number): void {
   cachedFreshConfig = cfg;
   cachedFreshMtimeMs = mtimeMs;
+  configProblem = null;
 }
 
 export async function getFreshConfig(): Promise<Config> {
@@ -220,7 +262,30 @@ export async function getFreshConfig(): Promise<Config> {
   if (cachedFreshConfig && mtimeMs === cachedFreshMtimeMs) {
     return cachedFreshConfig;
   }
-  const fresh = await loadConfig();
+  let fresh: Config;
+  try {
+    fresh = await loadConfig();
+  } catch (err) {
+    // A broken edit must not stop every turn of every agent: keep the
+    // last valid config, as POST /config/reload does, and say so once
+    // per version of the file. Without a last valid one (nothing loaded
+    // yet) there is nothing to fall back to.
+    if (!cachedFreshConfig) throw err;
+    if (configProblem?.mtimeMs !== mtimeMs) {
+      configProblem = { mtimeMs, since: new Date().toISOString(), message: (err as Error).message };
+      // Imported here, not at the top: the CLI loads this module too and
+      // must not start the server's log writer.
+      const { logger } = await import('../server/logger.ts');
+      logger.error({ msg: 'config.invalid_kept_last_good', err: (err as Error).message });
+    }
+    cachedFreshMtimeMs = mtimeMs;
+    return cachedFreshConfig;
+  }
+  if (configProblem) {
+    const { logger } = await import('../server/logger.ts');
+    logger.info({ msg: 'config.valid_again' });
+  }
+  configProblem = null;
   cachedFreshConfig = fresh;
   cachedFreshMtimeMs = mtimeMs;
   return fresh;

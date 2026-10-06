@@ -662,6 +662,8 @@ export const api = {
       changedOnDisk: boolean;
       restartRequiredSections: string[];
       restartAvailable: boolean;
+      /** Set while config.yaml does not validate; the last valid version runs. */
+      invalid?: { since: string; message: string } | null;
     }>('/config/status'),
   reloadConfig: async (): Promise<{ ok: boolean; changed: string[]; restartRequired: string[]; error?: string }> => {
     const res = await fetch('/config/reload', { method: 'POST' });

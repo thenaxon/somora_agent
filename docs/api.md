@@ -286,11 +286,12 @@ back to its real size.
 
 ### `GET /config/status`
 
-Whether `config.yaml` changed on disk since the server loaded it, and
-whether the server can restart itself.
+Whether `config.yaml` changed on disk since the server loaded it,
+whether the file is valid, and whether the server can restart itself.
 
 ```json
-{ "path": "/home/me/.somora/config.yaml",
+{ "invalid": null,
+  "path": "/home/me/.somora/config.yaml",
   "loadedAt": "2026-05-14T11:09:08.429Z",
   "changedOnDisk": false,
   "restartRequiredSections": ["server", "memory", "obsidian", "wiki", "mcp",
@@ -301,7 +302,14 @@ whether the server can restart itself.
 
 `restartRequiredSections` are the config sections that are read at
 start and only change after a restart. `restartAvailable` is `true`
-when the systemd user unit is active.
+when somora runs as a background service (systemd user unit on Linux,
+LaunchAgent on macOS).
+
+`invalid` is `null` while the file on disk validates. Otherwise it is
+`{since, message}`: the file does not validate, somora keeps running on
+the last valid version, `since` is when this version of the file was
+first seen and `message` lists the problems. The route checks the file
+on every call.
 
 ### `POST /config/reload`
 

@@ -126,6 +126,15 @@ copy in `backup`. The last five backups per file are kept.
 This covers `AGENTS.md`, `SOUL.md`, `USER.md`, `VOICE.md` and
 `agent.yaml` directly under `~/.somora/agents/<name>/`.
 
+## The server config is checked after each write
+
+When `file_write` or `file_patch` writes `~/.somora/config.yaml`, the
+file is checked the way the server checks it. The write stays. If the
+file does not validate, the result carries `config_invalid` with the
+list of problems, and somora keeps running on the last valid version
+until the file is fixed. `somora config check` runs the same check from
+a shell.
+
 ## Builders write inside their project
 
 A builder agent pinned to a project folder may write only there and in

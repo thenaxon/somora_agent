@@ -13,6 +13,9 @@
 // writable so the agent can self-edit.
 
 import { z } from 'zod';
+import { readFileSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
+import { configPath, validateConfigText } from '../../config/loader.ts';
 import type { ContentBlock } from '../../multimodal/blocks.ts';
 import { resolveVisibleResourceFresh } from '../resources/visibility.ts';
 import type { MultimodalToolResult, ToolContext, ToolDefinition } from '../types.ts';
@@ -353,7 +356,7 @@ export const fileWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
       });
       // A builder gets the language server's verdict on the file (docs/lsp.md).
       const lsp = await lspAfterWrite(ctx, result.path);
-      return lsp ? { ...result, ...lsp } : result;
+      return { ...result, ...(lsp ?? {}), ...configCheckAfterWrite(result.path) };
     }
     const resource = await resolveSshTarget({ ctx, target: input.target });
     return remoteWrite({
@@ -365,6 +368,28 @@ export const fileWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
     });
   },
 };
+
+/** After a local write to ~/.somora/config.yaml: validate it as the
+ *  server will. The write stands (an edit may take two steps), but the
+ *  agent learns right away — the server keeps the last valid version
+ *  until the file validates again. */
+function configCheckAfterWrite(path: string): { config_invalid?: { issues: string[]; note: string } } {
+  if (resolvePath(path) !== resolvePath(configPath())) return {};
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    return {};
+  }
+  const r = validateConfigText(raw);
+  if (r.ok) return {};
+  return {
+    config_invalid: {
+      issues: r.issues.map((i) => `${i.path}: ${i.message}`),
+      note: 'config.yaml does not validate. somora keeps running on the last valid version until it does; fix the listed problems and check with `somora config check`.',
+    },
+  };
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // file_patch
@@ -431,7 +456,7 @@ export const filePatch: ToolDefinition<z.infer<typeof PatchInput>> = {
         replaceAll: input.replace_all,
       });
       const lsp = await lspAfterWrite(ctx, result.path);
-      return lsp ? { ...result, ...lsp } : result;
+      return { ...result, ...(lsp ?? {}), ...configCheckAfterWrite(result.path) };
     }
     const resource = await resolveSshTarget({ ctx, target: input.target });
     return remotePatch({

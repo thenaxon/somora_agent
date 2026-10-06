@@ -83,6 +83,7 @@ Usage:
                                      what is installed, install with npm into ~/.somora/lsp
   somora wiki migrate [step] [id]    move a grown wiki onto the folder template (docs/wiki.md):
                                      guided, or plan|judge|status|approve|dry-run|run|undo
+  somora config check [file]         validate config.yaml exactly as the server does
   somora telemetry show              what the daily update check sends to somora.ai, and when
   somora update [<version>|--edge]   install from npm + rebake systemd + restart
                                      (run \`somora update --help\` for options)
@@ -719,6 +720,10 @@ async function main(): Promise<number> {
     case 'setup': {
       const { runSetupCli } = await import('./setup.ts');
       return await runSetupCli(rest);
+    }
+    case 'config': {
+      const { runConfigCli } = await import('./config.ts');
+      return await runConfigCli(rest);
     }
     case 'wiki': {
       const { runWikiCli } = await import('./wiki.ts');

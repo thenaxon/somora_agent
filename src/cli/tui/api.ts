@@ -99,6 +99,19 @@ export class Api {
     return (await res.json()) as ResetResult;
   }
 
+  /** The server's view of config.yaml; `invalid` is set while the file
+   *  does not validate and the last valid version keeps running. */
+  async fetchConfigProblem(): Promise<{ since: string; message: string } | null> {
+    try {
+      const res = await loopbackFetch(`${this.base}/config/status`);
+      if (!res.ok) return null;
+      const body = (await res.json()) as { invalid?: { since: string; message: string } | null };
+      return body.invalid ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async fetchModels(): Promise<ModelInfo[]> {
     const res = await loopbackFetch(`${this.base}/models`);
     if (!res.ok) return [];

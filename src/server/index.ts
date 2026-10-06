@@ -29,7 +29,7 @@ import {
 } from 'node:os';
 import { resolve as resolvePath } from 'node:path';
 import { WebSocketServer } from 'ws';
-import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig, primeFreshConfig } from '../config/loader.ts';
+import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, currentConfigProblem, getFreshConfig, loadConfig, primeFreshConfig } from '../config/loader.ts';
 import { diffConfigSections, restartRequiredFor, RESTART_REQUIRED_SECTIONS } from '../config/reload.ts';
 import { spawn as spawnChild, spawnSync as spawnSyncChild } from 'node:child_process';
 import { mkdir as mkdirFs, rename as renameFs, stat as statFile, writeFile as writeFileFs } from 'node:fs/promises';
@@ -491,6 +491,9 @@ async function configFileMtime(): Promise<number> {
 try {
   config = await loadConfig();
   configLoadedMtimeMs = await configFileMtime();
+  // The boot config is the first "last valid" one: a broken edit later
+  // falls back to it instead of failing every turn.
+  primeFreshConfig(config, configLoadedMtimeMs);
   configureModelAvailability(config.fallback.retryUnavailableMinutes);
 } catch (err) {
   // pino's worker transport can swallow the error during fast crash; print
@@ -1663,7 +1666,14 @@ app.get('/version', (c) => {
 // are reported so the client can say "restart needed".
 app.get('/config/status', async (c) => {
   const mtimeMs = await configFileMtime();
+  // Re-checks the file (cheap when unchanged) so a broken edit shows up
+  // here even before the next turn.
+  await getFreshConfig().catch(() => undefined);
+  const problem = currentConfigProblem();
   return c.json({
+    // Set while config.yaml does not validate: the last valid version
+    // keeps running. `since` = when this broken version was first seen.
+    invalid: problem ? { since: problem.since, message: problem.message } : null,
     path: configPath(),
     loadedAt: configLoadedAt,
     changedOnDisk: mtimeMs > configLoadedMtimeMs,

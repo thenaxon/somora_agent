@@ -562,6 +562,38 @@ export function App({
     }
   }
 
+  // A broken config.yaml: say so once per broken version (the server
+  // keeps the last valid one, so an edit silently does nothing).
+  const configProblemShownRef = useRef<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      const problem = await apiRef.current.fetchConfigProblem();
+      if (!alive) return;
+      if (!problem) {
+        configProblemShownRef.current = null;
+        return;
+      }
+      if (configProblemShownRef.current === problem.since) return;
+      configProblemShownRef.current = problem.since;
+      appendTurn({
+        kind: 'system',
+        id: nextId(),
+        tone: 'error',
+        text:
+          'config.yaml does not validate — somora keeps running on the last valid version. Fix it (somora config check):\n' +
+          problem.message.replace(/^config\.yaml is invalid \([^)]*\):\n/, ''),
+      });
+    };
+    void check();
+    const t = setInterval(() => void check(), 60_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function appendTurn(t: Turn): void {
     setTurns((prev) => [...prev, t]);
   }

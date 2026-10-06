@@ -405,6 +405,35 @@ apply after a restart. These sections are read once at start:
 Everything else, such as `providers`, `compaction`, `agentLoop` or
 `fallback`, applies with the reload.
 
+### A broken config file
+
+somora also picks up an edited `config.yaml` by itself on the next
+turn. When the edited file has a mistake, somora keeps running on the
+last valid version. No turn fails because of it. Your edit is simply
+not in effect until the file is fixed.
+
+| Where | What you see |
+|---|---|
+| Web client | The gear in the taskbar turns red, and its menu lists the problems. |
+| Mobile app | A red banner at the top. |
+| TUI | One error line with the problems. |
+| Agent | One note in its next turn, so the agent that made the edit can fix it. |
+| Agent writing the file | `file_write` and `file_patch` report the problems in their result as `config_invalid`. |
+| Server log | `config.invalid_kept_last_good`, and `config.valid_again` once it is fixed. |
+
+Check a file before you rely on it:
+
+```bash
+somora config check                  # ~/.somora/config.yaml
+somora config check ./draft.yaml     # any file
+```
+
+The exit code is 0 for a valid file, 1 for an invalid one and 2 when
+the file cannot be read. The check is the same the server runs.
+
+> **Note:** At server start there is no last valid version yet. A
+> broken file then stops the start, with the problems printed.
+
 ### Restart
 
 | Where | How |
@@ -693,6 +722,8 @@ in the agents guide.
 | `somora server status` | Shows the running server, a waiting update and the service state. |
 | `somora tui` | Opens the terminal client against the running server. |
 | `somora update [<version>] [--edge] [--force] [--no-reinit]` | Installs a version from npm, refreshes the service and restarts it. |
+| `somora config check [file]` | Validates `config.yaml` (or another file) exactly as the server does. Exit code 0 valid, 1 invalid, 2 unreadable. |
+| `somora config path` | Prints the path of the config file. |
 | `somora telemetry show [--json]` | Shows what the daily update check sends and when it last ran. |
 | `somora auth status` | Shows both Claude credential stores. |
 | `somora auth sync` | Reconciles the two stores now. |

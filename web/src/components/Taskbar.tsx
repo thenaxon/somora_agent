@@ -50,6 +50,7 @@ export function Taskbar({
     loadedAt: string;
     changedOnDisk: boolean;
     restartAvailable: boolean;
+    invalid: { since: string; message: string } | null;
   } | null>(null);
   const [toast, setToast] = useState<{ text: string; tone: 'info' | 'warn' | 'error' } | null>(null);
   const gearRef = useRef<HTMLDivElement | null>(null);
@@ -60,6 +61,25 @@ export function Taskbar({
     return () => clearTimeout(t);
   }, [toast]);
 
+  // A broken config.yaml must be visible without opening the menu: the
+  // server keeps the last valid version, and edits silently do nothing.
+  useEffect(() => {
+    let alive = true;
+    const check = () =>
+      api
+        .configStatus()
+        .then((r) => {
+          if (alive) setConfigStatus({ loadedAt: r.loadedAt, changedOnDisk: r.changedOnDisk, restartAvailable: r.restartAvailable, invalid: r.invalid ?? null });
+        })
+        .catch(() => undefined);
+    void check();
+    const t = setInterval(check, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+
   useEffect(() => {
     // Refresh the on-disk marker whenever the menu opens — the point of
     // the menu is to tell the user whether a reload would do anything.
@@ -67,7 +87,7 @@ export function Taskbar({
     api
       .configStatus()
       .then((r) =>
-        setConfigStatus({ loadedAt: r.loadedAt, changedOnDisk: r.changedOnDisk, restartAvailable: r.restartAvailable }),
+        setConfigStatus({ loadedAt: r.loadedAt, changedOnDisk: r.changedOnDisk, restartAvailable: r.restartAvailable, invalid: r.invalid ?? null }),
       )
       .catch(() => setConfigStatus(null));
     const onDown = (e: MouseEvent) => {
@@ -307,15 +327,26 @@ export function Taskbar({
           <button
             className="taskbar-tool"
             type="button"
-            title="Server: reload config, restart"
+            title={configStatus?.invalid ? 'config.yaml does not validate — the last valid version is running' : 'Server: reload config, restart'}
             aria-haspopup="menu"
             aria-expanded={gearOpen}
             onClick={() => setGearOpen((v) => !v)}
+            style={configStatus?.invalid ? { color: 'var(--danger)' } : undefined}
           >
             <Settings size={14} />
+            {configStatus?.invalid && <span className="taskbar-gear-alert" aria-label="config problem">!</span>}
           </button>
           {gearOpen && (
             <div className="taskbar-menu" role="menu">
+              {configStatus?.invalid && (
+                <div className="taskbar-menu-problem" role="alert">
+                  <strong>config.yaml does not validate</strong>
+                  <span>
+                    since {new Date(configStatus.invalid.since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} — the last valid version keeps running
+                  </span>
+                  <pre>{configStatus.invalid.message.replace(/^config\.yaml is invalid \([^)]*\):\n/, '')}</pre>
+                </div>
+              )}
               <button
                 className="taskbar-menu-item"
                 type="button"
