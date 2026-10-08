@@ -1471,6 +1471,60 @@ export const ImageGenConfigSchema = z
   .optional();
 export type ImageGenConfig = z.infer<typeof ImageGenConfigSchema>;
 
+// Decision models (docs/decisions.md): models that answer typed questions
+// about supplied state — yes/no probabilities, a choice, a position on a
+// scale — instead of writing text. Spoken to over the System One API
+// (`POST <baseUrl>/v1/systemone`, Jev-style); checked against Clef.
+// Standalone block like imageGen: these are not chat models and must
+// never be picked as one.
+export const DecisionModelSchema = z.object({
+  /** Short handle; `decisions.model` names the one in use. */
+  name: z.string().regex(/^[A-Za-z0-9_-]+$/, 'decision model name must match [A-Za-z0-9_-]+'),
+  /** Server root; the request goes to `<baseUrl>/v1/systemone`. */
+  baseUrl: z.string().url(),
+  /** Sent as `Authorization: Bearer <apiKey>`. Leave out for a local
+   *  server without authentication. */
+  apiKey: z.string().min(1).optional(),
+  /** Sent as the request's `model` field. */
+  model: z.string().min(1),
+  /** OUR input limit in tokens. When the server reports a lower one
+   *  (`GET <baseUrl>/v1/models` → max_input_tokens), that one applies.
+   *  Without it, the server's value is used. */
+  maxInputTokens: z.number().int().positive().optional(),
+  /** `image`: the model reads images sent with the state. */
+  capabilities: z.array(z.enum(['text', 'image'])).default(['text']),
+  /** Wall-clock cap for one request. Long inputs and images take tens
+   *  of seconds and queue behind each other (measured on Clef 2026-10-08:
+   *  four images plus ~30k tokens 19 s, ~60k tokens 24 s). */
+  timeoutMs: z.number().int().min(5_000).max(600_000).default(90_000),
+});
+export type DecisionModel = z.infer<typeof DecisionModelSchema>;
+
+export const DecisionsConfigSchema = z
+  .object({
+    /** The model the decision_evaluate tool uses; empty or missing turns
+     *  the tool off. */
+    model: z.string().default(''),
+    models: z.array(DecisionModelSchema).default([]),
+  })
+  .superRefine((d, ctx) => {
+    const names = d.models.map((m) => m.name);
+    const dupe = names.find((n, i) => names.indexOf(n) !== i);
+    if (dupe) ctx.addIssue({ code: 'custom', path: ['models'], message: `decision model name '${dupe}' is used twice` });
+    if (d.model && !names.includes(d.model)) {
+      ctx.addIssue({ code: 'custom', path: ['model'], message: `decisions.model '${d.model}' is not one of decisions.models (${names.join(', ') || 'none configured'})` });
+    }
+  })
+  .default({ model: '', models: [] });
+export type DecisionsConfig = z.infer<typeof DecisionsConfigSchema>;
+
+/** The decision model in use, or null when the tool is off. */
+export function activeDecisionModel(config: { decisions?: DecisionsConfig }): DecisionModel | null {
+  const d = config.decisions;
+  if (!d?.model) return null;
+  return d.models.find((m) => m.name === d.model) ?? null;
+}
+
 // Video generation. Same standalone shape as imageGen and for the same
 // reason, plus one that is specific to video: a render takes minutes on
 // a GPU, so these models must never be reachable as a conversation
@@ -2262,6 +2316,7 @@ export const ConfigSchema = z.object({
   tts: TtsConfigSchema,
   realtimeVoice: RealtimeVoiceConfigSchema,
   imageGen: ImageGenConfigSchema,
+  decisions: DecisionsConfigSchema,
   videoGen: VideoGenConfigSchema,
   browser: BrowserConfigSchema,
   projects: ProjectsConfigSchema,

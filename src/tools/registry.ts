@@ -116,7 +116,7 @@ export class ToolRegistry {
           continue;
         }
       }
-      if (await this.probe(tool, ctx)) out.push(tool);
+      if (await this.probe(tool, ctx)) out.push(tool.forContext ? { ...tool, ...tool.forContext(ctx) } : tool);
     }
     return out;
   }

@@ -147,6 +147,7 @@ export type Toolset =
   | 'projects'
   | 'sentinel'
   | 'image'
+  | 'decision'
   | 'video'
   | 'media'
   | 'browser'
@@ -183,6 +184,16 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
    * registry queries it per turn, no caching.
    */
   available?: (ctx: ToolContext) => boolean | Promise<boolean>;
+  /**
+   * Description and JSON schema for THIS context, when they depend on
+   * config — e.g. decision_evaluate offers `images` only when the decision
+   * model in use reads images. Applied by `listAvailable`, which every
+   * engine's tool list goes through (in-process, Codex dynamic tools, the
+   * MCP child), so the model sees the variant that matches the turn.
+   * The Zod `inputSchema` stays the superset; the handler rejects what the
+   * context does not allow.
+   */
+  forContext?: (ctx: ToolContext) => { description?: string; jsonSchema?: Record<string, unknown> };
   /**
    * Static per-tool timeout override for the engine-level race. When unset,
    * the engine falls back to `agentLoop.toolCallTimeoutMs` (default 30s).
