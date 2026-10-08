@@ -234,8 +234,8 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .window {
   position: absolute;
   background: rgba(11,15,21,0.92);
-  backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
   border: 1px solid var(--line);
   border-radius: 10px;
   box-shadow: var(--shadow-window);
@@ -348,8 +348,8 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   /* Always above the window layer (.desktop-area, z-index 1). */
   z-index: 2;
   background: rgba(7,9,13,0.85);
-  backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   border-top: 1px solid var(--line);
   display: flex;
   align-items: center;
@@ -826,12 +826,12 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
    * reliably through deeply nested react-markdown children, and we've
    * seen "Geduldsspiel"-style sporadic failures pre-fix. Report:
    * 2026-05-15_web-client-text-selection-broken.md */
-  user-select: text;
   -webkit-user-select: text;
+  user-select: text;
 }
 .chat-msg-bubble * {
-  user-select: inherit;
   -webkit-user-select: inherit;
+  user-select: inherit;
 }
 .chat-msg.agent .chat-msg-bubble {
   background: var(--agent-tint-strong, var(--bg-2));

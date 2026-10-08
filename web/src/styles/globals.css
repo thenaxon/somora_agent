@@ -52,8 +52,8 @@ body {
   color: var(--text-2);
   font-size: 11px;
   line-height: 18px;
-  user-select: none;
   -webkit-user-select: none;
+  user-select: none;
   border-radius: 4px;
   padding: 0 4px 0 2px;
   margin-left: -2px;
@@ -101,8 +101,8 @@ body {
   justify-content: flex-end;
   max-height: calc(1.45em * 9);
   overflow: clip;
-  mask-image: linear-gradient(to bottom, transparent 0, #000 1.6em);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.6em);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 1.6em);
 }
 /* Final view: full text, scrolls inside itself past ~40vh. */
 .thinking-body.full {

@@ -325,8 +325,8 @@ button { cursor: pointer; }
   font-size: 14px;
   overflow-wrap: anywhere;
   word-break: break-word;
-  user-select: text;
   -webkit-user-select: text;
+  user-select: text;
 }
 /* Markdown tables in bubbles: real table, cell padding, subtle row
  * lines, a distinct header; the wrapper scrolls wide tables. No
