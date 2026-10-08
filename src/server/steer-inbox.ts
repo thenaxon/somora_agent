@@ -41,8 +41,8 @@ const steerable = new Map<string, Steerable>();
 
 const key = (agent: string, session: string): string => `${agent}/${session}`;
 
-/** Engines that read the inbox between steps. grok-cli does not. */
-export const STEERABLE_ENGINES: ReadonlySet<string> = new Set(['openai-compatible', 'claude-cli', 'codex-cli']);
+/** Engines that read the inbox between steps. */
+export const STEERABLE_ENGINES: ReadonlySet<string> = new Set(['openai-compatible', 'claude-cli', 'codex-cli', 'grok-cli']);
 
 /** Called by run-turn once the engine for a turn is known. */
 export function markSteerable(agent: string, session: string, engine: string, turnId: string): void {

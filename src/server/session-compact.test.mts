@@ -11,7 +11,7 @@ const model = (engine: string): ResolvedModel =>
 
 function deps(over: Partial<ManualCompactionDeps['engines']> = {}) {
   const meta: Record<string, unknown> = {};
-  const calls: Record<string, unknown[]> = { run: [], claude: [], codex: [] };
+  const calls: Record<string, unknown[]> = { run: [], claude: [], codex: [], grok: [] };
   const d: ManualCompactionDeps = {
     config: { providers: {}, compaction: {} } as unknown as Config,
     metaStore: {
@@ -38,6 +38,10 @@ function deps(over: Partial<ManualCompactionDeps['engines']> = {}) {
       codex: async (input) => {
         calls.codex!.push(input);
         return { status: 'compacted', tokensBefore: 24653 };
+      },
+      grok: async (input) => {
+        calls.grok!.push(input);
+        return { status: 'compacted', tokensBefore: 5498, tokensAfter: 4521 };
       },
       ...over,
     },
@@ -86,11 +90,18 @@ test('an engine without a thread yet has nothing to compact', async () => {
   assert.deepEqual(o, { status: 'nothing_to_compact', engine: 'claude-cli', note: 'Claude has no conversation for this session yet.' });
 });
 
-test('grok-cli and unknown engines are refused with a reason', async () => {
+test('grok-cli: compacts with sizes, and says that a focus was not used', async () => {
   const { d, calls } = deps();
-  const o = await compactSessionByHand(d, args('grok-cli'));
-  assert.deepEqual(o, { status: 'unsupported', engine: 'grok-cli', note: 'Compacting by hand is not available on the grok-cli engine.' });
-  assert.equal(calls.run!.length + calls.claude!.length + calls.codex!.length, 0);
+  const o = await compactSessionByHand(d, args('grok-cli', 'keep X'));
+  assert.deepEqual(o, { status: 'compacted', engine: 'grok-cli', tokensBefore: 5498, tokensAfter: 4521, note: 'Grok compacts by its own rules and takes no instructions: the focus was not used.' });
+  assert.equal(calls.grok!.length, 1);
+});
+
+test('unknown engines are refused with a reason', async () => {
+  const { d, calls } = deps();
+  const o = await compactSessionByHand(d, args('acme-cli'));
+  assert.deepEqual(o, { status: 'unsupported', engine: 'acme-cli', note: 'Compacting by hand is not available on the acme-cli engine.' });
+  assert.equal(calls.run!.length + calls.claude!.length + calls.codex!.length + calls.grok!.length, 0);
 });
 
 test('the chat row reads well for each engine', () => {

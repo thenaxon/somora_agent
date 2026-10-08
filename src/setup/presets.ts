@@ -49,7 +49,7 @@ export const GROK_PRESET: ProviderPreset = {
   key: 'xai',
   engine: 'grok-cli',
   models: [
-    { id: 'grok-4.7', alias: 'grok', contextWindow: 256000, capabilities: ['text', 'reasoning'], note: 'frontier model' },
+    { id: 'grok-4.7', alias: 'grok', contextWindow: 256000, capabilities: ['text', 'reasoning', 'image'], note: 'frontier model' },
   ],
 };
 

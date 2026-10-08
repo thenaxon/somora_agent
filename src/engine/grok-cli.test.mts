@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildAgentProfile, describeSpawnFailure, GROK_TOOL_GUIDANCE, mcpStatuses, unwrapToolOutput } from './grok-cli.ts';
+import { buildAgentProfile, confirmedInterjections, describeSpawnFailure, GROK_TOOL_GUIDANCE, grokUpdatesFile, mcpStatuses, unwrapToolOutput } from './grok-cli.ts';
 import { grokAuthExpiry, grokChildEnv, somoraGrokHome, syncGrokHome } from './grok-home.ts';
 import { bundledGrokPackage, ensureBundledGrok, resolveGrokLaunch } from './grok-bin.ts';
 import { existsSync, rmSync } from 'node:fs';
@@ -126,4 +126,34 @@ test("a somora tool's result reaches the clients without Grok's wrapper", () => 
   const search = { type: 'SearchTool', result_count: 1, content: '{}' };
   assert.deepEqual(unwrapToolOutput(search), { output: search }, "Grok's own search_tool passes through");
   assert.deepEqual(unwrapToolOutput(undefined), { output: null });
+});
+
+test("a steered message counts as taken once Grok's own record shows it handed to the model", () => {
+  const chunk = (text: string, display: string | undefined, interjection = true) =>
+    JSON.stringify({
+      method: 'session/update',
+      params: { update: { sessionUpdate: 'user_message_chunk', ...(interjection ? { _meta: { interjection: true, modelId: 'grok-4.7' } } : {}), content: { type: 'text', text, ...(display !== undefined ? { _meta: { displayText: display } } : {}) } } },
+    });
+  const pending = [
+    { id: 'a', text: '[somora] Also add PINEAPPLE.' },
+    { id: 'b', text: '[somora] Same text.' },
+    { id: 'c', text: '[somora] Same text.' },
+  ];
+  const lines = [
+    chunk('<user_query>[somora] Also add PINEAPPLE.</user_query>', '[somora] Also add PINEAPPLE.'),
+    chunk('[somora] Same text.', undefined, false), // an ordinary prompt, not an interjection
+    chunk('<user_query>[somora] Same text.</user_query>', '[somora] Same text.'),
+    '{"half": ',
+  ].join('\n');
+  assert.deepEqual(confirmedInterjections(lines, pending), ['a', 'b'], 'the earlier of two equal texts is taken first; the second still waits');
+  assert.deepEqual(confirmedInterjections(chunk('<user_query>[somora] Same text.</user_query>', undefined), [{ id: 'c', text: '[somora] Same text.' }]), ['c'], 'without displayText the wrapped text decides');
+});
+
+test("Grok's session record is found under any working folder", () => {
+  const home = mkdtempSync(join(tmpdir(), 'somora-grok-upd-'));
+  assert.equal(grokUpdatesFile(home, 'sid-1'), null);
+  mkdirSync(join(home, 'sessions', '%2Fwork', 'sid-1'), { recursive: true });
+  writeFileSync(join(home, 'sessions', '%2Fwork', 'sid-1', 'updates.jsonl'), '');
+  assert.equal(grokUpdatesFile(home, 'sid-1'), join(home, 'sessions', '%2Fwork', 'sid-1', 'updates.jsonl'));
+  rmSync(home, { recursive: true, force: true });
 });

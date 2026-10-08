@@ -20,6 +20,7 @@ import { runCompaction } from '../compaction/summarize.ts';
 import type { SessionMetaStore } from '../engine/types.ts';
 import { compactClaudeSession } from '../engine/claude-cli.ts';
 import { compactCodexThread } from '../engine/codex-cli.ts';
+import { compactGrokSession } from '../engine/grok-cli.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 
 export type ManualCompactionOutcome =
@@ -38,6 +39,7 @@ export interface ManualCompactionDeps {
     runCompaction?: typeof runCompaction;
     claude?: typeof compactClaudeSession;
     codex?: typeof compactCodexThread;
+    grok?: typeof compactGrokSession;
   };
 }
 
@@ -108,6 +110,24 @@ export async function compactSessionByHand(
       engine,
       ...pickTokens(r),
       ...(focus ? { note: 'Codex compacts by its own rules and takes no instructions: the focus was not used.' } : {}),
+    };
+  }
+
+  if (engine === 'grok-cli') {
+    const r = await (deps.engines?.grok ?? compactGrokSession)({
+      agent,
+      session,
+      resolvedModel,
+      metaStore: deps.metaStore,
+    });
+    if (r.status !== 'compacted') {
+      return { status: 'nothing_to_compact', engine, note: r.note ?? 'Grok did not compact.' };
+    }
+    return {
+      status: 'compacted',
+      engine,
+      ...pickTokens(r),
+      ...(focus ? { note: 'Grok compacts by its own rules and takes no instructions: the focus was not used.' } : {}),
     };
   }
 

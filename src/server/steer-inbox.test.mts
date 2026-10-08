@@ -16,8 +16,8 @@ import {
 const human = { kind: 'human' as const, via: 'chat' as const };
 
 // nothing steerable until a turn on a capable engine is marked
-assert.equal(steerableTurn('a', 's'), null);
-markSteerable('a', 's', 'grok-cli', 't1');
+markSteerable('a', 's', 'acme-cli', 't1');
+assert.equal(steerableTurn('a', 's'), null, 'an engine outside STEERABLE_ENGINES cannot steer');
 assert.equal(steerableTurn('a', 's'), null, 'grok-cli cannot steer');
 markSteerable('a', 's', 'openai-compatible', 't1');
 assert.deepEqual(steerableTurn('a', 's'), { engine: 'openai-compatible', turnId: 't1' });

@@ -19,7 +19,7 @@
 // grok 0.2.106 — see the `session/update` variants in mapUpdate().
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -34,8 +34,10 @@ import type { NormalizedEvent } from '../types/events.ts';
 import { grokCliReasoningArgs } from './thinking-params.ts';
 import { grokChildEnv, somoraGrokHome, syncGrokHome } from './grok-home.ts';
 import { resolveGrokLaunch } from './grok-bin.ts';
+import { buildCodexAttachments } from '../multimodal/user-content.ts';
 import { capReplayDelta, computeReplayDelta, getLastSeenTs, renderReplayPrefix, withLastSeenTs } from './replay.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
+import type { SteerMessage } from '../server/steer-inbox.ts';
 
 const ENGINE = 'grok-cli';
 
@@ -350,6 +352,9 @@ export function buildAgentProfile(systemPrompt: string): Record<string, unknown>
   };
 }
 
+/** After a Stop, how long Grok gets to end the turn itself. */
+const ABORT_GRACE_MS = 3_000;
+
 /** How long a turn waits for somora's MCP servers to report ready. */
 const MCP_READY_TIMEOUT_MS = 30_000;
 const MCP_READY_POLL_MS = 250;
@@ -371,6 +376,55 @@ export function mcpStatuses(result: unknown): Map<string, string> {
 // ---------------------------------------------------------------------
 
 type Notification = { method: string; params: Record<string, unknown> };
+
+/**
+ * Grok's own record of a session: `<GROK_HOME>/sessions/<cwd>/<id>/updates.jsonl`.
+ * Steering reads it — a mid-turn message is written there the moment
+ * Grok hands it to the model, and nothing on the ACP stream says so.
+ */
+export function grokUpdatesFile(grokHome: string, sessionId: string): string | null {
+  const root = join(grokHome, 'sessions');
+  try {
+    for (const dir of readdirSync(root)) {
+      const f = join(root, dir, sessionId, 'updates.jsonl');
+      if (existsSync(f)) return f;
+    }
+  } catch {
+    /* no sessions yet */
+  }
+  return null;
+}
+
+/**
+ * The ids of steered messages Grok has handed to the model, read from
+ * lines appended to updates.jsonl: a user_message_chunk flagged
+ * `_meta.interjection` whose typed text is the framed message. Earlier
+ * entries match first, so the same text sent twice confirms in order.
+ */
+export function confirmedInterjections(lines: string, pending: { id: string; text: string }[]): string[] {
+  const open = [...pending];
+  const done: string[] = [];
+  for (const line of lines.split('\n')) {
+    if (!line.includes('"interjection"')) continue;
+    let upd: { sessionUpdate?: string; _meta?: { interjection?: boolean }; content?: { text?: string; _meta?: { displayText?: string } } } | undefined;
+    try {
+      upd = (JSON.parse(line) as { params?: { update?: typeof upd } }).params?.update;
+    } catch {
+      continue;
+    }
+    if (upd?.sessionUpdate !== 'user_message_chunk' || upd._meta?.interjection !== true) continue;
+    const typed = upd.content?._meta?.displayText;
+    const wrapped = upd.content?.text ?? '';
+    const i = open.findIndex((p) => p.text === typed || (typed === undefined && wrapped.includes(p.text)));
+    if (i >= 0) done.push(open.splice(i, 1)[0]!.id);
+  }
+  return done;
+}
+
+function imageMimeForPath(path: string): string {
+  const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
+  return ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : 'image/png';
+}
 
 class AcpClient {
   private child: ChildProcessWithoutNullStreams;
@@ -476,6 +530,18 @@ class AcpClient {
 
   private respond(id: number | string, result: unknown): void {
     this.write({ jsonrpc: '2.0', id, result });
+  }
+
+  /** A JSON-RPC notification: no id, no answer (session/cancel). */
+  notify(method: string, params: unknown): void {
+    this.write({ jsonrpc: '2.0', method, params });
+  }
+
+  /** Put an event of somora's own into the stream the turn loop reads,
+   *  so a timer (steering) can wake the loop without its own channel. */
+  inject(note: Notification): void {
+    this.queue.push(note);
+    this.wake();
   }
 
   request(method: string, params: unknown, timeoutMs: number): Promise<JsonRpcFrame> {
@@ -639,17 +705,37 @@ export const grokCliEngine: AgentEngine = {
 
     const client = new AcpClient(bin, args, cwd, grokChildEnv());
     logger.info({ msg: 'engine.grok_spawn', engine: ENGINE, agent: input.agent, session: input.session, bin, source: launch.source, version: launch.version, grokHome: somoraGrokHome(), cwd });
-    const onAbort = () => client.kill();
+    // Stop: ask Grok to cancel the prompt (it ends the turn cleanly and
+    // keeps the session consistent); kill the process only if it has not
+    // stopped within ABORT_GRACE_MS, or when there is no session yet.
+    let activeSessionId: string | null = null;
+    let abortKill: NodeJS.Timeout | null = null;
+    let abortedAt = 0;
+    let steerTimer: NodeJS.Timeout | null = null;
+    /** Steered messages sent to Grok and not yet seen taken (see below). */
+    const steerPending: { id: string; text: string; msg: SteerMessage }[] = [];
+    let settled = false;
+    const onAbort = () => {
+      abortedAt = Date.now();
+      if (!activeSessionId) {
+        client.kill();
+        return;
+      }
+      client.notify('session/cancel', { sessionId: activeSessionId });
+      abortKill = setTimeout(() => client.kill(), ABORT_GRACE_MS);
+      abortKill.unref?.();
+    };
     input.signal?.addEventListener('abort', onAbort, { once: true });
 
     let assistantText = '';
 
-    // Reasoning trace from agent_thought_chunk (untested live).
-
+    // Reasoning trace from agent_thought_chunk.
     let thinkingText = '';
     let emittedAny = false;
     /** A tool ran since the last text: the next text opens a paragraph. */
     let toolSinceText = false;
+    /** Same for the reasoning trace: each model round's thoughts apart. */
+    let roundSinceThought = false;
     const openTools = new Set<string>();
 
     try {
@@ -737,6 +823,7 @@ export const grokCliEngine: AgentEngine = {
         }
         sessionId = sid;
       }
+      activeSessionId = sessionId;
 
       // Grok starts the MCP children with the session and answers before
       // they are up; a prompt sent at once found somora's tools missing
@@ -766,6 +853,9 @@ export const grokCliEngine: AgentEngine = {
       await input.metaStore.update(input.agent, input.session, (cur) => ({
         ...cur,
         grokSessionId: sessionId,
+        // Grok files a session under its working folder; compacting by
+        // hand (compactGrokSession) loads it from the same one.
+        grokCwd: cwd,
         mcpServerName: MCP_SERVER_NAME,
         engine: ENGINE,
       }));
@@ -778,11 +868,27 @@ export const grokCliEngine: AgentEngine = {
       const parts: string[] = [];
       if (input.ephemeralContext?.trim()) parts.push(input.ephemeralContext.trim());
       if (!isFresh && input.projectContext?.trim()) parts.push(input.projectContext.trim());
-      // Text attachments inline, anything else becomes a note (see
-      // renderAttachments) — never a silent drop.
+      // Text attachments inline; images (and PDFs, rendered to page
+      // images like for codex) as ACP image blocks after the text — Grok
+      // takes those in a prompt and scales them itself. Anything else
+      // becomes a note (renderAttachments), never a silent drop.
       const attachments = input.attachments ?? [];
-      if (attachments.length > 0) {
-        const rendered = renderAttachments(attachments);
+      const seeable = attachments.filter((a) => a.mime.kind === 'image' || a.mime.kind === 'pdf');
+      const { imagePaths, promptPrefix: seeablePrefix } = await buildCodexAttachments(seeable);
+      if (seeablePrefix.trim()) parts.push(seeablePrefix.trim());
+      // Stored attachments carry their detected type; rendered PDF pages are PNGs.
+      const knownMime = new Map(seeable.filter((a) => a.mime.kind === 'image').map((a) => [a.path, a.mime.mimeType]));
+      const imageBlocks = imagePaths.flatMap((path) => {
+        try {
+          return [{ type: 'image' as const, mimeType: knownMime.get(path) ?? imageMimeForPath(path), data: readFileSync(path).toString('base64') }];
+        } catch (err) {
+          logger.warn({ engine: ENGINE, path, err: (err as Error).message }, 'attachment image unreadable');
+          return [];
+        }
+      });
+      const rest = attachments.filter((a) => a.mime.kind !== 'image' && a.mime.kind !== 'pdf');
+      if (rest.length > 0) {
+        const rendered = renderAttachments(rest);
         if (rendered) parts.push(rendered);
       }
       // Turns other engines answered since Grok last spoke in this session
@@ -798,7 +904,7 @@ export const grokCliEngine: AgentEngine = {
       parts.push(input.userMessage);
       const promptText = parts.join('\n\n---\n\n');
 
-      const undelivered = attachments.filter((a) => a.mime.kind !== 'text');
+      const undelivered = rest.filter((a) => a.mime.kind !== 'text');
       if (undelivered.length > 0) {
         logger.info(
           { engine: ENGINE, count: undelivered.length, kinds: undelivered.map((a) => a.mime.kind) },
@@ -828,15 +934,86 @@ export const grokCliEngine: AgentEngine = {
       // --- prompt (fire, then stream notifications) ------------------
       const promptDone = client.request(
         'session/prompt',
-        { sessionId, prompt: [{ type: 'text', text: promptText }] },
+        { sessionId, prompt: [{ type: 'text', text: promptText }, ...imageBlocks] },
         // The request resolves only at end-of-turn; the watchdog on the
         // notification stream is what actually bounds a wedged turn, so
         // give this a generous ceiling.
         Math.max(idleMs, toolIdleMs) * 4,
       );
 
-      let settled = false;
+      // --- steering ------------------------------------------------------
+      // A message sent while the turn runs goes to Grok as `_x.ai/interject`;
+      // Grok hands it to the model at its next step (after a tool round,
+      // before the next model call, or before ending the turn). The answer
+      // only says "queued", so the record for the session file waits until
+      // the message shows up in Grok's updates.jsonl. Whatever Grok had not
+      // taken when the turn ended goes back to the letterbox and becomes
+      // the next turn — Grok would otherwise run it as a turn of its own
+      // in a process that is about to stop.
+      let updatesFile: string | null = null;
+      let updatesOffset = 0;
+      const locateUpdates = (): boolean => {
+        if (updatesFile) return true;
+        updatesFile = grokUpdatesFile(somoraGrokHome(), sessionId);
+        if (updatesFile) updatesOffset = statSync(updatesFile).size;
+        return updatesFile !== null;
+      };
+      locateUpdates();
+      /** Messages Grok has taken since the last look, in order. */
+      const takeConfirmed = (): SteerMessage[] => {
+        if (steerPending.length === 0 || !locateUpdates()) return [];
+        const size = statSync(updatesFile!).size;
+        if (size <= updatesOffset) return [];
+        const buf = Buffer.alloc(size - updatesOffset);
+        const fd = openSync(updatesFile!, 'r');
+        try {
+          readSync(fd, buf, 0, buf.length, updatesOffset);
+        } finally {
+          closeSync(fd);
+        }
+        // Only whole lines; a half-written last line is read next time.
+        const text = buf.toString('utf8');
+        const end = text.lastIndexOf('\n');
+        if (end < 0) return [];
+        updatesOffset += Buffer.byteLength(text.slice(0, end + 1));
+        const ids = new Set(confirmedInterjections(text.slice(0, end + 1), steerPending));
+        const taken: SteerMessage[] = [];
+        for (let i = 0; i < steerPending.length; i++) {
+          if (ids.has(steerPending[i]!.id)) taken.push(...steerPending.splice(i--, 1).map((p) => p.msg));
+        }
+        return taken;
+      };
+      if (input.steer) {
+        const steer = input.steer;
+        steerTimer = setInterval(() => {
+          if (settled || client.isClosed || input.signal?.aborted) return;
+          const taken = takeConfirmed();
+          if (taken.length > 0) client.inject({ method: 'somora/steer_applied', params: { messages: taken } });
+          const msgs = steer.drain();
+          for (const m of msgs) {
+            const text = steer.frame(m);
+            client
+              .request('_x.ai/interject', { sessionId, text, interjectionId: m.id }, 5_000)
+              .then((frame) => {
+                if (frame.error) throw new Error(frame.error.message);
+                steerPending.push({ id: m.id, text, msg: m });
+                logger.info({ msg: 'engine.grok_steer_sent', engine: ENGINE, agent: input.agent, session: input.session, steerId: m.id });
+              })
+              .catch((err: unknown) => {
+                logger.warn({ msg: 'engine.steer_refused', engine: ENGINE, agent: input.agent, session: input.session, err: String((err as Error)?.message ?? err) });
+                steer.requeue([m]);
+              });
+          }
+        }, 300);
+        steerTimer.unref?.();
+      }
+
+      settled = false;
       let usage: AcpUsage | undefined;
+      /** Prompt size of the latest model call: what the session holds now. */
+      let lastCallContextTokens: number | undefined;
+      /** The window Grok itself reports for the model, when it does. */
+      let engineContextWindow: number | undefined;
       /** Message from an _x.ai API-failure frame, if the turn hit one. */
       let apiError: string | null = null;
       /** Prompt currently executing, learned from _x.ai/queue/changed. */
@@ -856,12 +1033,15 @@ export const grokCliEngine: AgentEngine = {
       // few notifications, so we keep draining and let the null-return
       // from next() (empty queue + closed / timed out) end the loop.
       for (;;) {
-        if (input.signal?.aborted) break;
-        const window = openTools.size > 0 ? toolIdleMs : idleMs;
+        // After a Stop, keep reading briefly: Grok ends the cancelled
+        // prompt itself (onAbort sent session/cancel), and onAbort kills
+        // the process should that take longer than ABORT_GRACE_MS.
+        const aborting = input.signal?.aborted === true;
+        const window = aborting ? 500 : openTools.size > 0 ? toolIdleMs : idleMs;
         const note = await client.next(window);
 
         if (note === null) {
-          if (settled) break;
+          if (settled || (aborting && !client.isClosed)) break;
           if (client.isClosed) {
             // A user abort kills the child on purpose (onAbort above), so
             // the resulting "exited (signal=SIGTERM)" is not an engine
@@ -891,6 +1071,14 @@ export const grokCliEngine: AgentEngine = {
 
         // xAI-proprietary side-channels (_x.ai/*) carry queue state,
         // announcements, settings — and, crucially, API failures.
+        if (note.method === 'somora/steer_applied') {
+          // No paragraph mark here: the record lands up to ~2 s after Grok
+          // took the message, often mid-sentence of the next round. The
+          // round's end (response_completed) already set it.
+          yield { kind: 'steer_applied', ts: Date.now(), engine: ENGINE, messages: note.params.messages as SteerMessage[] };
+          continue;
+        }
+
         if (note.method.startsWith('_x.ai/')) {
           // Replayed history. session/load re-emits every past frame
           // tagged `_meta.isReplay: true`; drain() clears what arrived
@@ -921,6 +1109,43 @@ export const grokCliEngine: AgentEngine = {
           // like an empty reply, and the configured fallback model
           // never kicked in because the placeholder counted as content.
           const xu = (note.params as { update?: Record<string, unknown> }).update;
+          // Every model call ends with response_completed and its usage
+          // (input_tokens without the cached part, as on Anthropic's API):
+          // the last one is the session's fill level, and it marks the end
+          // of a round — what comes next starts a new paragraph.
+          if (xu?.sessionUpdate === 'response_completed') {
+            const u = xu.usage as { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | undefined;
+            if (u) lastCallContextTokens = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+            toolSinceText = true;
+            roundSinceThought = true;
+            continue;
+          }
+          // Grok compacts its own conversation near the window's end; a row
+          // in the history says so, as for codex — the fill level drops.
+          if (xu?.sessionUpdate === 'auto_compact_completed') {
+            const before = typeof xu.tokens_before === 'number' ? xu.tokens_before : undefined;
+            const after = typeof xu.tokens_after === 'number' ? xu.tokens_after : undefined;
+            logger.info({ msg: 'engine.grok_compacted', engine: ENGINE, agent: input.agent, session: input.session, tokensBefore: before, tokensAfter: after });
+            yield {
+              kind: 'engine_meta',
+              ts: Date.now(),
+              engine: ENGINE,
+              itemType: 'context_compacted',
+              payload: {
+                text: 'grok compacted this conversation itself — the context percentage drops accordingly',
+                reason: 'engine_side',
+                ...(before !== undefined ? { tokensBefore: before } : {}),
+                ...(after !== undefined ? { tokensAfter: after } : {}),
+              },
+            };
+            continue;
+          }
+          if (note.method === '_x.ai/models/update') {
+            const mu = note.params as { currentModelId?: string; availableModels?: { modelId?: string; _meta?: { totalContextTokens?: number } }[] };
+            const cur = mu.availableModels?.find((m) => m.modelId === mu.currentModelId);
+            if (typeof cur?._meta?.totalContextTokens === 'number') engineContextWindow = cur._meta.totalContextTokens;
+            continue;
+          }
           if (xu?.sessionUpdate === 'retry_state' && xu.type === 'failed') {
             apiError = typeof xu.message === 'string' ? xu.message : 'grok reported a failed attempt';
             logger.warn({ engine: ENGINE, apiError }, 'grok API failure');
@@ -975,10 +1200,10 @@ export const grokCliEngine: AgentEngine = {
           }
           case 'agent_thought_chunk': {
             // Reasoning trace (ACP). Cumulative like agent_message_chunk.
-            // UNTESTED live — no Grok account here; wired by the ACP
-            // schema only (content.text like message chunks).
             const t = upd.content?.text ?? '';
             if (t) {
+              if (roundSinceThought && thinkingText && !thinkingText.endsWith('\n')) thinkingText += '\n\n';
+              roundSinceThought = false;
               thinkingText += t;
               yield { kind: 'thinking_delta', ts: Date.now(), engine: ENGINE, text: thinkingText };
             }
@@ -988,6 +1213,7 @@ export const grokCliEngine: AgentEngine = {
             const id = upd.toolCallId ?? randomUUID();
             openTools.add(id);
             toolSinceText = true;
+            roundSinceThought = true;
             yield {
               kind: 'tool_call',
               ts: Date.now(),
@@ -1051,9 +1277,31 @@ export const grokCliEngine: AgentEngine = {
       }
       await promptDone.catch(() => undefined);
 
+      // Steering: what Grok took in its last steps is recorded; the rest
+      // becomes the next turn. Grok writes updates.jsonl from a background
+      // task, so a message taken right before the end may land a moment late.
+      if (steerTimer) {
+        clearInterval(steerTimer);
+        steerTimer = null;
+      }
+      if (input.steer && steerPending.length > 0) {
+        const late: SteerMessage[] = [];
+        for (let waited = 0; ; waited += 100) {
+          late.push(...takeConfirmed());
+          if (steerPending.length === 0 || waited >= 1_000) break;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        if (late.length > 0) yield { kind: 'steer_applied', ts: Date.now(), engine: ENGINE, messages: late };
+        if (steerPending.length > 0) {
+          logger.info({ msg: 'engine.grok_steer_requeued', engine: ENGINE, agent: input.agent, session: input.session, count: steerPending.length });
+          input.steer.requeue(steerPending.splice(0).map((p) => p.msg));
+        }
+      }
+
       // Grok has now heard everything up to here: the next catch-up starts
-      // after this turn. Read fresh — tools may have written the meta.
-      if (emittedAny) {
+      // after this turn. Read fresh — tools may have written the meta. A
+      // stopped turn counts too: Grok kept the prompt it was cancelled on.
+      if (emittedAny || input.signal?.aborted) {
         await input.metaStore
           .update(input.agent, input.session, (fresh) => ({
             ...fresh,
@@ -1111,13 +1359,74 @@ yield {
                 ...(usage.reasoningTokens !== undefined
                   ? { tokens_out_reasoning: usage.reasoningTokens }
                   : {}),
+                ...(lastCallContextTokens !== undefined ? { context_tokens: lastCallContextTokens } : {}),
+                ...(engineContextWindow !== undefined ? { context_window: engineContextWindow } : {}),
               },
             }
           : {}),
       };
     } finally {
       input.signal?.removeEventListener('abort', onAbort);
+      if (abortKill) clearTimeout(abortKill);
+      if (steerTimer) clearInterval(steerTimer);
+      // A turn that threw still hands back what Grok never took.
+      if (steerPending.length > 0) input.steer?.requeue(steerPending.splice(0).map((p) => p.msg));
+      if (abortedAt) {
+        logger.info({ msg: 'engine.grok_abort', engine: ENGINE, agent: input.agent, session: input.session, cancelled: activeSessionId !== null, endedByGrok: settled, exited: client.isClosed, ms: Date.now() - abortedAt });
+      }
       client.kill();
     }
   },
 };
+
+/**
+ * Compact a Grok session by hand (`/compact`): load it in a short-lived
+ * Grok process and send `_x.ai/compact_conversation`, which answers once
+ * Grok has summarised the conversation by its own rules. Grok takes no
+ * instructions for it, like codex. Runs outside a turn; the caller holds
+ * the session lock.
+ */
+export async function compactGrokSession(args: {
+  agent: string;
+  session: string;
+  resolvedModel: TurnInput['resolvedModel'];
+  metaStore: TurnInput['metaStore'];
+  timeoutMs?: number;
+}): Promise<{ status: 'compacted' | 'nothing_to_compact'; tokensBefore?: number; tokensAfter?: number; note?: string }> {
+  const { agent, session, metaStore } = args;
+  const meta = await metaStore.get(agent, session);
+  const sessionId = typeof meta.grokSessionId === 'string' ? meta.grokSessionId : null;
+  if (!sessionId) return { status: 'nothing_to_compact', note: 'Grok has no session for this conversation yet.' };
+  const logCtx = { engine: ENGINE, agent, session };
+  syncGrokHome();
+  const launch = await resolveGrokLaunch();
+  const cwd = typeof meta.grokCwd === 'string' && existsSync(meta.grokCwd) ? meta.grokCwd : (process.env.SOMORA_WORKSPACE ?? homedir());
+  const argv = ['agent', '--no-leader', ...(args.resolvedModel.modelId ? ['-m', args.resolvedModel.modelId] : []), 'stdio'];
+  const client = new AcpClient(launch.bin, argv, cwd, grokChildEnv());
+  try {
+    const init = await client.request('initialize', { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } }, HANDSHAKE_TIMEOUT_MS);
+    if (init.error) throw new Error(client.lastError ?? `grok handshake failed: ${init.error.message}`);
+    const loaded = await client.request('session/load', { sessionId, cwd, mcpServers: [] }, HANDSHAKE_TIMEOUT_MS);
+    if (loaded.error) return { status: 'nothing_to_compact', note: `Grok could not open the session: ${loaded.error.message}` };
+    client.drain();
+    const done = await client.request('_x.ai/compact_conversation', { sessionId }, args.timeoutMs ?? 300_000);
+    if (done.error) {
+      logger.warn({ msg: 'engine.manual_compaction_failed', ...logCtx, err: done.error.message });
+      throw new Error(`Grok did not finish the compaction: ${done.error.message}`);
+    }
+    // The sizes come in the auto_compact_completed update sent just before the answer.
+    let tokensBefore: number | undefined;
+    let tokensAfter: number | undefined;
+    for (let note = await client.next(200); note; note = await client.next(200)) {
+      const u = (note.params as { update?: { sessionUpdate?: string; tokens_before?: number; tokens_after?: number } }).update;
+      if (u?.sessionUpdate === 'auto_compact_completed') {
+        if (typeof u.tokens_before === 'number') tokensBefore = u.tokens_before;
+        if (typeof u.tokens_after === 'number') tokensAfter = u.tokens_after;
+      }
+    }
+    logger.info({ msg: 'engine.manual_compaction_done', ...logCtx, tokensBefore, tokensAfter });
+    return { status: 'compacted', ...(tokensBefore !== undefined ? { tokensBefore } : {}), ...(tokensAfter !== undefined ? { tokensAfter } : {}) };
+  } finally {
+    client.kill();
+  }
+}
