@@ -6,7 +6,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { load as parseYaml } from 'js-yaml';
+import { parseYaml } from '../config/yaml.ts';
 import { logger } from '../server/logger.ts';
 import { listAgents } from '../persona/loader.ts';
 import { parseTeamFile, resolveTeam } from './resolve.ts';

@@ -16,7 +16,7 @@ import { spawnSync } from 'node:child_process';
 import { claudeBinaryForLogin } from './claude-bin.ts';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { load as parseYaml } from 'js-yaml';
+import { parseYaml } from '../config/yaml.ts';
 import {
   configureClaudeCredentialSync,
   credentialSyncStatus,

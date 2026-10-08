@@ -5,7 +5,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { load as parseYamlStrict } from 'js-yaml';
+import { parseYaml as parseYamlStrict } from '../config/yaml.ts';
 import { Document, isMap, isNode, isScalar, isSeq, parseDocument, type Scalar, type YAMLMap } from 'yaml';
 
 import { assertUniqueAliases, ConfigSchema } from '../config/types.ts';

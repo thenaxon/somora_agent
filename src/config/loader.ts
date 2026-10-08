@@ -1,7 +1,7 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { load as parseYaml } from 'js-yaml';
+import { parseYaml } from './yaml.ts';
 import { assertUniqueAliases, type Config, ConfigSchema } from './types.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');

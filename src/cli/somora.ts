@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { SOMORA_VERSION } from '../version.ts';
 import { buildSystemdUnit, extractCustomEnvLines, nodePathLine } from './systemd-unit.ts';
 import { allowScriptsArgs, compareVersions, parseUpdateArgs } from './update-args.ts';
-import { load as parseYaml } from 'js-yaml';
+import { parseYaml } from '../config/yaml.ts';
 import { callServer } from './server-call.ts';
 import { DEFAULT_UPDATE_ENDPOINT, readState, statusFrom, type UpdateCheckStatus } from '../server/update-check.ts';
 import {

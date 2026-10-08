@@ -37,7 +37,7 @@ export function teamFileToYaml(file: TeamFile): string {
       ]),
     ),
   };
-  return HEADER + dumpYaml(ordered, { lineWidth: 100, noRefs: true, quotingType: '"' });
+  return HEADER + dumpYaml(ordered, { lineWidth: 100, noRefs: true, quoteStyle: 'double' });
 }
 
 function ts(): string {

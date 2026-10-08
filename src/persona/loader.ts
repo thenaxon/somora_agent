@@ -15,7 +15,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import matter from 'gray-matter';
-import { load as parseYaml } from 'js-yaml';
+import { parseYaml } from '../config/yaml.ts';
 import { z } from 'zod';
 import { ThinkingLevelSchema, type ThinkingLevel, SamplingSchema, type SamplingConfig } from '../config/types.ts';
 import { logger } from '../server/logger.ts';

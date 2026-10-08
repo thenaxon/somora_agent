@@ -8,7 +8,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { load as parseYaml } from 'js-yaml';
+import { parseYaml } from '../config/yaml.ts';
 
 function target(): { port: number; publicHost?: string } {
   const home = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
