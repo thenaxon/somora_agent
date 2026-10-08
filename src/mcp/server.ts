@@ -52,6 +52,12 @@ async function proxyMain(agent: string, proxyServer: string): Promise<void> {
 
   const persona = await loadPersona(agent);
   const toolGating = persona?.toolGating;
+  // The gating rules need each built-in tool's family: an exception like
+  // `allow: [file_read]` under `deny: [toolset:file]` is told apart from
+  // the old "only these" form by it. Registering sets that lookup; without
+  // it this child read such a file as "only file_read" and served Claude
+  // and Grok no external tool at all.
+  registerAllTools(new ToolRegistry());
 
   const catalog = await readCatalog();
   const entry = catalog?.servers[proxyServer];
