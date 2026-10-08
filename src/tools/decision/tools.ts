@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
 import { activeDecisionModel, type DecisionModel } from '../../config/types.ts';
-import { cachedServerInputLimit, evaluateDecision, GUIDANCE, type DecisionOutcome, type DecisionRequest } from '../../decisions/client.ts';
+import { cachedServerInputLimit, effectiveInputLimit, evaluateDecision, GUIDANCE, type DecisionOutcome, type DecisionRequest } from '../../decisions/client.ts';
 import { detectMimeFromBuffer } from '../../multimodal/mime.ts';
 import { readDimensions } from '../../multimodal/dimensions.ts';
 import { fitImageForModel } from '../../multimodal/model-image.ts';
@@ -109,7 +109,8 @@ function jsonSchema(withImages: boolean): Record<string, unknown> {
 }
 
 function description(model: DecisionModel | null): string {
-  const limit = model ? (model.maxInputTokens ?? cachedServerInputLimit(model)) : null;
+  // The limit that is enforced: the lower of the config's and the server's.
+  const limit = model ? effectiveInputLimit(model.maxInputTokens, cachedServerInputLimit(model)) : null;
   const images = model?.capabilities.includes('image') ?? false;
   return (
     'Ask the configured decision model typed questions about state you supply. It returns probabilities, not prose: ' +
