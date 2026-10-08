@@ -8,9 +8,10 @@
 // design private/mcp-hub-design.md §4.6). Reads go through the normal
 // persona loader; this module is write-side only.
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { replacePersonaFile } from './files.ts';
 import type { ToolGating } from '../tools/gating.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
@@ -75,6 +76,10 @@ export function spliceTopLevelBlock(
   const start = lines.findIndex((l) => keyRe.test(l));
   if (start === -1) {
     if (block === '') return yamlText;
+    // A heading left behind by an older remove: reuse it, do not stack
+    // a second one under it.
+    const trimmed = yamlText.replace(/\s+$/, '');
+    if (trimmed.endsWith(`\n${appendComment}`) || trimmed === appendComment) return `${trimmed}\n${block}`;
     const sep = yamlText.length === 0 || yamlText.endsWith('\n') ? '' : '\n';
     return `${yamlText}${sep}\n${appendComment}\n${block}`;
   }
@@ -91,7 +96,15 @@ export function spliceTopLevelBlock(
       break;
     }
   }
-  const before = lines.slice(0, start).join('\n');
+  // Removing the block takes the heading this function wrote above it
+  // (and the blank line before that) along, so switching a section off
+  // and on again does not stack headings.
+  let head = start;
+  if (block === '' && head > 0 && lines[head - 1] === appendComment) {
+    head--;
+    if (head > 0 && lines[head - 1]!.trim() === '') head--;
+  }
+  const before = lines.slice(0, head).join('\n');
   const after = lines.slice(end).join('\n');
   const mid = block === '' ? '' : block;
   const sepBefore = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
@@ -112,5 +125,6 @@ export async function writeAgentToolGating(agent: string, gating: ToolGating): P
   } catch {
     // ENOENT — agent.yaml is optional; we create it.
   }
-  await writeFile(path, spliceToolsBlock(current, gating), 'utf8');
+  await mkdir(dirname(path), { recursive: true });
+  await replacePersonaFile(path, spliceToolsBlock(current, gating));
 }

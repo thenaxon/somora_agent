@@ -10,10 +10,11 @@
 // `skills: [a, b]` list is replaced by `skills:\n  allow: [a, b]`, which
 // means the same thing.
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { assertValidSkillName, type SkillGating } from '../skills/gating.ts';
+import { dirname, join } from 'node:path';
+import { replacePersonaFile } from './files.ts';
+import { ALL_SKILLS, assertValidSkillName, type SkillGating } from '../skills/gating.ts';
 import { spliceTopLevelBlock } from './tool-gating-store.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
@@ -47,7 +48,11 @@ export function spliceSkillsBlock(yamlText: string, gating: SkillGating): string
 /** Full read-modify-write against the agent's on-disk agent.yaml.
  *  Missing file → created with just the skills block. */
 export async function writeAgentSkillGating(agent: string, gating: SkillGating): Promise<void> {
-  for (const n of [...gating.deny, ...gating.allow]) assertValidSkillName(n);
+  // `*` (every skill) is a deny rule the Abilities window writes; names
+  // otherwise. Repeats add nothing.
+  for (const n of gating.deny) if (n !== ALL_SKILLS) assertValidSkillName(n);
+  for (const n of gating.allow) assertValidSkillName(n);
+  gating = { ...gating, deny: [...new Set(gating.deny)], allow: [...new Set(gating.allow)] };
   const path = join(AGENTS_DIR, agent, 'agent.yaml');
   let current = '';
   try {
@@ -55,5 +60,6 @@ export async function writeAgentSkillGating(agent: string, gating: SkillGating):
   } catch {
     // ENOENT — agent.yaml is optional; we create it.
   }
-  await writeFile(path, spliceSkillsBlock(current, gating), 'utf8');
+  await mkdir(dirname(path), { recursive: true });
+  await replacePersonaFile(path, spliceSkillsBlock(current, gating));
 }

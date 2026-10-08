@@ -1275,6 +1275,16 @@ export const api = {
     });
     if (!res.ok) throw new Error(`set agent tools ${res.status}`);
   },
+  /** One click in the Abilities window: the server works out the rules
+   *  (a family's eye with `group: true` writes one rule for the family). */
+  toggleAgentTools: async (agent: string, names: string[], visible: boolean, group = false): Promise<void> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/tools/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names, visible, group }),
+    });
+    if (!res.ok) throw new Error(`toggle agent tools ${res.status}: ${await res.text().catch(() => '')}`);
+  },
   // Skills half of the Abilities matrix (docs/skills.md).
   agentSkills: (agent: string) =>
     getJson<AgentSkillsResponse>(`/agents/${encodeURIComponent(agent)}/skills`),
@@ -1285,6 +1295,14 @@ export const api = {
       body: JSON.stringify(gating),
     });
     if (!res.ok) throw new Error(`set agent skills ${res.status}`);
+  },
+  toggleAgentSkills: async (agent: string, names: string[], visible: boolean, group = false): Promise<void> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/skills/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names, visible, group }),
+    });
+    if (!res.ok) throw new Error(`toggle agent skills ${res.status}: ${await res.text().catch(() => '')}`);
   },
   /** 503 (no servers configured) → { enabled: false }. */
   mcpStatus: async (): Promise<McpStatusResponse> => {
@@ -1321,8 +1339,8 @@ export interface AgentSkillsResponse {
   agent: string;
   kind?: 'chat' | 'builder';
   gating: { deny: string[]; allow: string[] } | null;
-  /** True when agent.yaml carries a hand-written allow-list — the
-   *  matrix goes read-only then (same rule as tools). */
+  /** Always false since 2026.1008.7 (the matrix is always editable);
+   *  kept on the wire for older clients. */
   hasPatternRules: boolean;
   skills: Array<{
     name: string;
@@ -1341,9 +1359,12 @@ export interface AgentToolsResponse {
   /** A builder's own tool set (the kind's defaults); null for chat agents. */
   kindDefaults?: string[] | null;
   gating: { deny: string[]; allow: string[] } | null;
-  /** True when agent.yaml carries hand-written pattern rules (globs,
-   *  toolset:, allow-list) — the matrix goes read-only then. */
+  /** Always false since 2026.1008.7 (the matrix is always editable);
+   *  kept on the wire for older clients. */
   hasPatternRules: boolean;
+  /** Pattern rules in agent.yaml the window did not write (anything but
+   *  a family, a server or `*`). Shown as a note; they still apply. */
+  handWrittenRules?: string[];
   tools: AgentToolInfo[];
 }
 

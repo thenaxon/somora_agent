@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, unlinkSync } from 'node:fs';
 import { copyFile, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { validateAgentsMd } from './loader.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
@@ -89,6 +89,25 @@ function rotateBackups(dir: string, name: string): void {
 
 const ts = (): string =>
   new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
+
+/** Replace agent.yaml (or another persona file) the safe way: the old
+ *  content is kept as `<name>.bak-<time>` (the newest five stay), and the
+ *  new one lands in one rename — a crash never leaves a half-written
+ *  file. Used by the Abilities clicks, which rewrite agent.yaml often. */
+export async function replacePersonaFile(path: string, content: string): Promise<void> {
+  const dir = dirname(path);
+  const name = basename(path);
+  if (existsSync(path)) {
+    let backup = `${path}.bak-${ts()}`;
+    // Two clicks in one second: keep both.
+    for (let i = 2; existsSync(backup); i++) backup = `${path}.bak-${ts()}-${i}`;
+    await copyFile(path, backup);
+    rotateBackups(dir, name);
+  }
+  const tmp = `${path}.tmp-${process.pid}`;
+  await writeFile(tmp, content, 'utf8');
+  await rename(tmp, path);
+}
 
 /**
  * Write one editable persona file. `baseHash` must equal the hash of the

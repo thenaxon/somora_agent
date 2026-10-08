@@ -210,7 +210,8 @@ In the web client (`/web`), right-click the agent tile and choose
   with a `voice` block.
 
 Tools and skills are switched per agent in the Abilities window. It
-writes exact-name entries into `tools.deny` and `skills.deny`.
+writes `tools:` and `skills:` in `agent.yaml`: a name per switched
+tool, and one rule for a whole family switched off.
 
 ## Sessions
 
@@ -635,7 +636,9 @@ How the fallback chain works:
 
 Rules for `tools` and `skills`:
 
-- `deny` beats `allow`. No block means no restriction.
+- A name under `deny` beats everything. A name or pattern under
+  `allow` beats a family rule under `deny`, which makes it an
+  exception. No block means no restriction.
 - A tool pattern is an exact name (`web_search`), a toolset
   (`toolset:exec`) or a name with a trailing `*` (`mcp__parallel__*`).
   The same patterns cover built-in tools and tools from MCP servers.
@@ -643,8 +646,8 @@ Rules for `tools` and `skills`:
   context on every turn.
 - Only tools whose configuration exists are offered at all. The
   Abilities window lists exactly those.
-- The Abilities window edits exact names only. When the file holds an
-  `allow` list or patterns, the window shows them read-only.
+- The Abilities window is always editable. Patterns it did not write
+  still apply and are listed as a note.
 - For a builder, `tools.allow` adds to the builder set and
   `skills.allow` is the complete list.
 

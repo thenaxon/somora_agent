@@ -302,17 +302,20 @@ per agent like any built-in tool, a whole server with
 
 ## Choosing tools per agent
 
-An agent sees every tool that can run, unless its `agent.yaml` says
-otherwise:
+The Abilities window in the web client switches tools per agent: an
+eye on each tool and one on each family. It writes the agent's
+`agent.yaml`, and a change applies from the agent's next turn. You can
+also write the block yourself:
 
 ```yaml
 # ~/.somora/agents/<your-agent>/agent.yaml
 tools:
   deny:
-    - toolset:exec          # a whole family
-    - mcp__acme__*          # everything from one MCP server
+    - toolset:exec          # a whole family, tools added later too
+    - mcp__acme__*          # everything from one MCP server, ditto
     - web_search            # one tool
-  allow: []                 # empty: everything that is not denied
+  allow:
+    - mcp__acme__fetch      # one tool on inside a family that is off
 ```
 
 | Pattern | Matches |
@@ -320,19 +323,36 @@ tools:
 | `web_search` | the tool with exactly this name |
 | `toolset:exec` | every tool with this toolset tag |
 | `mcp__acme__*` | every tool whose name starts with the text before `*` |
+| `*` | every tool |
 
-The rules:
+A tool is decided in this order:
 
-- `deny` beats `allow`.
-- An empty or missing `allow` means everything that is not denied.
-- A non-empty `allow` means only the tools it matches.
-- No `tools:` block means no restriction.
+1. A tool named in `deny` is off.
+2. A tool matched by `allow` is on.
+3. A tool matched by a family, server or `*` rule in `deny` is off.
+4. Anything else: on for a chat agent, the builder's own list for a
+   builder (next section).
 
-A change applies from the agent's next turn. The switches in the
-Abilities window write exact names into `deny`. When the block contains
-an `allow` list, a `toolset:` rule or a `*` pattern, the window shows it
-read-only: you wrote a policy by hand and the window does not guess how
-to edit it.
+No `tools:` block means no restriction.
+
+### What the window writes
+
+| You click | Written |
+|---|---|
+| A family's eye, off | one rule for the family: `toolset:<tag>` or `mcp__<server>__*` |
+| A family's eye, on | the rule and the family's single entries removed |
+| One tool off | its name under `deny` |
+| One tool on inside a family that is off | its name under `allow`, as an exception |
+
+A family switched off as a whole shows "off incl. future" in its
+header: a tool that an MCP server or an update adds later stays off.
+The window stays editable whatever the file holds. Rules it did not
+write, such as `mcp__*`, are listed above the switches and still apply.
+
+An older form of the block holds only an `allow` list, meaning "only
+these tools". It keeps that meaning. The first click rewrites it as
+`*` under `deny` plus the same names under `allow`, which shows the
+same tools.
 
 > **Tip:** Every offered tool costs context on every turn. Smaller
 > local models use tools better when they are offered fewer of them.
@@ -353,8 +373,13 @@ memory_search  memory_get  time_now
 ```
 
 Its own `tools.allow` adds to this list and its `tools.deny` removes
-from it. A chat agent never gets the three `builder` tools unless its
-`allow` names one of them.
+from it. In the Abilities window a builder shows two groups: its own
+list, and every other tool under "more", off until you switch one on.
+Tools added later stay off for a builder.
+
+The three `builder` tools, `todo_write`, `ask_user` and `plan_write`,
+belong to builders only. A chat agent never gets them, whatever its
+`agent.yaml` says, and the window does not offer them.
 
 ## How a tool reaches the model
 
@@ -444,7 +469,8 @@ Per agent, in `agent.yaml`:
 |---|---|
 | `GET /tools` | Lists every registered tool with `name`, `toolset`, `description`, `inputSchema`, `maxResultSizeChars` and `hasAvailabilityCheck`. Includes tools that are not offered right now. |
 | `POST /agents/:agent/tools/:name` | Runs one tool as that agent. The body is the tool's input. A failed call answers 400. |
-| `GET /agents/:agent/tools` | Lists the tools this agent could use, each with `visible`, plus the agent's `gating` and `hasPatternRules`. |
+| `GET /agents/:agent/tools` | Lists the tools this agent could use, each with `visible`, plus the agent's `gating`. |
+| `POST /agents/:agent/tools/toggle` | One click in the Abilities window: `{names, visible, group?}`. The server writes the rules. |
 | `PUT /agents/:agent/tools` | Writes `{ deny: [...], allow: [...] }` into the agent's `agent.yaml`. |
 
 ## Troubleshooting

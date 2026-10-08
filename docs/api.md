@@ -1298,13 +1298,32 @@ Which tools an agent may use.
 | `agent`, `kind` | The agent and its kind. |
 | `kindDefaults` | For a builder: the tool names its kind allows by default. Else `null`. |
 | `gating` | The agent's `tools:` section as `{deny, allow}`, or `null`. |
-| `hasPatternRules` | `true` when the section has an allow list, a `toolset:` rule or a wildcard. The web client shows such a section read-only. |
+| `hasPatternRules` | Always `false`. Kept for older clients; the Abilities window is always editable. |
+| `handWrittenRules` | Patterns in the section that are not a family rule (`toolset:<tag>`), a server rule (`mcp__<server>__*`) or `*`. They apply; the window lists them as a note. |
 | `tools` | `[{name, toolset, mcpServer?, description, visible, availableNow}]`: every tool, built in or from an external MCP server. `visible` says whether the agent may use it. |
 
 `PUT` takes `{deny: string[], allow: string[]}` and rewrites only the
 `tools:` block of the agent's `agent.yaml`. Returns `{ok: true}`. `400`
 for a wrong body or a failed write. It applies from the agent's next
 turn.
+
+### `POST /agents/:agent/tools/toggle` · `POST /agents/:agent/skills/toggle`
+
+One click in the Abilities window. The server works out the rules, so
+every client edits the same way. Body:
+
+| Field | Meaning |
+|---|---|
+| `names` | The tools or skills to switch, at least one. |
+| `visible` | `true` to switch them on, `false` to switch them off. |
+| `group` | `true` when the names are one whole family (a toolset, an MCP server, or all skills). Off then writes one rule for the family, so tools it gains later stay off. |
+
+Returns `{ok: true, gating}` with the rules now in `agent.yaml`. Only
+the named entries change state. `400` for a wrong body, an unknown
+name, or a builder-only tool (`todo_write`, `ask_user`, `plan_write`)
+for a chat agent. `404` for an unknown agent. Clicks on one agent run
+one after another, and each write keeps the previous `agent.yaml` as a
+backup (the newest five stay).
 
 ### `GET /agents/:agent/skills` · `PUT /agents/:agent/skills`
 
@@ -1313,7 +1332,7 @@ Which skills an agent sees.
 `GET` returns `{agent, kind, gating, hasPatternRules, skills}`. Each
 skill is `{name, description, available, unavailableReason?, visible}`.
 `gating` is the agent's `skills:` section as `{deny, allow}` or `null`.
-`hasPatternRules` is `true` when it has a hand-written allow list.
+`hasPatternRules` is always `false`, kept for older clients.
 
 `PUT` takes `{deny: string[], allow: string[]}` and rewrites only the
 `skills:` block of `agent.yaml`. Empty lists remove the block. Names

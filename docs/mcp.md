@@ -177,10 +177,12 @@ Good to know:
   `tools.deny`.
 - A chat agent does not see the `builder` toolset.
 
-A switch writes an exact tool name into `deny` in the agent's
-`agent.yaml`. Comments and the rest of the file stay as they are. If
-the file holds an `allow` list, a `toolset:` rule or a `*` pattern, the
-window shows the rules and is read-only: you wrote that policy by hand.
+A switch on one tool writes its name into the agent's `agent.yaml`.
+The eye on a server switched off writes one rule, `mcp__<server>__*`,
+so a tool the server adds later stays off too. One tool switched back
+on inside it becomes an exception under `allow`. Comments and the rest
+of the file stay as they are. The window is always editable; rules you
+wrote by hand still apply and are listed as a note.
 
 ## Servers with an OAuth login
 

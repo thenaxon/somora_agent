@@ -5,13 +5,15 @@
 //
 // Left: agent picker. Main: every tool on this instance (built-in
 // grouped by toolset, external grouped by MCP server) and, below, every
-// skill, each with a visibility toggle for the selected agent. Toggles
-// manage EXACT-name deny entries only; hand-written pattern rules
-// (globs, toolset:, allow-lists) flip that matrix read-only rather
-// than guessing how to rewrite operator policy. All writes go through
-// the server (PUT /agents/:name/tools, PUT /agents/:name/skills) — the
-// UI never touches agent.yaml itself. The window's internal kind stays
-// `tools` so saved window layouts keep working.
+// skill, each with a visibility toggle for the selected agent. The
+// matrix is always editable (2026-10-08): a click is sent as "these
+// names on/off" (POST /agents/:name/tools/toggle, …/skills/toggle) and
+// the server works out the rules — a family's eye writes ONE rule for
+// the family (`toolset:<tag>`, `mcp__<server>__*`, skills `*`) so tools
+// it gains later stay off too; one tool back on inside it becomes an
+// exception under allow. The UI never touches agent.yaml itself. The
+// window's internal kind stays `tools` so saved window layouts keep
+// working.
 //
 // Groups are collapsible and carry their own eye (2026-09-10, Leo's
 // report). One MCP server can contribute dozens of tools, and turning
@@ -20,7 +22,7 @@
 // default for the same reason — with a big MCP connected the flat list
 // was hundreds of rows deep before you reached the skills.
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
   ChevronDown,
@@ -31,7 +33,6 @@ import {
   RefreshCw,
   Sparkles,
 } from 'lucide-react';
-import { toggleGroupVisibility, type AbilityRow } from '../lib/ability-gating';
 import {
   api,
   type AgentInfo,
@@ -88,15 +89,16 @@ interface GroupProps {
   hidden: number;
   expanded: boolean;
   onToggleExpanded: () => void;
-  /** Show/hide every row at once. Undefined while the matrix is
-   *  read-only or a write is in flight. */
+  /** Show/hide every row at once. Undefined while a write is in flight. */
   onToggleAll: (() => void) | undefined;
+  /** The family is off by a rule, so tools it gains later are off too. */
+  ruleOff?: boolean;
   children: ReactNode;
 }
 
 /** One collapsible group: header with expander, group eye and counts.
  *  Exported for tools-render.test.mts. */
-export function Group({ groupKey, label, total, hidden, expanded, onToggleExpanded, onToggleAll, children }: GroupProps) {
+export function Group({ groupKey, label, total, hidden, expanded, onToggleExpanded, onToggleAll, ruleOff, children }: GroupProps) {
   const allHidden = total > 0 && hidden === total;
   const someHidden = hidden > 0 && hidden < total;
   return (
@@ -137,6 +139,15 @@ export function Group({ groupKey, label, total, hidden, expanded, onToggleExpand
           {total}
           {hidden > 0 ? ` · ${hidden} hidden` : ''}
         </span>
+        {ruleOff && (
+          <span
+            data-testid={`tools-group-rule-${groupKey}`}
+            title="Switched off as a whole: tools this group gains later stay off too. Single tools switched on inside it are exceptions."
+            style={{ textTransform: 'none', letterSpacing: 0, opacity: 0.75, fontStyle: 'italic' }}
+          >
+            · off incl. future
+          </span>
+        )}
       </div>
       {expanded && children}
     </div>
@@ -181,18 +192,26 @@ export function ToolsWindow() {
     void api.mcpStatus().then(setMcp).catch(() => setMcp(null));
   }, []);
 
+  // The agent whose data may land in state: a reply for an agent that is
+  // no longer selected is dropped, so a click never works on another
+  // agent's switches (a quick click after switching agents did that).
+  const current = useRef<string | null>(null);
   const refresh = useCallback(async (name: string) => {
     try {
       const [t, s] = await Promise.all([api.agentTools(name), api.agentSkills(name)]);
+      if (current.current !== name) return;
       setData(t);
       setSkills(s);
       setError(null);
     } catch (err) {
-      setError((err as Error).message);
+      if (current.current === name) setError((err as Error).message);
     }
   }, []);
 
   useEffect(() => {
+    current.current = agent;
+    setData(null);
+    setSkills(null);
     if (agent) void refresh(agent);
   }, [agent, refresh]);
 
@@ -229,23 +248,18 @@ export function ToolsWindow() {
     });
   }, [data, isBuilder, kindDefaults]);
 
-  /** Write a tool deny-list and reload. One request however many names
-   *  changed — a group of 60 MCP tools is a single PUT, not 60. */
-  const writeTools = useCallback(
-    async (rows: AbilityRow[]) => {
-      if (!agent || !data || data.hasPatternRules || saving) return;
-      // A builder's own tools switch off via deny (as for a chat agent);
-      // a tool from "more" switches on via allow, off by dropping it.
-      const ownRows = isBuilder ? rows.filter((r) => kindDefaults.has(r.name)) : rows;
-      const moreRows = isBuilder ? rows.filter((r) => !kindDefaults.has(r.name)) : [];
-      const deny = toggleGroupVisibility(data.gating?.deny ?? [], ownRows);
-      let allow = data.gating?.allow ?? [];
-      for (const r of moreRows) {
-        allow = r.visible ? allow.filter((n) => n !== r.name) : allow.includes(r.name) ? allow : [...allow, r.name];
-      }
+  /** Send one click and reload. One request however many names — a
+   *  family of 60 MCP tools is a single call, and its eye (`group`)
+   *  lets the server write one rule for the whole family. */
+  const send = useCallback(
+    async (which: 'tools' | 'skills', names: string[], visible: boolean, group: boolean) => {
+      // Only on the switches of the agent that is selected.
+      const shown = which === 'tools' ? data?.agent : skills?.agent;
+      if (!agent || saving || names.length === 0 || shown !== agent) return;
       setSaving(true);
       try {
-        await api.setAgentTools(agent, { deny, allow });
+        if (which === 'tools') await api.toggleAgentTools(agent, names, visible, group);
+        else await api.toggleAgentSkills(agent, names, visible, group);
         await refresh(agent);
       } catch (err) {
         setError((err as Error).message);
@@ -253,60 +267,44 @@ export function ToolsWindow() {
         setSaving(false);
       }
     },
-    [agent, data, saving, refresh, isBuilder, kindDefaults],
+    [agent, saving, refresh, data, skills],
   );
 
+  // A row's eye flips that row. A group's eye hides the group while
+  // anything in it is still visible, otherwise brings all of it back —
+  // so a half-hidden group goes dark in one click, back in a second.
   const toggle = useCallback(
-    (toolName: string, currentlyVisible: boolean) =>
-      void writeTools([{ name: toolName, visible: currentlyVisible }]),
-    [writeTools],
+    (toolName: string, currentlyVisible: boolean) => void send('tools', [toolName], !currentlyVisible, false),
+    [send],
   );
-
   const toggleGroup = useCallback(
-    (list: AbilityRow[]) => void writeTools(list),
-    [writeTools],
+    (list: { name: string; visible: boolean }[]) =>
+      void send('tools', list.map((t) => t.name), list.every((t) => !t.visible), true),
+    [send],
   );
-
-  const writeSkills = useCallback(
-    async (rows: AbilityRow[]) => {
-      if (!agent || !skills || skills.hasPatternRules || saving) return;
-      // A builder sees no skill unless allowed: its switches edit the
-      // allow-list. A chat agent's switches edit denies, as before.
-      let deny = skills.gating?.deny ?? [];
-      let allow = skills.gating?.allow ?? [];
-      if (skills.kind === 'builder') {
-        for (const r of rows) {
-          allow = r.visible ? allow.filter((n) => n !== r.name) : allow.includes(r.name) ? allow : [...allow, r.name];
-        }
-      } else {
-        deny = toggleGroupVisibility(deny, rows);
-      }
-      setSaving(true);
-      try {
-        await api.setAgentSkills(agent, { deny, allow });
-        await refresh(agent);
-      } catch (err) {
-        setError((err as Error).message);
-      } finally {
-        setSaving(false);
-      }
-    },
-    [agent, skills, saving, refresh],
-  );
-
   const toggleSkill = useCallback(
-    (skillName: string, currentlyVisible: boolean) =>
-      void writeSkills([{ name: skillName, visible: currentlyVisible }]),
-    [writeSkills],
+    (skillName: string, currentlyVisible: boolean) => void send('skills', [skillName], !currentlyVisible, false),
+    [send],
+  );
+  const toggleAllSkills = useCallback(() => {
+    const list = skills?.skills ?? [];
+    void send('skills', list.map((s) => s.name), list.every((s) => !s.visible), true);
+  }, [send, skills]);
+
+  /** The family rule a chat agent's group is switched off by, if any. */
+  const ruleOff = useCallback(
+    (list: { toolset: string; mcpServer?: string }[]) => {
+      if (isBuilder || list.length === 0) return false;
+      const t = list[0]!;
+      const rule = t.mcpServer ? `mcp__${t.mcpServer}__*` : `toolset:${t.toolset}`;
+      return !!data?.gating?.deny.includes(rule);
+    },
+    [data, isBuilder],
   );
 
-  const toggleAllSkills = useCallback(
-    () => void writeSkills(skills?.skills ?? []),
-    [writeSkills, skills],
-  );
-
-  const toolsLocked = !!data?.hasPatternRules || saving;
-  const skillsLocked = !!skills?.hasPatternRules || saving;
+  const toolsLocked = saving;
+  const skillsLocked = saving;
+  const handWritten = data?.handWrittenRules ?? [];
 
   return (
     <div style={{ display: 'flex', height: '100%', fontSize: 13 }}>
@@ -346,7 +344,7 @@ export function ToolsWindow() {
             <AlertTriangle size={14} className="icon-inline" /> {error}
           </div>
         )}
-        {data?.hasPatternRules && (
+        {handWritten.length > 0 && (
           <div
             style={{
               background: 'var(--bg-2)',
@@ -358,13 +356,8 @@ export function ToolsWindow() {
             }}
           >
             <AlertTriangle size={14} className="icon-inline" /> This agent's{' '}
-            <code>agent.yaml</code> carries hand-written pattern rules (
-            {[
-              ...(data.gating?.deny.filter((p) => p.includes('*') || p.startsWith('toolset:')) ??
-                []),
-              ...(data.gating?.allow ?? []).map((p) => `allow:${p}`),
-            ].join(', ')}
-            ) — the matrix is read-only. Edit the file to change them.
+            <code>agent.yaml</code> also carries hand-written rules ({handWritten.join(', ')}). They
+            still apply; the switches below show their effect and stay usable.
           </div>
         )}
         {!data && !error && <div style={{ color: 'var(--text-2)' }}>Loading…</div>}
@@ -378,6 +371,7 @@ export function ToolsWindow() {
             expanded={expanded.has(group)}
             onToggleExpanded={() => toggleExpanded(group)}
             onToggleAll={toolsLocked ? undefined : () => toggleGroup(list)}
+            ruleOff={ruleOff(list)}
           >
             {list.map((t) => (
               <div
@@ -432,24 +426,8 @@ export function ToolsWindow() {
               expanded={expanded.has(SKILLS_KEY)}
               onToggleExpanded={() => toggleExpanded(SKILLS_KEY)}
               onToggleAll={skillsLocked || skills.skills.length === 0 ? undefined : toggleAllSkills}
+              ruleOff={skills.kind !== 'builder' && !!skills.gating?.deny.includes('*')}
             >
-              {skills.hasPatternRules && (
-                <div
-                  style={{
-                    background: 'var(--bg-2)',
-                    border: '1px solid var(--bg-3)',
-                    borderRadius: 6,
-                    padding: '8px 10px',
-                    marginBottom: 8,
-                    color: 'var(--text-2)',
-                  }}
-                >
-                  <AlertTriangle size={14} className="icon-inline" /> This agent's{' '}
-                  <code>agent.yaml</code> carries a hand-written skill allow-list (
-                  {(skills.gating?.allow ?? []).join(', ')}) — the skill matrix is read-only. Edit
-                  the file to change it.
-                </div>
-              )}
               {skills.skills.length === 0 && (
                 <div style={{ color: 'var(--text-2)' }}>
                   No skills installed — see <code>docs/skills.md</code>.

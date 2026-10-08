@@ -19,6 +19,7 @@ import { projectTools } from './projects/index.ts';
 import { sentinelTools } from './sentinel/index.ts';
 import { imageTools } from './image/index.ts';
 import { decisionTools } from './decision/tools.ts';
+import { setToolsetLookup } from './gating.ts';
 import { videoTools } from './video/index.ts';
 import { browserTools } from './browser/index.ts';
 import { builderTools } from './builder/tools.ts';
@@ -99,4 +100,7 @@ export function registerAllTools(registry: ToolRegistry): void {
   // offered to builders by their kind allow-list (gating.ts) — a chat
   // agent sees them only when its agent.yaml allows them.
   registry.registerMany(builderTools());
+  // The gating needs each built-in tool's family to tell an exception
+  // under a `toolset:` rule from an old "only these" list (gating.ts).
+  setToolsetLookup((name) => registry.get(name)?.toolset);
 }

@@ -287,6 +287,10 @@ the skill's name into a `deny` list in the agent's `agent.yaml`. A skill
 you install later is visible by default. The change applies on the
 agent's next turn.
 
+The eye on the section switches all skills. Off writes `*` under
+`deny`, so a skill you install later stays off too. A skill switched on
+after that goes under `allow`, as an exception.
+
 **By hand in `agent.yaml`.** Use one of these forms:
 
 ```yaml
@@ -297,7 +301,17 @@ skills:
 ```
 
 ```yaml
-# only these
+# only these (what the web client writes)
+skills:
+  deny:
+    - "*"
+  allow:
+    - github
+    - skill-author
+```
+
+```yaml
+# only these, older form; still works
 skills:
   allow:
     - github
@@ -315,9 +329,9 @@ skills:
 |---|---|
 | No `skills` section | The agent sees all skills. |
 | `deny` and `allow` both name a skill | `deny` wins. |
+| `*` under `deny` | Every skill off, except those named under `allow`. |
 | Empty `allow`, or `skills: []` | No restriction. |
 | A name that matches no skill | Ignored and logged (`skills.gating_unknown`). |
-| `allow` written by hand | The web client shows the skills section read-only. |
 
 A [builder](builder.md) agent starts the other way round. It is offered
 no skill until its `allow` names one, so its prompt stays short. The
@@ -443,7 +457,8 @@ agent ("skill 'x' exists but is not allowed for agent 'y'").
 
 | Route | What it does |
 |---|---|
-| `GET /agents/:agent/skills` | Every installed skill with `available` and the agent's `visible` flag, plus the agent's `gating` and `hasPatternRules`. |
+| `GET /agents/:agent/skills` | Every installed skill with `available` and the agent's `visible` flag, plus the agent's `gating`. |
+| `POST /agents/:agent/skills/toggle` | One click: body `{names, visible, group?}`. The server writes the rules. |
 | `PUT /agents/:agent/skills` | Body `{deny: [...], allow: [...]}`. Rewrites only the `skills` section of the agent's `agent.yaml`. Two empty lists remove the section. |
 
 ## Troubleshooting

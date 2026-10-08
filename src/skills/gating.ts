@@ -1,13 +1,13 @@
-// Per-agent skill visibility — the same shape and semantics as tool
-// gating (src/tools/gating.ts), so the web matrix can drive both with
-// one mental model:
+// Per-agent skill visibility — the same shape and order as tool gating
+// (src/tools/gating.ts), so the web matrix drives both the same way:
 //
 //   skills:
-//     deny:  [instagram-downloader]   # everything except these
-//     allow: [github, skill-author]   # only these (deny still wins)
+//     deny:  [instagram-downloader]   # these off
+//     deny:  ["*"]                    # every skill off, later ones too
+//     allow: [github]                 # on — also when "*" is denied
 //
-// deny beats allow; empty/missing allow = everything not denied;
-// section missing = no restriction.
+// A chat agent's allow list without "*" is the old "only these" form and
+// keeps that meaning. Section missing = no restriction.
 //
 // Why a deny-list at all when an allow-list already existed: the old
 // `skills: [a, b]` form means "only these", so un-ticking ONE skill in
@@ -63,9 +63,21 @@ export function normalizeSkillGating(raw: RawSkillGating): SkillGating | undefin
   return { deny: [...deny], allow: [...allow] };
 }
 
+/** `*` under deny: every skill off, skills added later too. */
+export const ALL_SKILLS = '*';
+
+/**
+ * Decided in this order (same shape as isToolAllowed):
+ *   1. named in deny → off      2. named in allow → on
+ *   3. deny holds `*` → off     4. builder → off (none unless allowed)
+ *   5. chat with an allow list in the old "only these" form → off
+ *   6. otherwise on
+ */
 export function isSkillAllowed(name: string, gating: SkillGating | undefined): boolean {
   if (!gating) return true;
   if (gating.deny.includes(name)) return false;
-  if (gating.allow.length === 0) return !gating.defaultDeny;
-  return gating.allow.includes(name);
+  if (gating.allow.includes(name)) return true;
+  if (gating.deny.includes(ALL_SKILLS)) return false;
+  if (gating.defaultDeny) return false;
+  return gating.allow.length === 0;
 }

@@ -1,21 +1,41 @@
-// Per-agent tool visibility (design: private/mcp-hub-design.md §4.6).
-// One filter, applied at BOTH tool-list surfaces — the in-process
-// per-turn ToolInvoker (openai-compat) and the MCP child's tools/list
-// (somora and external-server proxy mode) — so every engine sees
-// the identical gated set.
+// Per-agent tool visibility (design: private/abilities-gating/DESIGN.md).
+// One filter, applied at every tool-list surface — the in-process
+// per-turn ToolInvoker (openai-compat), Codex dynamic tools and the MCP
+// child's tools/list — so every engine sees the identical set.
 //
-// Pattern forms (config lives in each agent's agent.yaml `tools:`):
-//   web_search           exact tool name
-//   toolset:exec         every tool of a toolset tag
-//   mcp__parallel__*     trailing-* glob on the name (server wildcard)
-// Semantics: deny beats allow; empty/missing allow = everything not
-// denied; missing section entirely = no restriction.
+// agent.yaml `tools:` holds two lists of rules:
+//   deny:  web_search            one tool off
+//          toolset:exec          a whole family off, tools added later too
+//          mcp__parallel__*      every tool of an MCP server off, ditto
+//   allow: mcp__parallel__fetch  one tool on — also inside a family that
+//                                is off (an exception), and for a builder
+//                                a tool beyond its own set
+//
+// A tool is decided in this order (isToolAllowed):
+//   0. chat agent and a builder-only tool (todo_write, ask_user,
+//      plan_write) → off, whatever the rules say
+//   1. named in deny          → off
+//   2. matched by allow       → on
+//   3. matched by a deny rule for a family or server → off
+//   4. builder: on when in its own set (BUILDER_TOOL_ALLOW), else off
+//   5. chat: an allow list from the old "only these" form → off;
+//      otherwise on
+// The Abilities window only ever writes names and the family/server
+// rules it offers, so it can always edit what it wrote.
 
 import type { Toolset } from './types.ts';
 
 export interface ToolGating {
   deny: string[];
   allow: string[];
+  /** Set on the gating a turn runs with (effectiveToolGating): decides
+   *  the default for tools no rule names. Missing = chat. */
+  kind?: AgentKind;
+}
+
+/** A rule for a whole family or server: `toolset:<tag>` or `<prefix>*`. */
+export function isGroupRule(pattern: string): boolean {
+  return pattern.startsWith('toolset:') || pattern.endsWith('*');
 }
 
 export function matchesToolPattern(pattern: string, name: string, toolset: Toolset | undefined): boolean {
@@ -75,23 +95,37 @@ export type AgentKind = 'chat' | 'builder';
 export const BUILDER_ONLY_TOOLS: ReadonlySet<string> = new Set(['todo_write', 'ask_user', 'plan_write']);
 
 /**
- * The gating a persona's turn actually runs with: the kind's defaults
- * merged with what agent.yaml says. Chat agents: agent.yaml as is.
- * Builders: allow = kind list ∪ agent.yaml allow, deny = agent.yaml
- * deny — so an operator adds a tool by naming it in `allow` and removes
- * one by naming it in `deny`, and the matrix in the web shows the result.
+ * The gating a persona's turn runs with: agent.yaml's rules plus the
+ * kind, which supplies the default for tools no rule names (a builder's
+ * own set; for a chat agent everything but the builder-only tools).
  */
-export function effectiveToolGating(kind: AgentKind, own: ToolGating | undefined): ToolGating | undefined {
-  if (kind !== 'builder') {
-    // The builder-only tools (task list, question, plan file) need the
-    // task panel and the builder phases; a chat agent never sees them
-    // unless its own allow-list names one explicitly.
-    const namesBuilderTool = (own?.allow ?? []).some((p) => BUILDER_ONLY_TOOLS.has(p));
-    if (namesBuilderTool) return own;
-    return { deny: [...(own?.deny ?? []), 'toolset:builder'], allow: own?.allow ?? [] };
-  }
-  const allow = [...BUILDER_TOOL_ALLOW, ...(own?.allow ?? [])];
-  return { deny: own?.deny ?? [], allow: [...new Set(allow)] };
+export function effectiveToolGating(kind: AgentKind, own: ToolGating | undefined): ToolGating {
+  return { deny: [...(own?.deny ?? [])], allow: [...(own?.allow ?? [])], kind };
+}
+
+/** A chat agent's allow list from the old "only these tools" form: some
+ *  entry stands on its own instead of being an exception to a family
+ *  that is off. Kept meaning "only these" so such files do not open up. */
+export function isLegacyAllowList(gating: ToolGating): boolean {
+  if (gating.allow.length === 0) return false;
+  const groups = gating.deny.filter(isGroupRule);
+  return gating.allow.some((a) => !groups.some((g) => patternCovers(g, a)));
+}
+
+/** Family of a tool by name, for deciding whether a `toolset:` rule
+ *  covers an allow entry. Set by registerAllTools; unknown → undefined. */
+let toolsetOf: (name: string) => Toolset | undefined = () => undefined;
+export function setToolsetLookup(fn: (name: string) => Toolset | undefined): void {
+  toolsetOf = fn;
+}
+
+/** Does group rule `g` cover the allow entry `a` (a name or a narrower
+ *  pattern)? An unknown family counts as not covered: the file is then
+ *  read in the old "only these" form, which closes rather than opens. */
+function patternCovers(g: string, a: string): boolean {
+  if (g.endsWith('*')) return a.startsWith(g.slice(0, -1));
+  if (g.startsWith('toolset:')) return toolsetOf(a) === g.slice('toolset:'.length);
+  return false;
 }
 
 /** A rule the kind already implies: a chat agent's `toolset:builder`
@@ -118,7 +152,17 @@ export function isToolAllowed(
   gating: ToolGating | undefined,
 ): boolean {
   if (!gating) return true;
-  if (gating.deny.some((p) => matchesToolPattern(p, name, toolset))) return false;
-  if (gating.allow.length === 0) return true;
-  return gating.allow.some((p) => matchesToolPattern(p, name, toolset));
+  const builder = gating.kind === 'builder';
+  if (!builder && isBuilderOnly(name, toolset)) return false;
+  if (gating.deny.includes(name)) return false;
+  if (gating.allow.some((p) => matchesToolPattern(p, name, toolset))) return true;
+  if (gating.deny.some((p) => isGroupRule(p) && matchesToolPattern(p, name, toolset))) return false;
+  if (builder) return BUILDER_TOOL_ALLOW.includes(name);
+  return !isLegacyAllowList(gating);
+}
+
+/** The task list, question and plan file belong to the builder kind: a
+ *  chat agent never gets them, not even through an allow entry. */
+export function isBuilderOnly(name: string, toolset: Toolset | undefined): boolean {
+  return toolset === 'builder' || BUILDER_ONLY_TOOLS.has(name);
 }

@@ -75,9 +75,14 @@ t('a half-hidden group is dimmed, not closed', () => {
   assert(html.includes('opacity:0.55') || html.includes('opacity: 0.55'), 'mixed group is not dimmed');
 });
 
-t('a read-only group offers no group toggle', () => {
+t('a group offers no group toggle while a write is in flight', () => {
   const html = group({ onToggleAll: undefined });
-  assert(html.includes('not-allowed'), 'read-only group still looks clickable');
+  assert(html.includes('not-allowed'), 'busy group still looks clickable');
+});
+
+t('a family switched off by a rule says new tools stay off too', () => {
+  assert(group({ hidden: 12, ruleOff: true }).includes('off incl. future'), 'rule marker missing');
+  assert(!group({ hidden: 12 }).includes('off incl. future'), 'marker without a rule');
 });
 
 console.log(`\n${ok} ok, ${bad} failed`);
