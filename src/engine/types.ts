@@ -263,6 +263,10 @@ export interface TurnInput {
   /** attachments.maxImageEdge — engines that replay past attachments
    *  from disk scale them the same way. */
   maxImageEdge?: number;
+  /** The session's working folder: the agent's workspace, or the folder
+   *  of the pinned project. Engines that run a process in a folder use it
+   *  (grok-cli); the others have their own rules. */
+  workdir?: string;
   /** openai-compatible: past turns before this ts are replayed without
    *  their memory block (dropped after a pause, see
    *  providers.<name>.dropMemoryBlocksAfterIdleMinutes). */

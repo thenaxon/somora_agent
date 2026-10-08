@@ -32,6 +32,7 @@ import {
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import { grokCliReasoningArgs } from './thinking-params.ts';
+import { grokChildEnv, somoraGrokHome, syncGrokHome } from './grok-home.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 
 const ENGINE = 'grok-cli';
@@ -42,14 +43,26 @@ const DEFAULT_IDLE_MS = 300_000;
 /** Handshake must complete inside this or the binary is considered broken. */
 const HANDSHAKE_TIMEOUT_MS = 30_000;
 
-function resolveGrokBin(): string {
+/** Resolved on every turn, not once at import: a Grok CLI installed
+ *  while somora runs (into ~/.local/bin, often not on the service's PATH)
+ *  is found by the next turn without a restart. */
+export function resolveGrokBin(): string {
   if (process.env.SOMORA_GROK_BIN) return process.env.SOMORA_GROK_BIN;
   const localBin = join(homedir(), '.local', 'bin', 'grok');
   if (existsSync(localBin)) return localBin;
   return 'grok';
 }
 
-const GROK_BIN = resolveGrokBin();
+/** A start failure in words that say what to do. Deliberately free of
+ *  network phrases: a missing binary is not an outage, so the model is
+ *  not marked unavailable for an hour. */
+export function describeSpawnFailure(bin: string, err: NodeJS.ErrnoException): string {
+  if (err.code === 'ENOENT') {
+    return `grok binary not found (${bin}). Install the Grok Build CLI (curl -fsSL https://x.ai/cli/install.sh | bash) or set SOMORA_GROK_BIN, then run \`grok login\`.`;
+  }
+  if (err.code === 'EACCES') return `grok binary is not executable (${bin}).`;
+  return `grok could not be started (${bin}): ${err.message}`;
+}
 
 // ---------------------------------------------------------------------
 // ACP wire types (only the fields we consume)
@@ -266,6 +279,72 @@ function renderAttachments(attachments: ResolvedAttachment[]): string {
   return parts.join('\n\n');
 }
 
+/**
+ * How a somora agent's tools reach Grok. Grok never lists MCP tools to
+ * the model: it offers two meta-tools, `search_tool` (find by keyword)
+ * and `use_tool` (call by id). The ids are `<server>__<tool>`, and the
+ * agent's instructions name tools without that prefix — so the model is
+ * told once how to translate (2026-10-08: its first call went to a bare
+ * `time_now` and failed).
+ */
+export const GROK_TOOL_GUIDANCE = [
+  '## Your tools',
+  '',
+  'Your tools are provided by somora through two meta-tools:',
+  '- `search_tool` finds tools by keyword.',
+  "- `use_tool` calls one: `tool_name` is its id, `tool_input` its arguments.",
+  '',
+  'Tool ids are `somora__<tool>`. When these instructions name a tool such as',
+  '`memory_search`, call it as `somora__memory_search`. Tools of an external',
+  'server read `somora-<server>__<tool>`. You have no other tools: anything',
+  'that touches files, runs commands or searches the web goes through them.',
+].join('\n');
+
+/**
+ * The agent profile sent with every session/new and session/load
+ * (`_meta.agentProfile`). It does for Grok what the claude-cli and
+ * codex-cli adapters do with their engines' own switches:
+ *
+ * - `tools`: only the two meta-tools that reach somora's MCP tools.
+ *   Grok's own built-ins (terminal, file edit, web search, its own
+ *   subagents, scheduler) are off — they ran unchecked by somora's tool
+ *   gating, path rules and exec guard (2026-10-08: a live test wrote a
+ *   file through `run_terminal_command`).
+ * - `promptMode: full` + `promptBody`: somora's system prompt IS the
+ *   system prompt, replacing Grok's coding-agent template. Sent on every
+ *   load, so an edited persona reaches a resumed session (it used to
+ *   ride on the first user message and stay frozen there).
+ * - no skill discovery, no AGENTS.md lookup in the working folder.
+ */
+export function buildAgentProfile(systemPrompt: string): Record<string, unknown> {
+  return {
+    name: 'somora',
+    description: 'A somora agent',
+    promptMode: 'full',
+    promptBody: [systemPrompt.trim(), GROK_TOOL_GUIDANCE].filter(Boolean).join('\n\n'),
+    tools: ['search_tool', 'use_tool'],
+    discoverSkills: false,
+    inheritSkills: false,
+    agentsMd: false,
+  };
+}
+
+/** How long a turn waits for somora's MCP servers to report ready. */
+const MCP_READY_TIMEOUT_MS = 30_000;
+const MCP_READY_POLL_MS = 250;
+
+/** Server name → session status from an `_x.ai/mcp/list` answer. */
+export function mcpStatuses(result: unknown): Map<string, string> {
+  const out = new Map<string, string>();
+  // xAI extension answers arrive wrapped once more: {result: {servers}}.
+  const inner = (result as { result?: unknown } | undefined)?.result ?? result;
+  const servers = (inner as { servers?: Array<{ name?: unknown; session?: { status?: unknown } }> } | undefined)?.servers;
+  for (const s of servers ?? []) {
+    if (typeof s.name === 'string') out.set(s.name, typeof s.session?.status === 'string' ? s.session.status : 'unknown');
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------
 // Minimal ACP client over a spawned child
 // ---------------------------------------------------------------------
@@ -283,11 +362,11 @@ class AcpClient {
   private closed = false;
   private exitInfo: string | null = null;
 
-  constructor(args: string[], cwd: string) {
-    this.child = spawn(GROK_BIN, args, {
+  constructor(bin: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
+    this.child = spawn(bin, args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
+      env,
     }) as ChildProcessWithoutNullStreams;
 
     this.child.stdout.on('data', (c: Buffer) => this.onData(c));
@@ -307,7 +386,13 @@ class AcpClient {
     });
     this.child.on('error', (err) => {
       this.closed = true;
-      this.exitInfo = `grok spawn failed: ${err.message}`;
+      this.exitInfo = describeSpawnFailure(bin, err as NodeJS.ErrnoException);
+      // Answer every waiting request now with the real cause — before,
+      // the handshake sat out its 30 s timeout and then blamed the login.
+      for (const [, res] of this.pending) {
+        res({ jsonrpc: '2.0', error: { code: -1, message: this.exitInfo } });
+      }
+      this.pending.clear();
       this.wake();
     });
   }
@@ -351,7 +436,7 @@ class AcpClient {
         // shouldn't fire, but answer defensively rather than deadlock.
         if (frame.id !== undefined) {
           this.respond(frame.id, {
-            outcome: { outcome: 'selected', optionId: 'allow' },
+            outcome: { outcome: 'selected', optionId: 'allow-once' },
           });
         }
         this.wake();
@@ -502,20 +587,33 @@ export const grokCliEngine: AgentEngine = {
       };
     }
 
-    // cwd: the agent's workspace is what grok's built-in file/shell
-    // tools operate on. Falls back to $HOME rather than somora's own
-    // process cwd, which would point the agent at the install dir.
-    const cwd = process.env.SOMORA_WORKSPACE ?? homedir();
+    // cwd: the session's working folder (the agent's workspace, or the
+    // pinned project's folder), as for every other engine. Grok keys its
+    // stored sessions by it.
+    const cwd = input.workdir ?? process.env.SOMORA_WORKSPACE ?? homedir();
+
+    // somora's own Grok home, with the login brought in step (see
+    // grok-home.ts). Read on every turn, like the binary below.
+    const home = syncGrokHome();
+    if (home.action === 'missing') {
+      logger.warn({ msg: 'engine.grok_auth_missing', engine: ENGINE, agent: input.agent, hint: 'run `grok login` — the turn will fail on authentication' });
+    }
+    const bin = resolveGrokBin();
 
     const args = [
       'agent',
+      // A private process for this turn, never the shared leader.
+      '--no-leader',
+      // Only somora's tools exist in the session (agent profile below),
+      // so approving them automatically is what somora's gating wants.
       '--always-approve',
       ...(input.resolvedModel.modelId ? ['-m', input.resolvedModel.modelId] : []),
       ...grokCliReasoningArgs(input.thinking, input.resolvedModel.model),
       'stdio',
     ];
 
-    const client = new AcpClient(args, cwd);
+    const client = new AcpClient(bin, args, cwd, grokChildEnv());
+    logger.info({ msg: 'engine.grok_spawn', engine: ENGINE, agent: input.agent, session: input.session, bin, grokHome: somoraGrokHome(), cwd });
     const onAbort = () => client.kill();
     input.signal?.addEventListener('abort', onAbort, { once: true });
 
@@ -541,12 +639,12 @@ export const grokCliEngine: AgentEngine = {
         HANDSHAKE_TIMEOUT_MS,
       );
       if (init.error) {
-        yield {
-          kind: 'error',
-          ts: Date.now(),
-          engine: ENGINE,
-          message: `grok handshake failed: ${init.error.message}. Is \`grok\` installed and has \`grok login\` been run?`,
-        };
+        // A start failure already says what is wrong (describeSpawnFailure);
+        // only a real handshake failure gets the login hint.
+        const message = client.lastError
+          ? client.lastError
+          : `grok handshake failed: ${init.error.message}. Has \`grok login\` been run?`;
+        yield { kind: 'error', ts: Date.now(), engine: ENGINE, message };
         yield { kind: 'turn_end', ts: Date.now(), engine: ENGINE, turnId };
         return;
       }
@@ -563,12 +661,18 @@ export const grokCliEngine: AgentEngine = {
         externalMcpServers: input.externalMcpServers,
       });
       const mcpServerNames = new Set(mcpServers.map((s) => s.name));
+      const agentProfile = buildAgentProfile(input.systemPrompt);
+      // The profile sets tools and the prompt of a NEW session; a loaded
+      // session keeps the system prompt it was stored with unless
+      // `systemPromptOverride` replaces it — so an edited persona reaches
+      // a resumed session too (2026-10-08: it quoted the old line).
+      const sessionMeta = { agentProfile, systemPromptOverride: agentProfile.promptBody };
 
       let sessionId: string | null = null;
       if (priorSessionId) {
         const loaded = await client.request(
           'session/load',
-          { sessionId: priorSessionId, cwd, mcpServers },
+          { sessionId: priorSessionId, cwd, mcpServers, _meta: sessionMeta },
           HANDSHAKE_TIMEOUT_MS,
         );
         if (!loaded.error) {
@@ -583,7 +687,7 @@ export const grokCliEngine: AgentEngine = {
       if (!sessionId) {
         const created = await client.request(
           'session/new',
-          { cwd, mcpServers },
+          { cwd, mcpServers, _meta: sessionMeta },
           // MCP child startup (tsx + the somora server) adds a few
           // seconds on top of the bare handshake — measured ~3.5s for
           // the single somora child on 2026-07-20. External
@@ -607,6 +711,31 @@ export const grokCliEngine: AgentEngine = {
         sessionId = sid;
       }
 
+      // Grok starts the MCP children with the session and answers before
+      // they are up; a prompt sent at once found somora's tools missing
+      // ("the somora server is still connecting") and the model gave up
+      // or spent a round searching. Wait until every server is ready (or
+      // has failed), at most MCP_READY_TIMEOUT_MS.
+      const mcpWaitStart = Date.now();
+      let statuses = new Map<string, string>();
+      for (;;) {
+        const listed = await client.request('_x.ai/mcp/list', { sessionId }, 5_000);
+        statuses = mcpStatuses(listed.result);
+        const ours = [...mcpServerNames].map((n) => statuses.get(n) ?? 'missing');
+        if (listed.error || ours.every((st) => st === 'ready' || st === 'unavailable' || st === 'setuprequired')) break;
+        if (Date.now() - mcpWaitStart > MCP_READY_TIMEOUT_MS || client.isClosed) break;
+        await new Promise((r) => setTimeout(r, MCP_READY_POLL_MS));
+      }
+      const notReady = [...mcpServerNames].filter((n) => statuses.get(n) !== 'ready');
+      logger.info({
+        msg: 'engine.grok_mcp_ready',
+        engine: ENGINE,
+        agent: input.agent,
+        session: input.session,
+        waitedMs: Date.now() - mcpWaitStart,
+        ...(notReady.length ? { notReady: Object.fromEntries(notReady.map((n) => [n, statuses.get(n) ?? 'missing'])) } : {}),
+      });
+
       await input.metaStore.update(input.agent, input.session, (cur) => ({
         ...cur,
         grokSessionId: sessionId,
@@ -615,14 +744,11 @@ export const grokCliEngine: AgentEngine = {
       }));
 
       // --- build the prompt ------------------------------------------
-      // ACP has no system-prompt slot. On a FRESH session the persona
-      // rides in as a preamble on the first user message; on a RESUMED
-      // one grok already remembers it, so we send only the per-turn
-      // ephemeral context (memory recall / project block), which
-      // changes every turn and must always be re-sent.
+      // The system prompt travels in the agent profile (session/new and
+      // session/load); the message carries only the per-turn context
+      // (memory recall / project block) and what the person wrote.
       const isFresh = sessionId !== priorSessionId;
       const parts: string[] = [];
-      if (isFresh && input.systemPrompt.trim()) parts.push(input.systemPrompt.trim());
       if (input.ephemeralContext?.trim()) parts.push(input.ephemeralContext.trim());
       if (!isFresh && input.projectContext?.trim()) parts.push(input.projectContext.trim());
       // Text attachments inline, anything else becomes a note (see

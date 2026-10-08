@@ -1003,6 +1003,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         agent,
         session,
         systemPrompt: systemPromptForTurn,
+        workdir: workdirFromMeta(sessionMeta as Record<string, unknown>, persona, deps.config).path,
         ephemeralContext,
         // Pass the project block separately so codex-cli (which drops
         // systemPrompt on resumed sessions) can inline it via the

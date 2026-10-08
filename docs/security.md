@@ -225,12 +225,23 @@ no MCP server is configured.
 
 ### Grok
 
-The Grok engine is not locked down like the other two. somora starts
-`grok agent --always-approve` and adds its own tools as an MCP server.
-It passes no option that disables Grok's built-in file and shell tools,
-and it runs Grok with your normal `~/.grok` home. Those built-in tools
-work in the agent's workspace folder and do not pass through somora's
-rules.
+somora starts `grok agent --no-leader --always-approve stdio` for
+each turn and hands Grok an agent profile with the session:
+
+- **Only somora's tools.** The profile allows two tools, `search_tool`
+  and `use_tool`, which reach somora's MCP server. Grok's built-in
+  terminal, file, web search, scheduler and subagent tools are off, so
+  everything an agent does passes through somora's gating and rules.
+  `--always-approve` therefore approves only somora's own tools.
+- **somora's system prompt.** It replaces Grok's own prompt, and is
+  sent again on every resume.
+- **No skills and no `AGENTS.md`** from the working folder.
+
+Grok runs with its own home, `~/.somora/grok-home` (`GROK_HOME`), not
+with your `~/.grok`. Your Grok sessions, plugins, MCP servers and
+settings stay out of somora. Grok's own cross-session memory is off
+(`GROK_MEMORY=0`), its self-update is off, and `--no-leader` keeps
+each turn in a private process instead of a shared one.
 
 ### OpenAI compatible
 
@@ -264,7 +275,7 @@ no encrypted store.
 |---|---|
 | Claude login | `~/.somora/claude-home/.credentials.json`, kept identical to `~/.claude/.credentials.json` |
 | Codex login | `~/.somora/codex-home/auth.json`, copied from `~/.codex/auth.json` when that one is newer |
-| Grok login | `~/.grok/auth.json`, written by `grok login` |
+| Grok login | `~/.somora/grok-home/auth.json`, kept in step with `~/.grok/auth.json`: the copy that expires later wins, in both directions |
 | API keys of providers | `apiKey` under `providers` in `~/.somora/config.yaml` |
 | Secrets for skills and tools | `~/.somora/somora.env`, loaded into the server's environment at start |
 | SSH keys for resources | the file named by `resources.<name>.keyPath`. Pinned host keys are in `~/.somora/known_hosts.json`. |

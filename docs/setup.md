@@ -235,6 +235,11 @@ separately, per token. Grok calls somora's tools through its own
 `use_tool` step. somora records them under their usual names, such as
 `mcp__somora__memory_list`.
 
+somora looks for the Grok CLI on every turn, so a CLI installed while
+somora runs is used without a restart. It runs Grok with its own home,
+`~/.somora/grok-home`, and keeps that login in step with yours. See
+the [security guide](security.md#grok).
+
 The models guide has a tested block for every model family, the Codex
 and Grok details and all model fields.
 
@@ -810,7 +815,7 @@ service's environment.
 | `SOMORA_CLAUDE_BIN` | `~/.local/bin/claude`, else the bundled one | Path of the Claude Code binary. |
 | `CLAUDE_CONFIG_DIR` | `~/.somora/claude-home` | Config folder of the Claude engine. |
 | `SOMORA_CODEX_BIN` | unset | Uses another Codex binary instead of the bundled one. For debugging. |
-| `SOMORA_GROK_BIN` | `~/.local/bin/grok`, else `grok` on `PATH` | Path of the Grok CLI. |
+| `SOMORA_GROK_BIN` | `~/.local/bin/grok`, else `grok` on `PATH` | Path of the Grok CLI. Read on every turn. |
 | `SOMORA_COMPACTION_TRIGGER_RATIO` | from config | Overrides `compaction.triggerRatio`. |
 | `SOMORA_COMPACTION_SAFETY_PAIRS` | from config | Overrides `compaction.safetyCushionPairs`. |
 | `SOMORA_COMPACTION_MODEL` | from config | Overrides `compaction.modelOverride`. |

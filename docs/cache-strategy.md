@@ -110,7 +110,7 @@ How that block reaches the model depends on the engine.
 |---|---|---|---|
 | `claude-cli` | the Claude session, resumed | every turn, unchanged | catch-up, per-turn block, your text |
 | `codex-cli` | the Codex thread, resumed | as developer instructions on every thread start and resume | attachment notes, per-turn block, project block on a resumed thread, catch-up, your text |
-| `grok-cli` | the Grok session, resumed | once, as the start of the first message | system prompt on a fresh session, per-turn block, project block on a resumed session, attachments, your text |
+| `grok-cli` | the Grok session, resumed | in the session's agent profile, replaced on every resume | per-turn block, project block on a resumed session, attachments, your text |
 | `openai-compatible` | somora, rebuilt from the session file on every request | every request, as the one system message | per-turn block, your text |
 
 "Catch-up" is the summary of turns another engine answered, sent when
