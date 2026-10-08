@@ -78,3 +78,21 @@ export function buildCodexThreadConfig(opts: CodexThreadConfigOptions = {}): Rec
   }
   return config;
 }
+
+/** The same overlay as `codex exec` flags (`-c key=value`, value parsed
+ *  as TOML) for the one-shot path, which has no thread config. JSON
+ *  spells booleans, numbers, strings and string arrays the way TOML
+ *  reads them; an empty object is TOML's empty inline table `{}`. */
+export function codexConfigArgs(config: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const [key, value] of Object.entries(config)) {
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      const entries = Object.entries(value);
+      if (entries.length === 0) out.push('-c', `${key}={}`);
+      else for (const [k, v] of entries) out.push('-c', `${key}.${k}=${JSON.stringify(v)}`);
+    } else {
+      out.push('-c', `${key}=${JSON.stringify(value)}`);
+    }
+  }
+  return out;
+}

@@ -33,6 +33,7 @@ import { isAvailabilityError } from '../engine/availability.ts';
 import { markModelAvailable, markModelUnavailable, modelRef, modelUnavailable } from '../engine/model-availability.ts';
 import { grokOneShot } from '../engine/grok-cli.ts';
 import { resolveCodexLaunch } from '../engine/codex-bin.ts';
+import { buildCodexThreadConfig, codexConfigArgs } from '../engine/codex-thread-config.ts';
 import { codexChildEnv, syncCodexAuth } from '../engine/codex-home.ts';
 
 export interface OneShotArgs {
@@ -342,8 +343,11 @@ async function callCodexCli(args: OneShotArgs): Promise<string> {
     'exec',
     '--ignore-user-config',
     '--ignore-rules',
-    '-c',
-    'project_root_markers=[]',
+    // The chat engine's lock-down (no shell, no web search, no plugins,
+    // no MCP servers …): a dream worker answers from the prompt alone.
+    // Before 2026-10-08 only the read-only sandbox applied, and a worker
+    // asked to run `ls /` did.
+    ...codexConfigArgs(buildCodexThreadConfig()),
     ...reasoningArgs,
     '--json',
     '--skip-git-repo-check',
