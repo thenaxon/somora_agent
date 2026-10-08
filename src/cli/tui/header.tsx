@@ -1,26 +1,15 @@
-import { Box, Text, useStdout } from 'ink';
+import { Box, Text, useWindowSize } from 'ink';
 import Spinner from 'ink-spinner';
-import { useEffect, useState, type ReactElement } from 'react';
+import type { ReactElement } from 'react';
 import type { ProjectInfo, ThinkingState, TurnStats } from './types.ts';
 import { formatTokens } from './format.ts';
 
 /**
- * Live terminal-column count. Default-export the hook so callers stay
- * thin. We track resize via stdout.on('resize') so the constrained
- * Header box always matches reality after the user drags the window.
+ * Live terminal-column count: ink's own hook re-renders on resize, so
+ * the constrained Header box always matches the window after a drag.
  */
 function useTerminalCols(): number {
-  const { stdout } = useStdout();
-  const [cols, setCols] = useState<number>(stdout?.columns ?? 80);
-  useEffect(() => {
-    if (!stdout) return undefined;
-    const onResize = (): void => setCols(stdout.columns ?? 80);
-    stdout.on('resize', onResize);
-    return () => {
-      stdout.off('resize', onResize);
-    };
-  }, [stdout]);
-  return cols;
+  return useWindowSize().columns || 80;
 }
 
 interface Props {

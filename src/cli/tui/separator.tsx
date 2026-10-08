@@ -1,4 +1,4 @@
-import { Text, useStdout } from 'ink';
+import { Text, useWindowSize } from 'ink';
 
 // Adapts to the actual terminal width — falls back to 80 columns when
 // stdout doesn't report (e.g. piped output, edge cases).
@@ -7,7 +7,6 @@ import { Text, useStdout } from 'ink';
 // because it just halves intensity; gray is a real color with usable
 // contrast against both backgrounds.
 export function Separator() {
-  const { stdout } = useStdout();
-  const width = stdout?.columns ?? 80;
+  const width = useWindowSize().columns || 80;
   return <Text color="gray">{'─'.repeat(Math.max(20, width))}</Text>;
 }
