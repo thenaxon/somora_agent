@@ -1,7 +1,7 @@
 // Multi-engine one-shot LLM caller for Dream-B (Phase 4 / Stufe 4.5).
 //
 // Wraps a single Q&A turn — system prompt + user message → assistant text
-// string — across all three somora engines. Used by the Dream-B dispatcher
+// string — across all four somora engines. Used by the Dream-B dispatcher
 // (and later Dream-C / Lint).
 //
 // Why not reuse the engine adapters in `src/engine/`? Those are designed
@@ -31,6 +31,9 @@ import { samplingBody } from '../engine/sampling.ts';
 import { userTagParam } from '../engine/user-tag.ts';
 import { isAvailabilityError } from '../engine/availability.ts';
 import { markModelAvailable, markModelUnavailable, modelRef, modelUnavailable } from '../engine/model-availability.ts';
+import { grokOneShot } from '../engine/grok-cli.ts';
+import { resolveCodexLaunch } from '../engine/codex-bin.ts';
+import { codexChildEnv, syncCodexAuth } from '../engine/codex-home.ts';
 
 export interface OneShotArgs {
   workerModel: ResolvedModel;
@@ -123,7 +126,7 @@ export async function callOneShotLLM(args: OneShotArgs): Promise<string> {
 
 /** Which engines can answer a one-shot call at all. */
 export function hasOneShotPath(engine: string): boolean {
-  return engine === 'openai-compatible' || engine === 'claude-cli' || engine === 'codex-cli';
+  return engine === 'openai-compatible' || engine === 'claude-cli' || engine === 'codex-cli' || engine === 'grok-cli';
 }
 
 /** Dispatch to the engine adapter of ONE model — no backups, no outage
@@ -138,12 +141,13 @@ export async function callOneShotOn(args: OneShotArgs): Promise<string> {
       return callClaudeCli(args);
     case 'codex-cli':
       return callCodexCli(args);
+    case 'grok-cli':
+      return callGrokCli(args);
     default:
-      // grok-cli lands here until it grows a one-shot ACP path: the
-      // dream/REM worker refs are explicit config, so a clear message
+      // The dream/REM worker refs are explicit config, so a clear message
       // beats a silent fallback.
       throw new Error(
-        `dream worker engine '${engine}' has no one-shot LLM path yet — configure the worker on claude-cli, codex-cli or openai-compatible`,
+        `dream worker engine '${engine}' has no one-shot LLM path — configure the worker on claude-cli, codex-cli, grok-cli or openai-compatible`,
       );
   }
 }
@@ -327,7 +331,12 @@ function resolveClaudeBin(): string | undefined {
 // only, all built-in tools disabled.
 
 async function callCodexCli(args: OneShotArgs): Promise<string> {
-  const codexBin = resolveCodexBin();
+  // The bundled Codex in somora's own Codex home, like the chat engine.
+  // Before 2026-10-08 this ran a global `codex` with the person's own
+  // ~/.codex: without a global install Deep and Lucid on Codex failed.
+  const launch = resolveCodexLaunch();
+  syncCodexAuth();
+  const codexBin = launch.command;
   const reasoningArgs = codexCliReasoningArgs(args.thinking, args.workerModel.model);
   const cliArgs: string[] = [
     'exec',
@@ -357,7 +366,7 @@ async function callCodexCli(args: OneShotArgs): Promise<string> {
     bin: codexBin,
   });
 
-  const child = spawn(codexBin, cliArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(codexBin, [...launch.args, ...cliArgs], { stdio: ['pipe', 'pipe', 'pipe'], env: codexChildEnv() });
 
   let abortReason: string | null = null;
   const onUpstreamAbort = () => {
@@ -454,11 +463,35 @@ async function callCodexCli(args: OneShotArgs): Promise<string> {
   return finalText;
 }
 
-function resolveCodexBin(): string {
-  if (process.env.SOMORA_CODEX_BIN) return process.env.SOMORA_CODEX_BIN;
-  const npmGlobal = join(homedir(), '.npm-global', 'bin', 'codex');
-  if (existsSync(npmGlobal)) return npmGlobal;
-  return 'codex';
+
+// ─── grok-cli ───────────────────────────────────────────────────────
+//
+// A fresh Grok session without tools in a private process; the helper
+// lives with the engine (src/engine/grok-cli.ts) so login, binary and
+// home are the chat engine's.
+
+async function callGrokCli(args: OneShotArgs): Promise<string> {
+  logger.info({ msg: 'dream.deep.llm_request', ...args.logCtx, engine: 'grok-cli', model: args.workerModel.modelId });
+  const reqStart = Date.now();
+  const r = await grokOneShot({
+    model: args.workerModel,
+    systemPrompt: args.systemPrompt,
+    userMessage: args.userMessage,
+    timeoutMs: args.timeoutMs,
+    ...(args.signal ? { signal: args.signal } : {}),
+    ...(args.thinking ? { thinking: args.thinking } : {}),
+    logCtx: args.logCtx,
+  });
+  logger.info({
+    msg: 'dream.deep.llm_response',
+    ...args.logCtx,
+    engine: 'grok-cli',
+    durationMs: Date.now() - reqStart,
+    chars: r.text.length,
+    preview: previewSafe(r.text),
+    usage: { tokensIn: r.tokensIn, tokensOut: r.tokensOut },
+  });
+  return r.text;
 }
 
 // ─── helpers ────────────────────────────────────────────────────────

@@ -140,16 +140,16 @@ export const CodexCliProviderSchema = z.object({
 });
 
 // grok-cli: xAI's Grok Build CLI driven over ACP (Agent Client
-// Protocol, JSON-RPC on stdio) via `grok agent stdio`. Auth is handled
-// by the binary itself — `grok login` writes a session to
-// ~/.grok/auth.json and the ACP handshake reports it as the
-// `cached_token` auth method. That session carries a SuperGrok/Premium
-// subscription, so no baseUrl / apiKey belong here; passing an
-// XAI_API_KEY env var instead switches the binary to pay-per-token API
-// billing (see docs/setup.md).
+// Protocol, JSON-RPC on stdio) via `grok agent stdio`. somora bundles the
+// CLI (src/engine/grok-bin.ts) and runs it with its own home,
+// ~/.somora/grok-home (src/engine/grok-home.ts); `somora grok login`
+// signs in there, and a login in ~/.grok is kept in step. That login
+// carries a SuperGrok/Premium subscription, so no baseUrl / apiKey belong
+// here; an XAI_API_KEY env var instead switches the binary to
+// pay-per-token API billing (see docs/setup.md).
 //
-// Binary path override: SOMORA_GROK_BIN (default ~/.local/bin/grok),
-// mirroring SOMORA_CODEX_BIN / SOMORA_CLAUDE_BIN.
+// Binary path override: SOMORA_GROK_BIN, mirroring SOMORA_CODEX_BIN /
+// SOMORA_CLAUDE_BIN.
 export const GrokCliProviderSchema = z.object({
   engine: z.literal('grok-cli'),
   models: z.array(ModelSchema).min(1),

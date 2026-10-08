@@ -294,18 +294,15 @@ daily:
 | Memory auto-injection | ✓ | ✓ | ✓ | ✓ |
 | Memory tools (read + write) | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
 | Wiki layer (shared) | ✓ | ✓ | ✓ | ✓ |
-| Three-phase dreams | ✓ | ✓ | as chat model only¹ | ✓ |
+| Three-phase dreams | ✓ | ✓ | ✓ | ✓ |
 | Tool surface | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
 | Skills (markdown how-tos) | ✓ | ✓ | ✓ | ✓ |
 | Multimodal attachments (image, PDF) | ✓ native | ✓ image native, PDF rasterized | ✓ image native, PDF rasterized | ✓ image; PDF native or rasterized per provider |
-| Image + video generation² | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
+| Image + video generation¹ | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
 | Sub-agents, agent-to-agent questions, follow-ups | ✓ | ✓ | ✓ | ✓ |
 | SSH-resource exec | ✓ | ✓ | ✓ | ✓ |
 
-¹ grok-cli has no one-shot path, so it cannot serve as a dream or
-compaction *worker* — configure those on another engine.
-
-² Off until an `imageGen` / `videoGen` block exists. Verified end-to-end
+¹ Off until an `imageGen` / `videoGen` block exists. Verified end-to-end
 against a self-hosted OpenAI-shaped endpoint; the hosted providers
 (OpenAI images/video, Google Veo) are implemented to their published
 shapes but **not yet tested against a live account**.

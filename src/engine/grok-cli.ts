@@ -19,9 +19,9 @@
 // grok 0.2.106 — see the `session/update` variants in mapUpdate().
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
   MCP_SERVER_NAME,
@@ -37,6 +37,7 @@ import { resolveGrokLaunch } from './grok-bin.ts';
 import { buildCodexAttachments } from '../multimodal/user-content.ts';
 import { capReplayDelta, computeReplayDelta, getLastSeenTs, renderReplayPrefix, withLastSeenTs } from './replay.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
+import type { ResolvedModel, ThinkingLevel } from '../config/types.ts';
 import type { SteerMessage } from '../server/steer-inbox.ts';
 
 const ENGINE = 'grok-cli';
@@ -1428,5 +1429,141 @@ export async function compactGrokSession(args: {
     return { status: 'compacted', ...(tokensBefore !== undefined ? { tokensBefore } : {}), ...(tokensAfter !== undefined ? { tokensAfter } : {}) };
   } finally {
     client.kill();
+  }
+}
+
+export interface GrokOneShotArgs {
+  model: ResolvedModel;
+  systemPrompt: string;
+  userMessage: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  thinking?: ThinkingLevel;
+  logCtx?: Record<string, unknown>;
+}
+
+export interface GrokOneShotResult {
+  text: string;
+  tokensIn?: number;
+  tokensOut?: number;
+}
+
+/**
+ * One question, one answer, no tools: what REM, Deep, Lucid, the judge,
+ * the wiki migration and compaction need from a worker model. A fresh
+ * Grok session in a private process, its system prompt replaced by the
+ * caller's, no MCP servers and no Grok built-ins (the allowlist names
+ * only `search_tool`, which finds nothing without servers — an empty
+ * list would mean "every tool"). The session folder and Grok's prompt
+ * history are removed after, so a REM run of hundreds of pieces leaves
+ * nothing behind.
+ */
+export async function grokOneShot(args: GrokOneShotArgs): Promise<GrokOneShotResult> {
+  const logCtx = { engine: ENGINE, model: args.model.modelId, ...args.logCtx };
+  syncGrokHome();
+  const launch = await resolveGrokLaunch();
+  const cwd = join(somoraGrokHome(), 'workspace');
+  mkdirSync(cwd, { recursive: true });
+  const argv = [
+    'agent',
+    '--no-leader',
+    '--always-approve',
+    ...(args.model.modelId ? ['-m', args.model.modelId] : []),
+    ...grokCliReasoningArgs(args.thinking, args.model.model),
+    'stdio',
+  ];
+  const client = new AcpClient(launch.bin, argv, cwd, grokChildEnv());
+  const onAbort = () => client.kill();
+  if (args.signal?.aborted) client.kill();
+  args.signal?.addEventListener('abort', onAbort, { once: true });
+  const started = Date.now();
+  const deadline = () => Math.max(1_000, args.timeoutMs - (Date.now() - started));
+  let sessionId: string | null = null;
+  try {
+    const init = await client.request('initialize', { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } }, Math.min(HANDSHAKE_TIMEOUT_MS, deadline()));
+    if (init.error) throw new Error(client.lastError ?? `grok handshake failed: ${init.error.message}. Has \`somora grok login\` been run?`);
+    const profile = {
+      name: 'somora-worker',
+      description: 'somora background worker: answers one request without tools',
+      promptMode: 'full',
+      promptBody: args.systemPrompt,
+      tools: ['search_tool'],
+      discoverSkills: false,
+      inheritSkills: false,
+      agentsMd: false,
+    };
+    const created = await client.request('session/new', { cwd, mcpServers: [], _meta: { agentProfile: profile } }, Math.min(HANDSHAKE_TIMEOUT_MS, deadline()));
+    sessionId = (created.result as { sessionId?: string } | undefined)?.sessionId ?? null;
+    if (created.error || !sessionId) throw new Error(client.lastError ?? `grok session/new failed: ${created.error?.message ?? 'no session id'}`);
+    client.drain();
+    logger.info({ msg: 'engine.grok_oneshot_request', ...logCtx, bin: launch.bin, chars: args.userMessage.length });
+
+    const promptDone = client.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: args.userMessage }] }, deadline());
+    let text = '';
+    let apiError: string | null = null;
+    let done = false;
+    let usage: AcpUsage | undefined;
+    void promptDone.then((f) => {
+      done = true;
+      const m = (f.result as { _meta?: { usage?: AcpUsage } } | undefined)?._meta;
+      if (m?.usage) usage = m.usage;
+      if (f.error) apiError ??= f.error.message;
+    });
+    while (!done) {
+      const note = await client.next(250);
+      if (note === null) {
+        if (client.isClosed) break;
+        continue;
+      }
+      const xu = (note.params as { update?: Record<string, unknown> }).update;
+      if (note.method === 'session/update' && xu?.sessionUpdate === 'agent_message_chunk') {
+        const t = (xu.content as { text?: string } | undefined)?.text;
+        if (t) text += t;
+      } else if (xu?.sessionUpdate === 'response_completed' && text && !text.endsWith('\n')) {
+        // A second round (rare without tools) starts a new paragraph.
+        text += '\n\n';
+      } else if (xu?.sessionUpdate === 'retry_state' && xu.type === 'failed') {
+        apiError = typeof xu.message === 'string' ? xu.message : 'grok reported a failed attempt';
+      } else if (xu?.sessionUpdate === 'turn_completed' && xu.stop_reason === 'error') {
+        if (typeof xu.agent_result === 'string' && xu.agent_result) apiError = xu.agent_result;
+      }
+    }
+    await promptDone.catch(() => undefined);
+    // Chunks that landed together with the answer.
+    for (let note = await client.next(0); note; note = await client.next(0)) {
+      const xu = (note.params as { update?: { sessionUpdate?: string; content?: { text?: string } } }).update;
+      if (note.method === 'session/update' && xu?.sessionUpdate === 'agent_message_chunk' && xu.content?.text) text += xu.content.text;
+    }
+    if (args.signal?.aborted) throw new Error('grok one-shot call aborted');
+    text = text.trim();
+    if (!text) {
+      const why = apiError ?? (Date.now() - started >= args.timeoutMs ? `timed out after ${args.timeoutMs}ms` : client.lastError ?? 'no answer');
+      throw new Error(`grok-cli one-shot call failed (model ${args.model.modelId}): ${why}`);
+    }
+    logger.info({ msg: 'engine.grok_oneshot_response', ...logCtx, durationMs: Date.now() - started, chars: text.length, tokensIn: usage?.inputTokens, tokensOut: usage?.outputTokens });
+    return {
+      text,
+      ...(usage?.inputTokens !== undefined ? { tokensIn: usage.inputTokens } : {}),
+      ...(usage?.outputTokens !== undefined ? { tokensOut: usage.outputTokens } : {}),
+    };
+  } finally {
+    args.signal?.removeEventListener('abort', onAbort);
+    client.kill();
+    if (sessionId) {
+      const file = grokUpdatesFile(somoraGrokHome(), sessionId);
+      if (file) {
+        // Grok writes its files from a background task: let the process go first.
+        for (let i = 0; i < 20 && !client.isClosed; i++) await new Promise((r) => setTimeout(r, 50));
+        try {
+          rmSync(dirname(file), { recursive: true, force: true });
+          // Grok also appends every prompt, in full, to a history file per
+          // working folder (up to 10,000 entries, no setting to stop it).
+          // For a worker that is whole conversations copied again: gone.
+          rmSync(join(dirname(dirname(file)), 'prompt_history.jsonl'), { force: true });
+        } catch (err) {
+          logger.warn({ msg: 'engine.grok_oneshot_cleanup_failed', ...logCtx, err: String(err) });
+        }
+      }
+    }
   }
 }

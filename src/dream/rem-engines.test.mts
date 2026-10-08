@@ -26,15 +26,16 @@ const worker = (engine: string) => ({
 const run = (engine: string, signal?: AbortSignal) =>
   extractFromSession({ agent: 'ada', events, existingMemory: [], referencedVault: [], workerModel: worker(engine), chunkTimeoutMs: 5000, chunkTokens: 4000, ...(signal ? { signal } : {}) } as never);
 
-test('one-shot path: the three engines, not grok-cli', () => {
+test('one-shot path: all four engines, nothing else', () => {
   assert.equal(hasOneShotPath('openai-compatible'), true);
   assert.equal(hasOneShotPath('claude-cli'), true);
   assert.equal(hasOneShotPath('codex-cli'), true);
-  assert.equal(hasOneShotPath('grok-cli'), false);
+  assert.equal(hasOneShotPath('grok-cli'), true);
+  assert.equal(hasOneShotPath('acme-cli'), false);
 });
 
-test('a worker on claude-cli or codex-cli is accepted (run cancelled before any call)', async () => {
-  for (const engine of ['claude-cli', 'codex-cli']) {
+test('a worker on claude-cli, codex-cli or grok-cli is accepted (run cancelled before any call)', async () => {
+  for (const engine of ['claude-cli', 'codex-cli', 'grok-cli']) {
     const ac = new AbortController();
     ac.abort();
     const r = await run(engine, ac.signal);
@@ -44,5 +45,5 @@ test('a worker on claude-cli or codex-cli is accepted (run cancelled before any 
 });
 
 test('an engine without a one-shot path is refused, and the message names what works', async () => {
-  await assert.rejects(run('grok-cli'), /engine 'grok-cli', which cannot run REM — use a model on claude-cli, codex-cli or an openai-compatible provider/);
+  await assert.rejects(run('acme-cli'), /engine 'acme-cli', which cannot run REM — use a model on claude-cli, codex-cli, grok-cli or an openai-compatible provider/);
 });

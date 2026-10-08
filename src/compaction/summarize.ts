@@ -38,6 +38,7 @@ import type { NormalizedEvent } from '../types/events.ts';
 import { buildSummaryPrompt } from './template.ts';
 import { pickLatest, type Compaction, type CompactionConfig } from './types.ts';
 import { estimateTokens } from './policy.ts';
+import { grokOneShot } from '../engine/grok-cli.ts';
 
 const HEADROOM_FACTOR = 1.3;
 
@@ -488,15 +489,25 @@ async function summarizeViaCodexCli(
   };
 }
 
-/** Engines with a one-shot summarization path. grok-cli is missing on
- *  purpose: ACP has no non-interactive one-shot mode wired up yet, so a
- *  grok model must never be picked as compaction worker (its 500k
- *  window would otherwise win the auto-pick and every compaction would
- *  throw). Drop the guard once summarizeViaGrokCli exists. */
+/** grok-cli: a fresh Grok session without tools (src/engine/grok-cli.ts). */
+async function summarizeViaGrokCli(input: SummarizeViaInput): Promise<SummarizeViaResult> {
+  const r = await grokOneShot({
+    model: input.resolvedModel,
+    systemPrompt: input.systemPrompt,
+    userMessage: input.userPrompt,
+    // Same ceiling as the codex worker: a long history takes a while.
+    timeoutMs: 15 * 60_000,
+    logCtx: { role: 'compaction-worker', ...(input.agent ? { agent: input.agent } : {}) },
+  });
+  return r;
+}
+
+/** Engines with a one-shot summarization path. */
 export const SUMMARIZE_ENGINES: ReadonlySet<string> = new Set([
   'openai-compatible',
   'claude-cli',
   'codex-cli',
+  'grok-cli',
 ]);
 
 export async function summarizeViaEngine(
@@ -510,6 +521,8 @@ export async function summarizeViaEngine(
       return summarizeViaClaudeCli(input);
     case 'codex-cli':
       return summarizeViaCodexCli(input);
+    case 'grok-cli':
+      return summarizeViaGrokCli(input);
     default:
       throw new Error(
         `engine '${engineName}' has no one-shot summarization path yet — pick a compaction worker on another engine`,

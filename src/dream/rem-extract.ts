@@ -216,8 +216,8 @@ const VALID_ACTIONS: ReadonlySet<FindingAction> = new Set([
 /**
  * The OpenAI client for a worker on an openai-compatible provider; null
  * for a worker on a CLI engine, which is asked through its one-shot
- * caller instead. An engine without either path (grok-cli) is an
- * explicit error — the failure stays visible.
+ * caller instead. An engine without either path is an explicit error —
+ * the failure stays visible.
  */
 function buildClient(model: ResolvedModel): OpenAI | null {
   if (model.provider.engine === 'openai-compatible') {
@@ -229,7 +229,7 @@ function buildClient(model: ResolvedModel): OpenAI | null {
   if (hasOneShotPath(model.provider.engine)) return null;
   throw new Error(
     `dream worker model '${model.providerName}/${model.modelId}' is on engine '${model.provider.engine}', ` +
-      `which cannot run REM — use a model on claude-cli, codex-cli or an openai-compatible provider.`,
+      `which cannot run REM — use a model on claude-cli, codex-cli, grok-cli or an openai-compatible provider.`,
   );
 }
 

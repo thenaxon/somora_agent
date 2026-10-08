@@ -222,9 +222,9 @@ trimming when none delivers.
 
 ## Which model summarises
 
-A summary is a separate, single model call without tools. Three engines
-can do it: `openai-compatible`, `claude-cli` and `codex-cli`. A
-`grok-cli` model is never a summariser.
+A summary is a separate, single model call without tools. All four
+engines can do it: `openai-compatible`, `claude-cli`, `codex-cli` and
+`grok-cli`.
 
 ### With a workers list
 
@@ -300,7 +300,7 @@ The same per-model field does three jobs:
 | Job | `openai-compatible` | `claude-cli`, `codex-cli`, `grok-cli` |
 |---|---|---|
 | Compaction trigger and in-turn limit | yes | no, the CLI compacts on its own threshold |
-| Choice of summariser | yes | yes, except `grok-cli` |
+| Choice of summariser | yes | yes |
 | Usage display in the header | yes | yes |
 
 On a CLI engine the value never prevents an overflow. It decides whether

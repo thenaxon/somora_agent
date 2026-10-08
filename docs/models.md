@@ -245,9 +245,10 @@ providers:
 | `grok-4.7` | 256000 | Thinking levels are passed as `--reasoning-effort`. `off` is sent as `low`, because the model always reasons. `reasoning.levels` is applied. Images go to Grok as images, PDFs as page images. | yes: chat, tools, thinking text, images and PDFs, steering, stop, `/compact`, model switch and back |
 
 Grok compacts its own conversation near the end of the window, and a
-row in the chat says so. `/compact` asks Grok to compact now. Grok has
-no one-shot path, so a Grok model cannot be a dream or compaction
-worker.
+row in the chat says so. `/compact` asks Grok to compact now. A Grok
+model can also be the worker for REM, Deep, Lucid and compaction: each
+request runs in a fresh Grok session without tools, which is removed
+afterwards.
 
 ## Self hosted models
 
@@ -459,9 +460,8 @@ come first. The [thinking guide](thinking.md) lists the order.
 | Worker | Engines |
 |---|---|
 | Vision worker for `analyze_file` | `openai-compatible` only |
-| REM, Deep, Lucid, compaction | `openai-compatible`, `claude-cli`, `codex-cli` |
+| REM, Deep, Lucid, compaction | `openai-compatible`, `claude-cli`, `codex-cli`, `grok-cli` |
 
-`grok-cli` cannot be a worker of any kind.
 
 ## Hosted models through OpenRouter
 

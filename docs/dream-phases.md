@@ -68,9 +68,8 @@ disk, whoever wrote them.
 ### Which models can do the work
 
 A worker model can sit on an `openai-compatible` provider, on
-`claude-cli` or on `codex-cli`. A Claude or ChatGPT subscription is
-therefore enough for all three phases. A model on `grok-cli` cannot be a
-worker for any phase.
+`claude-cli`, on `codex-cli` or on `grok-cli`. A Claude, ChatGPT or
+Grok subscription is therefore enough for all three phases.
 
 ## REM
 

@@ -681,8 +681,8 @@ Lucid work for the whole install and are set under `wiki.deep` and
 | `rem.participate_in_wiki` | boolean | `true` | `false` keeps Deep away from this agent's notes. REM still runs. Useful for scratch agents. |
 | `rem.thinking` | `off`, `low`, `medium`, `high` | none | Reasoning depth for the worker, when its model has the `reasoning` capability. |
 
-The worker can be a model on `claude-cli`, `codex-cli` or an
-`openai-compatible` provider. A model on `grok-cli` cannot run REM.
+The worker can be a model on `claude-cli`, `codex-cli`, `grok-cli` or
+an `openai-compatible` provider.
 
 > **Note:** A `rem` block needs both `enabled` and `model`, also with
 > `enabled: false`. REM agents are registered when the server starts:
