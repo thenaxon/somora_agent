@@ -30,6 +30,12 @@ export function buildCodexThreadConfig(opts: CodexThreadConfigOptions = {}): Rec
     'features.computer_use': false,
     'features.image_generation': false,
     'features.apps': false,
+    // Stable and on by default since 0.154–0.161: browser annotations,
+    // git worktrees and Codex's own voice — none of them is somora's.
+    'features.browser_annotation_api': false,
+    'features.worktrees': false,
+    'features.in_app_voice': false,
+    'features.realtime_conversation': false,
     // Sub-agents: somora has spawn_subagent. 0.153 grew multi_agent_v2 +
     // an `agents` table; OpenClaw disables all three.
     'features.multi_agent': false,
