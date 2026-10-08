@@ -86,5 +86,26 @@ test('the Zod schema rejects malformed questions before anything is sent', () =>
   assert.equal(parse({ state: 's', questions: { a: { type: 'score', criteria: ['x'] } } }), false, 'score needs 2+');
   assert.equal(parse({ state: 's', questions: { a: { type: 'noul' } } }), false, 'agents say boolean, not noul');
   assert.equal(parse({ state: 's', questions: {} }), false);
-  assert.equal(parse({ state: { any: 'json' }, questions: { a: { type: 'boolean' } } }), true);
+  assert.equal(parse({ state: { any: 'json' }, questions: { a: { type: 'boolean', instructions: 'Is it JSON?' } } }), true);
+});
+
+test("image paths put inside the state are refused with the fix (the call Claude made)", async () => {
+  const claudeCall = {
+    state: { images: ['/home/x/.somora/attachments/b506.jpg'], description: 'A camera image.' },
+    questions: { scene: { type: 'choice' as const, criteria: { street: 'road', pattern: 'texture' } } },
+  };
+  const out = await decisionEvaluate.handler(claudeCall, ctx(['text', 'image']));
+  assert.equal(out.status === 'unavailable' && out.reason, 'unsupported-input');
+  assert.match((out as { detail: string }).detail, /top-level `images` field/);
+  // Text-only model: a path in the state is just text, nothing to fix there.
+  const textOnly = await decisionEvaluate.handler(claudeCall, ctx(['text']));
+  assert.notEqual(textOnly.status === 'unavailable' && textOnly.reason, 'unsupported-input', 'sent on, not refused');
+});
+
+test('a boolean question without text is refused before sending (the id is not read)', () => {
+  const parse = (q: unknown) => decisionEvaluate.inputSchema.safeParse({ state: 's', questions: { red_car: q } }).success;
+  assert.equal(parse({ type: 'boolean' }), false);
+  assert.equal(parse({ type: 'boolean', instructions: '' }), false);
+  assert.equal(parse({ type: 'boolean', instructions: 'Is there a red car?' }), true);
+  assert.equal(parse({ type: 'boolean', criteria: { true: 'a red car is visible' } }), true);
 });

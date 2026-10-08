@@ -23,7 +23,12 @@ const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const entry = z.union([z.string(), z.record(z.string(), z.unknown()), z.array(z.unknown()), z.null()]);
 
 const Question = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('boolean'), instructions: entry.optional(), criteria: z.object({ true: entry.optional(), false: entry.optional() }).strict().nullable().optional() }).strict(),
+  z
+    .object({ type: z.literal('boolean'), instructions: entry.optional(), criteria: z.object({ true: entry.optional(), false: entry.optional() }).strict().nullable().optional() })
+    .strict()
+    // The question id is not read by the model: without instructions or
+    // true/false criteria it would answer a question that has no text.
+    .refine((q) => (q.instructions !== undefined && q.instructions !== null && q.instructions !== '') || (q.criteria != null && (q.criteria.true != null || q.criteria.false != null)), 'a boolean question needs instructions or criteria.true/false — the question id is not read'),
   z.object({ type: z.literal('choice'), instructions: entry.optional(), criteria: z.record(z.string(), entry).refine((c) => Object.keys(c).length >= 2 && Object.keys(c).length <= 255, 'choice needs 2–255 alternatives') }).strict(),
   z.object({ type: z.literal('score'), instructions: entry.optional(), criteria: z.array(entry).min(2).max(10) }).strict(),
 ]);
@@ -61,7 +66,7 @@ function jsonSchema(withImages: boolean): Record<string, unknown> {
               required: ['type'],
               properties: {
                 type: { const: 'boolean' },
-                instructions: { ...ENTRY_SCHEMA, description: 'The yes/no question.' },
+                instructions: { ...ENTRY_SCHEMA, description: 'The yes/no question. Required unless criteria.true/false say it.' },
                 criteria: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, properties: { true: ENTRY_SCHEMA, false: ENTRY_SCHEMA } }], description: 'Optional: what counts as true and as false.' },
               },
             },
@@ -113,11 +118,12 @@ function description(model: DecisionModel | null): string {
     'Use it to classify, route, triage or check a condition — above all for many similar items, or when you want a number to compare against a threshold. ' +
     'It sees ONLY what you send: no conversation, no files' + (images ? ' except the images you name' : '') + '. ' +
     'Questions are independent and answered in one pass; one that depends on another\'s answer needs a second call. ' +
+    'Every question carries its own text (instructions or criteria): the question id is only a label. ' +
     'Confidence is the model\'s estimate, not proven accuracy, and a result never authorises an action by itself. ' +
     `Send only the part of a long text the questions need: the limit is ${limit ? `${limit} tokens` : 'the server\'s token limit'}` +
     (images ? ', images included (about 3 000 tokens each)' : '') +
     ', and long inputs take seconds and queue. ' +
-    (images ? 'Images: give file paths in `images`; the tool scales them like any image shown to a model. ' : 'This decision model reads text only. ') +
+    (images ? 'Images: give file paths in the top-level `images` field, never inside `state` (a path in the state is just text to the model); the tool scales them like any image shown to a model. ' : 'This decision model reads text only. ') +
     'When the result is "unavailable", follow its guidance — a failure is not a "no".'
   );
 }
@@ -153,6 +159,17 @@ async function loadImages(paths: string[], ctx: ToolContext): Promise<NonNullabl
   return out;
 }
 
+/** `images`/`image` inside an object state holding path-like strings. */
+function misplacedImagePaths(state: unknown): string | null {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
+  for (const key of ['images', 'image', 'image_paths', 'files']) {
+    const v = (state as Record<string, unknown>)[key];
+    const list = Array.isArray(v) ? v : [v];
+    if (list.some((x) => typeof x === 'string' && /\.(png|jpe?g|webp|gif)$/i.test(x) && /[\\/]/.test(x))) return key;
+  }
+  return null;
+}
+
 export const decisionEvaluate: ToolDefinition<EvaluateInputT, DecisionOutcome> = {
   name: 'decision_evaluate',
   description: description(null),
@@ -170,6 +187,18 @@ export const decisionEvaluate: ToolDefinition<EvaluateInputT, DecisionOutcome> =
   async handler(input, ctx) {
     const model = activeDecisionModel(ctx.config);
     if (!model) return { status: 'unavailable', reason: 'not-configured', guidance: GUIDANCE['not-configured'] };
+    // Image paths put INSIDE the state reach the model as text, not as
+    // pictures — it then judges an image it never saw (seen live: an
+    // agent sent state.images). Refuse with the fix instead.
+    const nested = misplacedImagePaths(input.state);
+    if (!input.images && nested && model.capabilities.includes('image')) {
+      return {
+        status: 'unavailable',
+        reason: 'unsupported-input',
+        guidance: GUIDANCE['unsupported-input'],
+        detail: `state.${nested} holds file paths; images go into the top-level \`images\` field (the model cannot open a path in the state). Nothing was sent.`,
+      };
+    }
     let images: DecisionRequest['images'];
     if (input.images) {
       if (!model.capabilities.includes('image')) return { status: 'unavailable', reason: 'images-unsupported', guidance: GUIDANCE['images-unsupported'] };

@@ -102,6 +102,9 @@ export function spliceTopLevelBlock(
  *  Missing file → created with just the tools block. */
 export async function writeAgentToolGating(agent: string, gating: ToolGating): Promise<void> {
   for (const p of [...gating.deny, ...gating.allow]) assertValidPattern(p);
+  // The same rule twice adds nothing; a client that merged defaults in
+  // would otherwise grow the file with every save.
+  gating = { deny: [...new Set(gating.deny)], allow: [...new Set(gating.allow)] };
   const path = join(AGENTS_DIR, agent, 'agent.yaml');
   let current = '';
   try {

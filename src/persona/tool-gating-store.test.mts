@@ -82,5 +82,18 @@ check(
   renderToolsBlock({ deny: ['a'], allow: ['b'] }) === 'tools:\n  deny:\n    - "a"\n  allow:\n    - "b"\n',
 );
 
+// writeAgentToolGating drops repeats: a client that merged the kind
+// defaults in (the Abilities window did) must not grow agent.yaml.
+{
+  const { mkdirSync, readFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { writeAgentToolGating } = await import('./tool-gating-store.ts');
+  const dir = join(process.env.SOMORA_HOME!, 'agents', 'dedupe-test');
+  mkdirSync(dir, { recursive: true });
+  await writeAgentToolGating('dedupe-test', { deny: ['toolset:builder', 'x', 'toolset:builder'], allow: ['y', 'y'] });
+  const written = readFileSync(join(dir, 'agent.yaml'), 'utf8');
+  check('write: repeats dropped', (written.match(/toolset:builder/g) ?? []).length === 1 && (written.match(/"y"/g) ?? []).length === 1, written);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

@@ -1263,7 +1263,12 @@ app.get('/agents/:agent/tools', async (c) => {
     // The kind's own list — the web shows a builder these as its set and
     // everything else under "more".
     kindDefaults: persona.kind === 'builder' ? [...BUILDER_TOOL_ALLOW] : null,
-    gating,
+    // The block as WRITTEN in agent.yaml, which is what a client edits and
+    // PUTs back. The effective gating (kind defaults merged in: a chat
+    // agent's implied `toolset:builder` deny, a builder's kind allow-list)
+    // only decides `visible` below. Returning it here made every save in
+    // the Abilities window write those defaults into agent.yaml again.
+    gating: raw,
     hasPatternRules,
     tools: configured.map((t) => ({
       name: t.name,
