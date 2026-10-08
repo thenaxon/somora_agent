@@ -119,6 +119,8 @@ takes about ten minutes. [Setup](setup.md) explains each step.
 |---|---|---|
 | [Tools](tools.md) | Tool catalog | Every tool an agent can have, and how to limit them per agent |
 | [File tools](files.md) | File tools in depth | Working with `file_read`/`file_write`/`analyze_file` |
+| [Image handling](image-handling.md) | How images travel | Which file a model sees and which one a tool gets |
+| [Decision models](decisions.md) | Typed decisions | Asking a decision model yes/no, choice and score questions, with images |
 | [Resources](resources.md) | SSH targets | Adding a remote machine |
 | [tmux](tmux.md) | Multi-turn shell sessions | Driving long-running CLIs from agents |
 | [Shared browser](browser.md) | Shared browser | A Chromium per agent profile that agents drive and you can take over for logins |

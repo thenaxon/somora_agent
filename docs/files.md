@@ -200,6 +200,11 @@ gets:
 - the review image after `image_generate`
 - images from external MCP tools
 - attachments replayed from earlier turns
+- images sent to a decision model with `decision_evaluate`
+
+Tools that work on an image, such as `image_generate` with
+`reference_images`, get the original instead. The image handling page
+describes the whole rule.
 
 Text in screenshots stays readable. A 4K or Retina screenshot is
 scaled by about half, which brings its text to the size it has on an
@@ -561,3 +566,4 @@ extension get a delete followed by a rename.
 - [Projects](projects.md): pinning a session to a project folder.
 - [API](api.md): every route in detail, including the chat routes.
 - [Tools](tools.md): the list of all tools.
+- [Image handling](image-handling.md): which image file a model sees and which a tool gets.

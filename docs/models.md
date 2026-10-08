@@ -513,6 +513,34 @@ providers:
 > model and the turn carries a fallback chip. Check the header, not
 > just the reply.
 
+## Decision models
+
+Models that answer typed questions instead of writing text, used by the
+`decision_evaluate` tool. They have their own `decisions` block in
+`config.yaml`, separate from `providers`, and are never picked as a
+chat model.
+
+```yaml
+decisions:
+  model: clef
+  models:
+    - name: clef
+      baseUrl: https://<your-host>/clef
+      apiKey: <key>
+      model: clef
+      capabilities: [text, image]
+```
+
+| Model | Where it runs | Images | Input limit | Checked |
+|---|---|---|---|---|
+| Clef | Self-hosted, Cloudflare's open decision model | yes, up to 4 per call | what the server reports at `/v1/models` | yes: all three question types, images, the limit, refusal of too long input |
+| Jev | TypeSafe AI, hosted | no | per its documentation | no: not tested with somora |
+
+Clef's answer time grows with the input: a short request takes well
+under a second, four images or tens of thousands of tokens take tens of
+seconds. Jev speaks the same API by its public description; somora was
+checked against Clef only.
+
 ## Settings
 
 A model entry with every field. Only `id` and `contextWindow` are
@@ -630,3 +658,5 @@ update.
 - [Agents](agents.md): `model` and `fallback` in `agent.yaml`
 - [Security](security.md): what a CLI engine can reach inside a somora
   session
+- [Decision models](decisions.md): the `decisions` block and the
+  `decision_evaluate` tool

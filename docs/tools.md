@@ -39,7 +39,7 @@ window in the web client. Each tool has a switch there.
 ## The tool families
 
 Every tool carries a toolset tag. The tag groups tools for the
-per-agent switch (`toolset:<tag>`). There are 63 built-in tools, plus
+per-agent switch (`toolset:<tag>`). There are 64 built-in tools, plus
 whatever your external MCP servers bring.
 
 | Toolset | Tools | Offered when |
@@ -59,6 +59,7 @@ whatever your external MCP servers bring.
 | `video` | 3 | `videoGen.enabled: true` and at least one entry in `videoGen.models` |
 | `media` | 1 | image or video generation is set up |
 | `browser` | 1 | `browser.enabled: true` |
+| `decision` | 1 | `decisions.model` names an entry in `decisions.models` |
 | `builder` | 3 | builder agents, or a chat agent whose `tools.allow` names the tool |
 | `mcp` | varies | servers listed under `mcp.servers` |
 
@@ -266,6 +267,17 @@ closing frame.
 
 `media_list` has its own toolset because the gallery is shared: an
 install with video only still needs to list what it made.
+
+### Decisions
+
+Toolset `decision`.
+
+| Tool | What it does |
+|---|---|
+| `decision_evaluate` | Asks the configured decision model `boolean`, `choice` and `score` questions about a supplied `state`, optionally with up to four `images` (file paths). Returns probabilities, or `unavailable` with a reason. |
+
+The `images` field is offered only when the decision model has the
+`image` capability. The decision models page has the details.
 
 ### Builder tools
 

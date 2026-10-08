@@ -148,6 +148,9 @@ On top of chat and memory, each optional and off until configured:
 - **Steering** — type into a running turn instead of behind it: the
   model reads your message at its next step and changes course. Works on
   every engine ([docs/api.md → Steering](docs/api.md#steering)).
+- **Decision models** — agents ask a System One decision model (such as
+  a self-hosted Clef) typed yes/no, choice and score questions about text
+  or images, and get probabilities back ([docs/decisions.md](docs/decisions.md)).
 
 ## Requirements
 
@@ -368,7 +371,7 @@ and searchable: [docs.somora.ai](https://docs.somora.ai).
 
 - **Get running:** [setup](docs/setup.md) · [models](docs/models.md) · [agents](docs/agents.md) · [team](docs/team.md) · [security](docs/security.md)
 - **Memory and knowledge:** [memory](docs/memory.md) · [wiki](docs/wiki.md) · [dream phases](docs/dream-phases.md) · [compaction](docs/compaction.md) · [cache strategy](docs/cache-strategy.md)
-- **What agents can do:** [tools](docs/tools.md) · [builders](docs/builder.md) · [language servers](docs/lsp.md) · [files](docs/files.md) · [tmux](docs/tmux.md) · [resources](docs/resources.md) · [skills](docs/skills.md) · [MCP servers](docs/mcp.md) · [projects](docs/projects.md) · [sentinel](docs/sentinel.md) · [browser](docs/browser.md) · [image generation](docs/imagegen.md) · [video generation](docs/videogen.md)
+- **What agents can do:** [tools](docs/tools.md) · [builders](docs/builder.md) · [language servers](docs/lsp.md) · [files](docs/files.md) · [tmux](docs/tmux.md) · [resources](docs/resources.md) · [skills](docs/skills.md) · [MCP servers](docs/mcp.md) · [projects](docs/projects.md) · [sentinel](docs/sentinel.md) · [browser](docs/browser.md) · [image generation](docs/imagegen.md) · [video generation](docs/videogen.md) · [decision models](docs/decisions.md) · [image handling](docs/image-handling.md)
 - **Clients and API:** [web](docs/web.md) · [mobile](docs/mobile.md) · [TUI display](docs/display.md) · [voice](docs/voice.md) · [realtime voice](docs/realtime-voice.md) · [API](docs/api.md)
 - **Models in detail:** [thinking](docs/thinking.md) · [sampling](docs/sampling.md)
 
