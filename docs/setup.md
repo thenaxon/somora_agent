@@ -36,7 +36,7 @@ works through these steps. A step that is already in place is skipped.
 | System packages | tmux, ripgrep and git. On Linux also a C and C++ compiler, make and python3. Installed with apt, dnf, pacman, zypper or Homebrew. | Asked first. Without them only the missing build tools stop the install. |
 | Node.js | Kept when it is 22.22 or newer. Otherwise Node 24 system wide (NodeSource or Homebrew), or the official build into `~/.local/share/somora/node`, checked against its checksum. | Only for the system wide variant. |
 | npm folder | When npm's global folder is not writable for you, it moves to `~/.npm-global` and is added to your `PATH`. | No. |
-| somora | `npm install -g somora`, about 1.5 GB with the bundled engines. | No. |
+| somora | `npm install -g somora`, about 1.6 GB on Linux, 1.4 GB on macOS, with the bundled engines. | No. |
 | Service | Linux: systemd user unit, enabled at boot, lingering on so it survives logout. macOS: LaunchAgent that starts at every login. | Lingering may ask. |
 | Assistant | Starts `somora setup` when a terminal is attached. | No. |
 

@@ -407,7 +407,7 @@ install_somora() {
   if have somora; then current="$(somora --version 2>/dev/null || true)"; fi
   if [ -n "$current" ]; then info "installed: $current"; fi
   info "npm install -g $spec"
-  info "about 1.5 GB: somora itself is 20 MB, the rest are the bundled Codex, Claude and Grok engines,"
+  info "about 1.6 GB: somora itself is 20 MB, the rest are the bundled Codex, Claude and Grok engines,"
   info "the embedding runtime for the memory search, the image library and the terminal module"
   local allow=()
   # npm without the setting answers "undefined" — and would reject the flag.
