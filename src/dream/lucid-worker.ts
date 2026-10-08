@@ -16,9 +16,11 @@
 
 import type { Config } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
-import { pendingLucidRun } from './lucid-storage.ts';
+import { listLucidRuns, pendingLucidRun, setRunStatus, writeLucidRun } from './lucid-storage.ts';
 import { runLucid, type RunLucidResult } from './lucid-runner.ts';
 import {
+  interruptedRetryDelay,
+  MAX_INTERRUPTED_RETRIES,
   nextDelayMs,
   readSchedulerState,
   writeSchedulerState,
@@ -54,7 +56,25 @@ export class LucidWorker {
       logger.info({ msg: 'dream.lucid.lucid_disabled' });
       return;
     }
+    await this.markInterruptedRuns();
     await this.scheduleNext('startup');
+  }
+
+  /** A run file still on `running` at startup belongs to a run the last
+   *  server stopped mid-way (restart, update, crash): nothing will ever
+   *  finish it. Mark it failed with that reason, so it no longer reads as
+   *  in progress anywhere. */
+  private async markInterruptedRuns(): Promise<void> {
+    try {
+      for (const run of await listLucidRuns()) {
+        if (run.status !== 'running') continue;
+        setRunStatus(run, 'failed', 'interrupted: the server stopped during the run (restart, update or crash)');
+        await writeLucidRun(run);
+        logger.warn({ msg: 'dream.lucid.run_interrupted', runId: run.id, startedAt: run.created_at });
+      }
+    } catch (err) {
+      logger.warn({ msg: 'dream.lucid.mark_interrupted_failed', err: String(err) });
+    }
   }
 
   async runNow(opts: { force?: boolean } = {}): Promise<RunLucidResult> {
@@ -106,6 +126,28 @@ export class LucidWorker {
         logger.warn({ msg: 'dream.lucid.state_write_fail', when: 'bootstrap', err: String(err) });
       }
     }
+    // A run the last server cut off is retried after an hour, at most
+    // MAX_INTERRUPTED_RETRIES times in a row — instead of waiting a whole
+    // interval from its start (2026-10-07: a restart at batch 15 of 41
+    // pushed the next Lucid a week out, two weeks after the last one).
+    const retry = after === 'startup' ? interruptedRetryDelay(state) : null;
+    if (retry) {
+      this.timer = setTimeout(() => {
+        void this.fire('auto', false, true);
+      }, retry.delayMs);
+      logger.info({
+        msg: 'dream.lucid.scheduled',
+        intervalDays: this.deps.config.wiki.lucid.intervalDays,
+        after,
+        reason: 'interrupted',
+        attempt: retry.attempt,
+        maxAttempts: MAX_INTERRUPTED_RETRIES,
+        lastStartedAt: state.lastStartedAt,
+        nextDueAt: retry.nextDueAt,
+        delayMs: retry.delayMs,
+      });
+      return;
+    }
     const { delayMs, nextDueAt, reason } = nextDelayMs(state, intervalMs);
     this.timer = setTimeout(() => {
       void this.fire('auto');
@@ -122,7 +164,7 @@ export class LucidWorker {
     });
   }
 
-  private async fire(trigger: 'auto' | 'manual', force = false): Promise<RunLucidResult> {
+  private async fire(trigger: 'auto' | 'manual', force = false, interruptedRetry = false): Promise<RunLucidResult> {
     // A run whose findings nobody has looked at yet is not followed by
     // another one — that made the same findings pile up twice (the operator,
     // 2026-09-29). `force` (dream_run / POST /dream/run-lucid) overrides.
@@ -172,7 +214,12 @@ export class LucidWorker {
     // mid-flight still bumps the cadence (otherwise repeat-crashes
     // would re-fire the same heavy run on every restart).
     const stateBefore = await readSchedulerState('lucid');
-    const nextState: SchedulerState = { ...stateBefore, lastStartedAt: startedAt };
+    // A retry of a cut-off run counts up; any other start begins at 0.
+    const nextState: SchedulerState = {
+      ...stateBefore,
+      lastStartedAt: startedAt,
+      interruptedRetries: interruptedRetry ? (stateBefore.interruptedRetries ?? 0) + 1 : 0,
+    };
     try {
       await writeSchedulerState('lucid', nextState);
     } catch (err) {
@@ -187,6 +234,7 @@ export class LucidWorker {
       const completedAt = Date.now();
       const after: SchedulerState = {
         ...nextState,
+        interruptedRetries: 0,
         lastCompletedAt: completedAt,
         lastStatus: result.status === 'failed' ? 'failed' : 'completed',
         ...(result.status === 'failed' ? { lastFailedAt: completedAt } : {}),
@@ -206,6 +254,7 @@ export class LucidWorker {
       const failedAt = Date.now();
       const after: SchedulerState = {
         ...nextState,
+        interruptedRetries: 0,
         lastFailedAt: failedAt,
         lastStatus: 'failed',
       };

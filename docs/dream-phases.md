@@ -247,6 +247,11 @@ Every `wiki.deep.intervalHours` (default 12). The rhythm survives
 restarts. On a fresh install the first run is one interval after the
 first start.
 
+A run that a restart, an update or a crash cut off is retried one hour
+after it started, at most twice in a row. If both retries are cut off
+too, the next run follows the regular rhythm. The log reads
+`dream.deep.scheduled` with `reason: "interrupted"` and the attempt.
+
 Run it now with `dream_run({phase: 'deep'})` or `POST /dream/run-deep`.
 Only one Deep run is active at a time.
 
@@ -351,7 +356,9 @@ still readable in archived runs. No run produces them.
 ### When Lucid runs
 
 Every `wiki.lucid.intervalDays` (default 7), with the same restart-safe
-rhythm as Deep. Run it now with `dream_run({phase: 'lucid'})` or
+rhythm as Deep, including the retry of a cut-off run an hour after it
+started. The cut-off run's file is marked `failed` with
+`error: "interrupted: …"` at the next start. Run it now with `dream_run({phase: 'lucid'})` or
 `POST /dream/run-lucid`.
 
 While a run still has findings waiting, no new run starts. The schedule
@@ -687,6 +694,7 @@ curl -X POST http://127.0.0.1:18737/dream/run-lucid -d '{"wait":true}'
 | A note never reaches the wiki | It is remembered as skipped. Run Deep with `force: true`. `dream.deep.merge_shrink_blocked` means the shrink guard refused the merge. |
 | Which model answered | `dream.worker_unavailable` and `dream.worker_switched` in the log, `answeredBy` on `dream.deep.done`, `answered_by` in the Lucid run file. |
 | Lucid does not start | `dream.lucid.skip_pending`: an earlier run still has open findings. Review it or use `force: true`. |
+| A run was cut off by a restart | `dream.lucid.run_interrupted`, then `dream.lucid.scheduled` or `dream.deep.scheduled` with `reason: "interrupted"`: the retry follows an hour after the run started. |
 | Lucid found fewer findings than expected | `dream.lucid.run_capped` lists what `maxFindings` dropped. `batches_failed` in the run file shows calls that failed. |
 
 ## See also

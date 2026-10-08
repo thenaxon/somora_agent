@@ -20,6 +20,8 @@ import { logger } from '../server/logger.ts';
 import { runDreamB, type RunDreamBResult } from './deep-runner.ts';
 import type { PromotionDispatcher } from '../wiki/types.ts';
 import {
+  interruptedRetryDelay,
+  MAX_INTERRUPTED_RETRIES,
   nextDelayMs,
   readSchedulerState,
   writeSchedulerState,
@@ -118,6 +120,26 @@ export class DeepWorker {
         logger.warn({ msg: 'dream.deep.state_write_fail', when: 'bootstrap', err: String(err) });
       }
     }
+    // A run the last server cut off is retried after an hour, at most
+    // MAX_INTERRUPTED_RETRIES times in a row (see LucidWorker).
+    const retry = after === 'startup' ? interruptedRetryDelay(state) : null;
+    if (retry) {
+      this.timer = setTimeout(() => {
+        void this.fire('scheduled', false, true);
+      }, retry.delayMs);
+      logger.info({
+        msg: 'dream.deep.scheduled',
+        intervalHours: this.deps.config.wiki.deep.intervalHours,
+        after,
+        reason: 'interrupted',
+        attempt: retry.attempt,
+        maxAttempts: MAX_INTERRUPTED_RETRIES,
+        lastStartedAt: state.lastStartedAt,
+        nextDueAt: retry.nextDueAt,
+        delayMs: retry.delayMs,
+      });
+      return;
+    }
     const { delayMs, nextDueAt, reason } = nextDelayMs(state, intervalMs);
     this.timer = setTimeout(() => {
       void this.fire('scheduled');
@@ -137,6 +159,7 @@ export class DeepWorker {
   private async fire(
     trigger: 'scheduled' | 'manual',
     force = false,
+    interruptedRetry = false,
   ): Promise<RunDreamBResult> {
     if (this.shuttingDown) {
       return { outcomes: [], candidatesSeen: 0, cachedSkips: 0, durationMs: 0 };
@@ -153,7 +176,12 @@ export class DeepWorker {
     this.currentAbort = new AbortController();
     const startedAt = Date.now();
     const stateBefore = await readSchedulerState('deep');
-    const nextState: SchedulerState = { ...stateBefore, lastStartedAt: startedAt };
+    // A retry of a cut-off run counts up; any other start begins at 0.
+    const nextState: SchedulerState = {
+      ...stateBefore,
+      lastStartedAt: startedAt,
+      interruptedRetries: interruptedRetry ? (stateBefore.interruptedRetries ?? 0) + 1 : 0,
+    };
     try {
       await writeSchedulerState('deep', nextState);
     } catch (err) {
@@ -198,6 +226,7 @@ export class DeepWorker {
       const completedAt = Date.now();
       const after: SchedulerState = {
         ...nextState,
+        interruptedRetries: 0,
         lastCompletedAt: completedAt,
         lastStatus: 'completed',
       };
@@ -212,6 +241,7 @@ export class DeepWorker {
       const failedAt = Date.now();
       const after: SchedulerState = {
         ...nextState,
+        interruptedRetries: 0,
         lastFailedAt: failedAt,
         lastStatus: 'failed',
       };

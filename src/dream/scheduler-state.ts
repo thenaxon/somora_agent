@@ -18,7 +18,7 @@
 //   ~/.somora/dream-state/deep.json
 //
 // Shape:
-//   { lastStartedAt, lastCompletedAt, lastFailedAt, lastStatus }
+//   { lastStartedAt, lastCompletedAt, lastFailedAt, lastStatus, interruptedRetries }
 //
 // All fields are unix-ms timestamps or null. Missing file is treated
 // as "never run" — the worker bootstraps with lastCompletedAt = now
@@ -34,6 +34,9 @@ export interface SchedulerState {
   lastCompletedAt: number | null;
   lastFailedAt: number | null;
   lastStatus: 'completed' | 'failed' | null;
+  /** How many runs in a row were retries of a run a restart cut off.
+   *  Reset by any run that ends (completed or failed). */
+  interruptedRetries?: number;
 }
 
 const STATE_DIR = join(SOMORA_HOME_DIR, 'dream-state');
@@ -63,6 +66,7 @@ export async function readSchedulerState(
         parsed.lastStatus === 'completed' || parsed.lastStatus === 'failed'
           ? parsed.lastStatus
           : null,
+      ...(typeof parsed.interruptedRetries === 'number' ? { interruptedRetries: parsed.interruptedRetries } : {}),
     };
   } catch {
     return { ...EMPTY };
@@ -126,4 +130,35 @@ export function nextDelayMs(
     return { delayMs: STARTUP_GRACE_MS, nextDueAt, reason: 'overdue' };
   }
   return { delayMs: nextDueAt - now, nextDueAt, reason: 'wait' };
+}
+
+/** A run that a restart cut off is retried this long after it started… */
+export const INTERRUPTED_RETRY_MS = 60 * 60_000;
+/** …at most this many times in a row; then the regular cadence applies. */
+export const MAX_INTERRUPTED_RETRIES = 2;
+
+/** True when the last run started and never ended: no completion or
+ *  failure was recorded after its start, so the server stopped (restart,
+ *  update, crash) while it ran. Only meaningful at startup, when no run
+ *  of this worker is in flight. */
+export function wasInterrupted(state: SchedulerState): boolean {
+  if (state.lastStartedAt === null) return false;
+  return state.lastStartedAt > (state.lastCompletedAt ?? 0) && state.lastStartedAt > (state.lastFailedAt ?? 0);
+}
+
+/** At startup: when the last run was cut off and retries are left, the
+ *  delay until the retry — an hour after the cut-off run started (not
+ *  after this restart, so a string of restarts cannot push it out
+ *  forever), at least the startup grace. Null otherwise: the regular
+ *  `nextDelayMs` applies, as it always did — a run that keeps getting
+ *  cut off must not re-fire on every restart. */
+export function interruptedRetryDelay(
+  state: SchedulerState,
+  now: number = Date.now(),
+): { delayMs: number; nextDueAt: number; attempt: number } | null {
+  if (!wasInterrupted(state)) return null;
+  const done = state.interruptedRetries ?? 0;
+  if (done >= MAX_INTERRUPTED_RETRIES) return null;
+  const nextDueAt = Math.max(state.lastStartedAt! + INTERRUPTED_RETRY_MS, now + STARTUP_GRACE_MS);
+  return { delayMs: nextDueAt - now, nextDueAt, attempt: done + 1 };
 }
