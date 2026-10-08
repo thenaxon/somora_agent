@@ -34,6 +34,7 @@ import type { NormalizedEvent } from '../types/events.ts';
 import { grokCliReasoningArgs } from './thinking-params.ts';
 import { grokChildEnv, somoraGrokHome, syncGrokHome } from './grok-home.ts';
 import { resolveGrokLaunch } from './grok-bin.ts';
+import { capReplayDelta, computeReplayDelta, getLastSeenTs, renderReplayPrefix, withLastSeenTs } from './replay.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 
 const ENGINE = 'grok-cli';
@@ -214,6 +215,35 @@ function resolveToolName(
     }
   }
   return name;
+}
+
+/**
+ * What a somora tool returned, without Grok's wrapper. Grok reports an
+ * MCP call as `{type: 'MCP', tool_name, server_name, output: {OkayOutput:
+ * '<the tool's JSON as a string>'}}`; the clients summarise results from
+ * the tool's own JSON, as they get it from the other engines. Anything
+ * else (Grok's search_tool, an unknown shape) passes through unchanged.
+ */
+export function unwrapToolOutput(raw: unknown): { output: unknown; error?: string } {
+  if (!raw || typeof raw !== 'object') return { output: raw ?? null };
+  const r = raw as { type?: unknown; output?: unknown };
+  if (r.type !== 'MCP' || !r.output || typeof r.output !== 'object') return { output: raw };
+  const inner = r.output as Record<string, unknown>;
+  const parse = (v: unknown): unknown => {
+    if (typeof v !== 'string') return v;
+    try {
+      return JSON.parse(v);
+    } catch {
+      return v;
+    }
+  };
+  if ('OkayOutput' in inner) return { output: parse(inner.OkayOutput) };
+  const errKey = Object.keys(inner).find((k) => /err/i.test(k));
+  if (errKey) {
+    const value = parse(inner[errKey]);
+    return { output: value, error: typeof value === 'string' ? value : JSON.stringify(value) };
+  }
+  return { output: raw };
 }
 
 /**
@@ -618,6 +648,8 @@ export const grokCliEngine: AgentEngine = {
 
     let thinkingText = '';
     let emittedAny = false;
+    /** A tool ran since the last text: the next text opens a paragraph. */
+    let toolSinceText = false;
     const openTools = new Set<string>();
 
     try {
@@ -753,6 +785,15 @@ export const grokCliEngine: AgentEngine = {
         const rendered = renderAttachments(attachments);
         if (rendered) parts.push(rendered);
       }
+      // Turns other engines answered since Grok last spoke in this session
+      // (a model switch and back), or the conversation so far when this
+      // is a new Grok session — the same catch-up codex-cli sends. Before,
+      // a switch back to Grok lost what was said in between (2026-10-08:
+      // a word told to Claude came back as "None.").
+      const lastSeenTs = isFresh ? 0 : getLastSeenTs(meta, ENGINE);
+      const rawDelta = computeReplayDelta(input.history, lastSeenTs, (meta as { compactions?: never }).compactions);
+      const replayPrefix = renderReplayPrefix(isFresh ? capReplayDelta(rawDelta) : rawDelta);
+      if (replayPrefix) parts.push(replayPrefix.trimEnd());
       // The A2A header travels in ephemeralContext (src/server/turn-framing.ts).
       parts.push(input.userMessage);
       const promptText = parts.join('\n\n---\n\n');
@@ -909,6 +950,11 @@ export const grokCliEngine: AgentEngine = {
           case 'agent_message_chunk': {
             const t = upd.content?.text ?? '';
             if (t) {
+              // A new stretch of text after tool work starts a paragraph,
+              // as on claude-cli — the pieces used to run together
+              // ("…look it up.It is 12:43…").
+              if (toolSinceText && assistantText && !assistantText.endsWith('\n')) assistantText += '\n\n';
+              toolSinceText = false;
               assistantText += t;
               emittedAny = true;
               // CUMULATIVE, not the bare chunk — see the contract note
@@ -941,6 +987,7 @@ export const grokCliEngine: AgentEngine = {
           case 'tool_call': {
             const id = upd.toolCallId ?? randomUUID();
             openTools.add(id);
+            toolSinceText = true;
             yield {
               kind: 'tool_call',
               ts: Date.now(),
@@ -961,13 +1008,16 @@ export const grokCliEngine: AgentEngine = {
               upd.status === 'completed' || upd.status === 'failed' || upd.status === 'error';
             if (done && id) {
               openTools.delete(id);
+              toolSinceText = true;
+              const unwrapped = unwrapToolOutput(upd.rawOutput);
+              const error = upd.status !== 'completed' ? (unwrapped.error ?? String(upd.status)) : unwrapped.error;
               yield {
                 kind: 'tool_result',
                 ts: Date.now(),
                 engine: ENGINE,
                 callId: id,
-                output: upd.rawOutput ?? null,
-                ...(upd.status !== 'completed' ? { error: String(upd.status) } : {}),
+                output: unwrapped.output,
+                ...(error ? { error } : {}),
               };
             }
             break;
@@ -1000,6 +1050,17 @@ export const grokCliEngine: AgentEngine = {
         client.kill();
       }
       await promptDone.catch(() => undefined);
+
+      // Grok has now heard everything up to here: the next catch-up starts
+      // after this turn. Read fresh — tools may have written the meta.
+      if (emittedAny) {
+        await input.metaStore
+          .update(input.agent, input.session, (fresh) => ({
+            ...fresh,
+            engineLastSeen: withLastSeenTs(fresh, ENGINE, Date.now()),
+          }))
+          .catch((err) => logger.warn({ msg: 'engine.meta_write_failed', engine: ENGINE, err: String(err) }));
+      }
 
       const finalText = input.signal?.aborted
         ? assistantText || '[somora] aborted by user'

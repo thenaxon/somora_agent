@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildAgentProfile, describeSpawnFailure, GROK_TOOL_GUIDANCE, mcpStatuses } from './grok-cli.ts';
+import { buildAgentProfile, describeSpawnFailure, GROK_TOOL_GUIDANCE, mcpStatuses, unwrapToolOutput } from './grok-cli.ts';
 import { grokAuthExpiry, grokChildEnv, somoraGrokHome, syncGrokHome } from './grok-home.ts';
 import { bundledGrokPackage, ensureBundledGrok, resolveGrokLaunch } from './grok-bin.ts';
 import { existsSync, rmSync } from 'node:fs';
@@ -115,4 +115,15 @@ test('the bundled Grok CLI is unpacked into somora\'s Grok home and runs', { ski
     if (saved.SOMORA_HOME === undefined) delete process.env.SOMORA_HOME; else process.env.SOMORA_HOME = saved.SOMORA_HOME;
     if (saved.SOMORA_GROK_BIN === undefined) delete process.env.SOMORA_GROK_BIN; else process.env.SOMORA_GROK_BIN = saved.SOMORA_GROK_BIN;
   }
+});
+
+test("a somora tool's result reaches the clients without Grok's wrapper", () => {
+  const ok = { type: 'MCP', tool_name: 'time_now', server_name: 'somora', output: { OkayOutput: '{"iso":"2026-10-08T10:47:27Z"}' } };
+  assert.deepEqual(unwrapToolOutput(ok), { output: { iso: '2026-10-08T10:47:27Z' } });
+  assert.deepEqual(unwrapToolOutput({ type: 'MCP', output: { OkayOutput: 'plain text' } }), { output: 'plain text' });
+  const failed = unwrapToolOutput({ type: 'MCP', output: { ErrOutput: 'no such file' } });
+  assert.equal(failed.error, 'no such file');
+  const search = { type: 'SearchTool', result_count: 1, content: '{}' };
+  assert.deepEqual(unwrapToolOutput(search), { output: search }, "Grok's own search_tool passes through");
+  assert.deepEqual(unwrapToolOutput(undefined), { output: null });
 });
