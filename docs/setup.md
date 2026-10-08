@@ -854,8 +854,13 @@ anything.
 2.34 or newer. The message names the last version that still runs on
 your system: install that one with `npm install -g somora@<version>`,
 then `somora server restart`. `somora update` checks this before it
-installs anything; versions up to 2026.1007.2 did not, so an update
-from one of those can land on a release your Linux cannot run.
+installs anything.
+
+**An update or `npm install -g somora` fails with "Nothing was
+installed".** The new version needs a newer Linux (glibc) or Node.js
+than this machine has. npm stops before it replaces anything, so the
+version you had keeps running. The message names what is missing and,
+for glibc, the last version that runs here.
 
 **`npm install -g` fails with `EACCES`.** npm's global folder belongs
 to root. Run the installer again, or move the folder as shown under

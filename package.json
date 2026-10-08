@@ -53,6 +53,7 @@
     "!src/**/*.test.ts"
   ],
   "scripts": {
+    "preinstall": "node bin/preinstall-check.mjs",
     "dev:server": "tsx watch src/server/index.ts",
     "start:server": "tsx src/server/index.ts",
     "dev:cli": "tsx src/cli/tui/index.tsx",
