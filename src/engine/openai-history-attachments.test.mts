@@ -93,6 +93,23 @@ async function run(): Promise<void> {
     check('stale ref: no broken image part', !raw.includes('image_url'));
   }
 
+  // ── 4. The original-path line and the vision worker's report ─────
+  //     (2026-10-08): both travel with the turn on every replay.
+  {
+    const events = sessionWithImage(HASH);
+    (events[0] as { attachment_descriptions?: string[] }).attachment_descriptions = [
+      '[attachment shot.png (image/png) — your model cannot see image files, so somora had the vision worker w look at it and report back:\nA red car.\nThis is a description, not the file.]',
+    ];
+    const text = dump(await buildMessages('SYS', events, undefined, 'rasterize', TEXT_ONLY));
+    check('described: the worker report reaches a text-only model', text.includes('A red car.'));
+    check('note: the original path is named', text.includes(`original, full resolution: ${join(home, 'attachments', `${HASH}.png`)}`));
+    const vision = dump(await buildMessages('SYS', sessionWithImage(HASH), undefined, 'rasterize', VISION));
+    check('note: a vision model gets the line too', vision.includes('original, full resolution:'));
+    const lost = sessionWithImage('nosuchhash');
+    (lost[0] as { attachment_descriptions?: string[] }).attachment_descriptions = ['[report: A red car.]'];
+    check('described: kept when the file is gone', dump(await buildMessages('SYS', lost, undefined, 'rasterize', VISION)).includes('A red car.'));
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   rmSync(home, { recursive: true, force: true });
   if (fail > 0) process.exit(1);

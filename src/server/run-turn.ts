@@ -76,6 +76,7 @@ import { mergeSampling } from '../engine/sampling.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
 import { currentConfigProblem, getFreshConfig } from '../config/loader.ts';
 import { resolveThinking } from './thinking-resolve.ts';
+import { imageOriginalNotes } from '../multimodal/attachment-note.ts';
 
 /** `agent::session` → mtime of the broken config.yaml it was told about. */
 const configProblemNoticed = new Map<string, number>();
@@ -661,6 +662,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
    *  message the engine gets. The persisted user_message keeps the
    *  original attachment refs, so the clients still show the picture. */
   const describedAttachments: string[] = [];
+  /** One line per image naming its original file (attachment-note.ts). */
+  let attachmentNotes = '';
   if (attachments && attachments.length > 0) {
     if (attachments.length > deps.config.attachments.maxPerTurn) {
       throw new Error(
@@ -672,6 +675,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       resolvedAttachments.push({
         hash: a.hash,
         path: r.path,
+        originalPath: r.originalPath,
         name: a.name,
         mime: r.mime,
         size: r.size,
@@ -685,6 +689,10 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     //
     // PDFs ride either as native document blocks (cap=pdf) or as
     // rasterised PNGs (cap=image), so either capability is enough.
+    // Where each image's original is, for tools that work on it. Built
+    // before the vision worker takes out what the model cannot see: a
+    // described picture can still be handed on.
+    attachmentNotes = imageOriginalNotes(resolvedAttachments);
     const caps = resolvedModel.model.capabilities;
     const unseeable = resolvedAttachments.filter(
       (r) =>
@@ -789,6 +797,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     ...(origin ? { origin } : {}),
     ...(ephemeralContext ? { ephemeral: ephemeralContext } : {}),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
+    ...(describedAttachments.length > 0 ? { attachment_descriptions: describedAttachments } : {}),
     ...(inputMeta ? { input: inputMeta } : {}),
     ...(autoPlayRequested ? { autoPlayRequested: true } : {}),
   });
@@ -1010,7 +1019,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         // user-message-prefix path. claude-cli + openai-compatible
         // already see it via systemPrompt and ignore this field.
         ...(projectBlock ? { projectContext: projectBlock } : {}),
-        userMessage: describedAttachments.length > 0 ? `${text}\n\n${describedAttachments.join('\n\n')}` : text,
+        userMessage: [text, attachmentNotes, ...describedAttachments].filter((part) => part.length > 0).join('\n\n'),
         ...(fromAgent ? { fromAgent } : {}),
         ...(fromAgent && fromSession ? { fromSession } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),

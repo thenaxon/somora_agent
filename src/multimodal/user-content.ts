@@ -94,7 +94,7 @@ function notShownMarker(a: ResolvedAttachment, kind: 'image' | 'pdf'): string {
   return (
     `[${what} attachment "${a.name}" (${a.mime.mimeType}, ${humanSize(a.size)}) ` +
     `— not shown: the active model has no ${needed} capability. ` +
-    `It can be described with analyze_file({path:"${a.path}"}).]`
+    `It can be described with analyze_file({path:"${a.originalPath ?? a.path}"}).]`
   );
 }
 

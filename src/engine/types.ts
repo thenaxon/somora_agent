@@ -12,8 +12,13 @@ import type { DetectedMime } from '../multimodal/mime.ts';
  */
 export interface ResolvedAttachment {
   hash: string;
-  /** Absolute path under ~/.somora/attachments/. */
+  /** Absolute path of what the model is sent: for an image, the copy
+   *  scaled to attachments.maxImageEdge when the original is larger. */
   path: string;
+  /** The stored original (full resolution) — what tools that work on the
+   *  image get (src/multimodal/attachment-note.ts). Same as `path` when
+   *  nothing was scaled. */
+  originalPath?: string;
   /** Original client-supplied filename, display-only. */
   name: string;
   mime: DetectedMime;

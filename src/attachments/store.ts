@@ -199,12 +199,12 @@ export async function resolveAttachmentForModel(args: {
   hash: string;
   expectedMime: string;
   maxImageEdge: number;
-}): Promise<{ path: string; mime: DetectedMime; size: number }> {
+}): Promise<{ path: string; originalPath: string; mime: DetectedMime; size: number }> {
   const r = await resolveAttachmentByHash(args);
-  if (r.mime.kind !== 'image') return r;
+  if (r.mime.kind !== 'image') return { ...r, originalPath: r.path };
   const fitted = await fitImageFileForModel(r.path, r.mime.mimeType, args.maxImageEdge);
-  if (!fitted.resized) return r;
-  return { path: fitted.path, mime: { ...r.mime, mimeType: fitted.mimeType }, size: fitted.size };
+  if (!fitted.resized) return { ...r, originalPath: r.path };
+  return { path: fitted.path, originalPath: r.path, mime: { ...r.mime, mimeType: fitted.mimeType }, size: fitted.size };
 }
 
 async function listCandidatePaths(hash: string): Promise<string[]> {

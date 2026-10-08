@@ -47,6 +47,7 @@ import { withoutMemoryBlock } from '../memory/inject.ts';
 import { openAiReasoningState, withReasoningRetry } from './reasoning-retry.ts';
 import { formatSampling, isSamplingParamError, samplingBody } from './sampling.ts';
 import { insideOpenThink, splitInlineThink } from './inline-think.ts';
+import { imageOriginalNotes } from '../multimodal/attachment-note.ts';
 
 const ENGINE = 'openai-compatible';
 
@@ -495,6 +496,7 @@ export async function buildMessages(
             resolved.push({
               hash: a.hash,
               path: r.path,
+              originalPath: r.originalPath,
               name: a.name,
               mime: r.mime,
               size: r.size,
@@ -514,7 +516,7 @@ export async function buildMessages(
           const lostNames = ev.attachments.map((a) => a.name).join(', ');
           messages.push({
             role: 'user',
-            content: `[Attachments lost from disk: ${lostNames}]\n\n${composed}`,
+            content: [`[Attachments lost from disk: ${lostNames}]`, composed, ...(ev.attachment_descriptions ?? [])].join('\n\n'),
           });
         } else {
           const notShown = resolved.filter(
@@ -532,7 +534,12 @@ export async function buildMessages(
               hint: 'active model lacks the capability — replayed as text markers so the turn still packs',
             });
           }
-          const content = await buildOpenAiUserContent(composed, resolved, pdfMode, caps);
+          // The original-path line the turn carried, so a replayed picture
+          // can still be handed on (src/multimodal/attachment-note.ts).
+          const notes = imageOriginalNotes(resolved);
+          const described = ev.attachment_descriptions?.join('\n\n') ?? '';
+          const text = [composed, notes, described].filter((part) => part.length > 0).join('\n\n');
+          const content = await buildOpenAiUserContent(text, resolved, pdfMode, caps);
           messages.push({
             role: 'user',
             content: content as OpenAI.Chat.Completions.ChatCompletionUserMessageParam['content'],

@@ -107,6 +107,14 @@ export type NormalizedEvent =
        */
       ephemeral?: string;
       /**
+       * What the vision worker reported for attachments the model could
+       * not see, one entry per file. Stored so the openai-compatible
+       * engine — which builds every message, the current one included,
+       * from this history — passes them on and keeps them on replay.
+       * Before 2026-10-08 they reached the CLI engines only.
+       */
+      attachment_descriptions?: string[];
+      /**
        * User-attached files (Phase Y.B, web upload). Refs only — bytes
        * live at `~/.somora/attachments/<hash>.<ext>` content-
        * addressed. JSONL persists name/mime/size for display +
