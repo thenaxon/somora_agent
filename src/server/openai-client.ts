@@ -33,6 +33,9 @@ function getDispatcher(): Agent {
       // pool. 60s/600s mirrors loopback-fetch.ts.
       keepAliveTimeout: 60_000,
       keepAliveMaxTimeout: 600_000,
+      // undici 8 negotiates HTTP/2 by default; LLM streams of 20+ minutes
+      // were tuned and soak-tested on HTTP/1.1 — kept until h2 is tested.
+      allowH2: false,
     });
   }
   return dispatcher;

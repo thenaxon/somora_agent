@@ -35,6 +35,9 @@ function getDispatcher(): Agent {
       // h1 fallback path benefits.
       keepAliveTimeout: 60_000,
       keepAliveMaxTimeout: 600_000,
+      // undici 8 negotiates HTTP/2 by default; loopback stays on the
+      // HTTP/1.1 path it has always used.
+      allowH2: false,
     });
   }
   return dispatcher;

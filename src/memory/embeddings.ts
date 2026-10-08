@@ -186,12 +186,17 @@ async function createLocalProvider(modelName: string): Promise<EmbeddingProvider
   // `globalThis.Response` currently is unless it already is one. Both
   // classes delegate body/headers/arrayBuffer to the native object, so
   // the download stream is untouched.
-  const { Agent } = await import('undici');
-  const patientAgent = new Agent({
-    bodyTimeout: 0,
-    headersTimeout: 0,
-    connectTimeout: 30_000,
-  });
+  // undici 8 speaks a newer dispatcher interface than the undici inside
+  // Node 22's global fetch ("invalid onRequestStart method"); its own
+  // Dispatcher1Wrapper is the documented bridge for that fetch.
+  const { Agent, Dispatcher1Wrapper } = await import('undici');
+  const patientAgent = new Dispatcher1Wrapper(
+    new Agent({
+      bodyTimeout: 0,
+      headersTimeout: 0,
+      connectTimeout: 30_000,
+    }),
+  );
   env.fetch = (async (input: string | URL, init?: unknown) => {
     const r: Response = await globalThis.fetch(input as never, {
       ...(init as object),
