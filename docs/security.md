@@ -10,10 +10,10 @@ agents are trusted helpers with guard rails, not sandboxed programs.
 
 - **Private by default.** The server listens on `127.0.0.1` only.
   Opening it to your network is one explicit setting.
-- **Only somora's tools.** The Claude and Codex engines run with their
-  own built-in tools and your personal CLI setup switched off.
-- **Separate engine homes.** Your interactive Claude Code and Codex
-  state never reaches an agent. Only the login is shared.
+- **Only somora's tools.** The Claude, Codex and Grok engines run with
+  their own built-in tools and your personal CLI setup switched off.
+- **Separate engine homes.** Your interactive Claude Code, Codex and
+  Grok state never reaches an agent. Only the login is shared.
 - **Guard rails against accidents.** Destructive shell commands and
   reads of private keys are refused.
 - **One documented request home.** A daily version check with no

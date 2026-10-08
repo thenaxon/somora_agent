@@ -290,7 +290,7 @@ work and have no badge.
 |---|---|---|
 | `codex-cli` | yes | `reasoningOutputTokens` in the app-server's `thread/tokenUsage/updated` notification |
 | `openai-compatible` | yes | `completion_tokens_details.reasoning_tokens` in the usage chunk |
-| `grok-cli` | when Grok reports it | the usage of the turn |
+| `grok-cli` | yes | `reasoningTokens` in the usage Grok reports at the end of the turn |
 | `claude-cli` | no | Anthropic counts thinking inside `output_tokens`. There is no separate number. |
 
 Some OpenAI-compatible backends stream the reasoning text but report no
@@ -321,11 +321,11 @@ captured, stored and exported.
 | `openai-compatible`, inline `<think>` models | The full text, split off the reply. | DeepSeek V4 Flash |
 | `claude-cli` | Whatever the Claude Agent SDK delivers. With the current SDK the thinking blocks arrive empty, and somora shows one placeholder line saying that the model thought. A redacted block gets its own placeholder. | yes |
 | `codex-cli` | A summary per thinking phase: heading-like sentences. Codex never streams the raw reasoning. somora asks for `summary: auto` on `turn/start` while capture is on and reads `item/reasoning/summaryTextDelta`. | yes |
-| `grok-cli` | ACP `agent_thought_chunk` frames. | no, it follows the ACP schema only |
+| `grok-cli` | What Grok streams as ACP `agent_thought_chunk`: short notes on its plan, live while it works, each model round in its own paragraph. | yes |
 
-In practice the full text comes from local and routed models. Claude
-and Codex give a placeholder or a summary, because their providers do
-not disclose the trace.
+In practice the full text comes from local and routed models. Claude,
+Codex and Grok give a placeholder, a summary or short notes, because
+their providers do not disclose the trace.
 
 ### Models that think inline
 

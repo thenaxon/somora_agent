@@ -117,6 +117,10 @@ test('the chat row reads well for each engine', () => {
     manualCompactionText({ status: 'compacted', engine: 'codex-cli', tokensBefore: 24653, note: 'Codex compacts by its own rules and takes no instructions: the focus was not used.' }, 'keep X'),
     'Compacted by hand: Codex compacted its session (was 24.7k tokens). Codex compacts by its own rules and takes no instructions: the focus was not used.',
   );
+  assert.equal(
+    manualCompactionText({ status: 'compacted', engine: 'grok-cli', tokensBefore: 5498, tokensAfter: 4521 }),
+    'Compacted by hand: Grok compacted its session (5.5k → 4.5k tokens).',
+  );
 });
 
 test('the focus reaches the summary prompt, and only when given', async () => {

@@ -42,7 +42,8 @@ Who compacts depends on the engine of the model that answers.
 | Engine | Who compacts | When | What you see |
 |---|---|---|---|
 | `openai-compatible` | somora | Before a turn, when the prompt reaches `triggerRatio` times the input budget | Usually nothing. A `context compacted` row when a compaction ran inside or in reaction to a turn |
-| `claude-cli`, `codex-cli`, `grok-cli` | The CLI itself, inside its own session | At the CLI's own threshold | Nothing from somora |
+| `claude-cli` | Claude Code itself, inside its own session | At Claude Code's own threshold | Nothing from somora |
+| `codex-cli`, `grok-cli` | The CLI itself, inside its own session | At the CLI's own threshold | A `context compacted` row, and the usage display drops |
 
 The session file `sessions/<id>.jsonl` is never shortened by either
 kind. REM reads it independently.
@@ -76,7 +77,7 @@ What happens depends on the engine of the session's model:
 | `openai-compatible` | somora, with the same summary as the automatic compaction. The last exchanges (`safetyCushionPairs`) stay as they are. | Goes into the summary prompt. |
 | `claude-cli` | Claude Code compacts its own session, as `/compact` does in Claude Code. | Passed to Claude as its instructions. |
 | `codex-cli` | Codex compacts its own thread. | Not used: Codex takes no instructions for it. The reply says so. |
-| `grok-cli` | Not available. | |
+| `grok-cli` | Grok compacts its own conversation. | Not used: Grok takes no instructions for it. The reply says so. |
 
 Good to know:
 

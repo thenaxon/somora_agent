@@ -220,24 +220,34 @@ filesystem. `gpt-5.5` calls the same tools directly.
 ## Grok subscription
 
 Engine `grok-cli`, for a SuperGrok or Premium subscription. somora
-drives the Grok CLI over ACP. The adapter is community maintained. It
-takes text attachments only and has no one-shot path, so a Grok model
-cannot be a dream or compaction worker.
+runs the bundled Grok CLI (xAI's `@xai-official/grok`, the exact
+version is pinned in somora's `package.json`) over ACP for each turn.
+A `grok` installed on the host is used only on a platform somora
+ships no Grok build for, or when `SOMORA_GROK_BIN` names it.
+`somora grok login` signs in
+with the bundled one, and an existing `grok login` is picked up
+automatically. `somora grok models` lists the models your
+subscription offers.
 
 ```yaml
 providers:
   xai:
     engine: grok-cli
     models:
-      - id: grok-4.5
+      - id: grok-4.7
         alias: grok
-        contextWindow: 500000
-        capabilities: [text, reasoning]
+        contextWindow: 256000          # what Grok reports for the model
+        capabilities: [text, image, reasoning]
 ```
 
 | Model | contextWindow | Notes | Checked |
 |---|---|---|---|
-| `grok-4.5` | 500000 | Thinking levels are passed as `--reasoning-effort`. `off` is sent as `low`, because the model always reasons. `reasoning.levels` is applied. | partial: the thinking text path is unchecked |
+| `grok-4.7` | 256000 | Thinking levels are passed as `--reasoning-effort`. `off` is sent as `low`, because the model always reasons. `reasoning.levels` is applied. Images go to Grok as images, PDFs as page images. | yes: chat, tools, thinking text, images and PDFs, steering, stop, `/compact`, model switch and back |
+
+Grok compacts its own conversation near the end of the window, and a
+row in the chat says so. `/compact` asks Grok to compact now. Grok has
+no one-shot path, so a Grok model cannot be a dream or compaction
+worker.
 
 ## Self hosted models
 
@@ -534,7 +544,7 @@ providers:
 
 | Field | Default | openai-compatible | claude-cli | codex-cli | grok-cli |
 |---|---|---|---|---|---|
-| `contextWindow` | required | compaction trigger, worker choice, display. Use the server's limit. | worker choice, display. The native window is right. | worker choice, display. Use the Codex session window, 258400. | worker choice, display |
+| `contextWindow` | required | compaction trigger, worker choice, display. Use the server's limit. | worker choice, display. The native window is right. | worker choice, display. Use the Codex session window, 258400. | display. Grok reports the window itself, and that number is shown. |
 | `capabilities` | `[text]` | `image` and `pdf` gate attachments, `reasoning` decides whether a thinking level is sent | same | same | same |
 | `alias` | none | short name for `model:` in `agent.yaml`, letters, digits, `-` and `_` | same | same | same |
 | `reasoning.default` | unset | the thinking level used when session and agent set none, in somora's words; sent explicitly and shown as the model's default | same | same | same |

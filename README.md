@@ -147,8 +147,7 @@ On top of chat and memory, each optional and off until configured:
   fixes them in the same step ([docs/lsp.md](docs/lsp.md)).
 - **Steering** — type into a running turn instead of behind it: the
   model reads your message at its next step and changes course. Works on
-  the Claude, Codex and OpenAI-compatible engines; on Grok the message
-  waits for the next turn ([docs/api.md → Steering](docs/api.md#steering)).
+  every engine ([docs/api.md → Steering](docs/api.md#steering)).
 
 ## Requirements
 
@@ -160,8 +159,8 @@ Hard:
   and the web tmux app.
 - **At least one LLM backend:** a Claude subscription (engine
   `claude-cli` — Claude Code is bundled, `somora auth login`); a ChatGPT
-  subscription (engine `codex-cli` — Codex is bundled, `somora codex login`); the Grok Build CLI
-  (SuperGrok/Premium, engine `grok-cli`); or any OpenAI-compatible HTTP
+  subscription (engine `codex-cli` — Codex is bundled, `somora codex login`); a SuperGrok or
+  Premium subscription (engine `grok-cli` — the Grok CLI is bundled, `somora grok login`); or any OpenAI-compatible HTTP
   server (Ollama, LM Studio, vLLM, oMLX, OpenRouter, …).
 
 Optional: an **Obsidian vault** for the shared wiki and read-only vault
@@ -298,7 +297,7 @@ daily:
 | Three-phase dreams | ✓ | ✓ | as chat model only¹ | ✓ |
 | Tool surface | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
 | Skills (markdown how-tos) | ✓ | ✓ | ✓ | ✓ |
-| Multimodal attachments (image, PDF) | ✓ native | ✓ image native, PDF rasterized | text only | ✓ image; PDF native or rasterized per provider |
+| Multimodal attachments (image, PDF) | ✓ native | ✓ image native, PDF rasterized | ✓ image native, PDF rasterized | ✓ image; PDF native or rasterized per provider |
 | Image + video generation² | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
 | Sub-agents, agent-to-agent questions, follow-ups | ✓ | ✓ | ✓ | ✓ |
 | SSH-resource exec | ✓ | ✓ | ✓ | ✓ |

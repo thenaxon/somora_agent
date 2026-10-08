@@ -149,7 +149,8 @@ export function manualCompactionText(o: Extract<ManualCompactionOutcome, { statu
       : o.tokensBefore !== undefined
         ? ` (was ${formatTokens(o.tokensBefore)} tokens)`
         : '';
-  const by = o.engine === 'openai-compatible' ? 'somora summarised the earlier conversation' : `${o.engine === 'claude-cli' ? 'Claude' : 'Codex'} compacted its session`;
+  const cli: Record<string, string> = { 'claude-cli': 'Claude', 'codex-cli': 'Codex', 'grok-cli': 'Grok' };
+  const by = o.engine === 'openai-compatible' ? 'somora summarised the earlier conversation' : `${cli[o.engine] ?? o.engine} compacted its session`;
   return `Compacted by hand: ${by}${size}.${focus && !o.note ? ` Focus: ${focus}` : ''}${o.note ? ` ${o.note}` : ''}`;
 }
 

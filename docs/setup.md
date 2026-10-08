@@ -36,7 +36,7 @@ works through these steps. A step that is already in place is skipped.
 | System packages | tmux, ripgrep and git. On Linux also a C and C++ compiler, make and python3. Installed with apt, dnf, pacman, zypper or Homebrew. | Asked first. Without them only the missing build tools stop the install. |
 | Node.js | Kept when it is 22.13 or newer. Otherwise Node 24 system wide (NodeSource or Homebrew), or the official build into `~/.local/share/somora/node`, checked against its checksum. | Only for the system wide variant. |
 | npm folder | When npm's global folder is not writable for you, it moves to `~/.npm-global` and is added to your `PATH`. | No. |
-| somora | `npm install -g somora`, about 1.4 GB with the bundled engines. | No. |
+| somora | `npm install -g somora`, about 1.5 GB with the bundled engines. | No. |
 | Service | Linux: systemd user unit, enabled at boot, lingering on so it survives logout. macOS: LaunchAgent that starts at every login. | Lingering may ask. |
 | Assistant | Starts `somora setup` when a terminal is attached. | No. |
 
@@ -200,7 +200,7 @@ blocks for you. By hand, edit `providers` in `~/.somora/config.yaml`.
 |---|---|---|
 | Claude subscription | `claude-cli` | `somora auth login`. Claude Code is bundled with somora. A Claude Code you installed yourself, and its login, is used instead when present. No API key. |
 | ChatGPT subscription | `codex-cli` | `somora codex login`. Codex is bundled with somora. A login made with a global Codex is picked up too. |
-| Grok subscription | `grok-cli` | Install the Grok CLI with `curl -fsSL https://x.ai/cli/install.sh \| bash`, then `grok login`. |
+| Grok subscription | `grok-cli` | `somora grok login`, or `somora grok login --device-auth` on a machine without a browser. The Grok CLI is bundled with somora. A login made with a global Grok is picked up too. |
 | Own server or API key | `openai-compatible` | Ollama, LM Studio, vLLM, oMLX, OpenRouter or any other server with a `/v1/chat/completions` endpoint. |
 
 ```yaml
@@ -235,10 +235,11 @@ separately, per token. Grok calls somora's tools through its own
 `use_tool` step. somora records them under their usual names, such as
 `mcp__somora__memory_list`.
 
-somora looks for the Grok CLI on every turn, so a CLI installed while
-somora runs is used without a restart. It runs Grok with its own home,
-`~/.somora/grok-home`, and keeps that login in step with yours. See
-the [security guide](security.md#grok).
+somora unpacks the bundled Grok CLI once into `~/.somora/grok-home/bin`
+and runs Grok with that folder as its home, so your own `~/.grok`
+stays untouched. A login you make with your own Grok is picked up, and
+somora's refreshed login is copied back to it. See the
+[security guide](security.md#grok).
 
 The models guide has a tested block for every model family, the Codex
 and Grok details and all model fields.
@@ -815,7 +816,7 @@ service's environment.
 | `SOMORA_CLAUDE_BIN` | `~/.local/bin/claude`, else the bundled one | Path of the Claude Code binary. |
 | `CLAUDE_CONFIG_DIR` | `~/.somora/claude-home` | Config folder of the Claude engine. |
 | `SOMORA_CODEX_BIN` | unset | Uses another Codex binary instead of the bundled one. For debugging. |
-| `SOMORA_GROK_BIN` | `~/.local/bin/grok`, else `grok` on `PATH` | Path of the Grok CLI. Read on every turn. |
+| `SOMORA_GROK_BIN` | unset | Uses another Grok binary instead of the bundled one. Read on every turn. Without a bundled build for the platform, `~/.local/bin/grok` and then `grok` on `PATH` are used. |
 | `SOMORA_COMPACTION_TRIGGER_RATIO` | from config | Overrides `compaction.triggerRatio`. |
 | `SOMORA_COMPACTION_SAFETY_PAIRS` | from config | Overrides `compaction.safetyCushionPairs`. |
 | `SOMORA_COMPACTION_MODEL` | from config | Overrides `compaction.modelOverride`. |

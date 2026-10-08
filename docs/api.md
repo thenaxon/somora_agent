@@ -439,15 +439,19 @@ What a client sees, in order:
 
 | Case | Result |
 |---|---|
-| Engine `openai-compatible`, `claude-cli` or `codex-cli` | The message is steered. |
+| Engine `openai-compatible`, `claude-cli`, `codex-cli` or `grok-cli` | The message is steered. |
 | Any other engine, or no turn running | It is queued as a turn of its own (`steered: false`). |
 | The turn is already finishing | It becomes an ordinary queued turn. Nothing is lost. |
 | The message carries `agent_ask_call_id` | Never steered: such a question needs a turn of its own. |
 
-On `claude-cli` a message steered while the model writes its final
-answer is answered in the same turn. The model finishes the answer,
+On `claude-cli` and `grok-cli` a message steered while the model
+writes its final answer is answered in the same turn. The model finishes the answer,
 then replies to the message in a new paragraph. The turn ends once
 every steered message has had its answer.
+
+Grok does not say when it hands a message to the model. somora reads
+that from Grok's own session record, so on `grok-cli` the `user_message`
+event can arrive a second or two after the model read the text.
 
 Sub-agent and voice turns can be steered like any other. The web
 client offers a steer or queue switch next to Send. Its starting
@@ -1036,9 +1040,9 @@ Compacts the session now, on the engine of its model. See
 
 | Status | Body |
 |---|---|
-| `200` | `{agent, session, status: "compacted", engine, tokensBefore?, tokensAfter?, note?}`. `note` says when the engine ignored the instructions (`codex-cli`). |
+| `200` | `{agent, session, status: "compacted", engine, tokensBefore?, tokensAfter?, note?}`. `note` says when the engine ignored the instructions (`codex-cli`, `grok-cli`). |
 | `200` | `{agent, session, status: "nothing_to_compact", engine, note}`. The session is too short, or the engine has no conversation for it yet. |
-| `400` | `{status: "unsupported", engine, note}`. The engine cannot compact by hand (`grok-cli`). |
+| `400` | `{status: "unsupported", engine, note}`. The engine cannot compact by hand. |
 | `409` | `{error, busy: true}`. A turn or another compaction is running. |
 | `502` | `{error}`. The engine failed while compacting. |
 
