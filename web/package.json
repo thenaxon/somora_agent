@@ -14,10 +14,10 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "d3-force": "^3.0.0",
-    "lucide-react": "^0.460.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "react-markdown": "^9.0.1",
+    "lucide-react": "^1.53.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.0",
     "remark-gfm": "^4.0.0"
   },
@@ -30,7 +30,7 @@
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
-    "typescript": "^5.7.2",
+    "typescript": "^7.0.2",
     "vite": "^6.0.0"
   }
 }
