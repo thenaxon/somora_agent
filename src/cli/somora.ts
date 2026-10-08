@@ -32,7 +32,7 @@ import {
   launchdStop, nodeDirOnPath, writeLaunchdPlist,
 } from './launchd.ts';
 // Plain-ESM helper shared with bin/somora.mjs (must run on the Node we reject).
-import { nodeUpgradeHint, satisfiesNode } from '../../bin/node-version.mjs';
+import { glibcUpgradeHint, glibcVersion, nodeUpgradeHint, satisfiesGlibc, satisfiesNode } from '../../bin/node-version.mjs';
 
 // CLI commands talk to the person on this terminal; the logger's pretty
 // stdout lines belong to the foreground server only (it gets the
@@ -490,17 +490,22 @@ Other:
 `;
 }
 
-interface NpmTarget { version: string; node?: string }
+interface NpmTarget { version: string; node?: string; glibc?: string; lastForOlderGlibc?: string }
 
 /** Ask the registry what `somora@<spec>` resolves to. `spec` is a
  *  dist-tag or an exact version. */
 function npmView(spec: string): NpmTarget | null {
-  const r = run('npm', ['view', `${SOMORA_NPM_NAME}@${spec}`, 'version', 'engines', '--json']);
+  const r = run('npm', ['view', `${SOMORA_NPM_NAME}@${spec}`, 'version', 'engines', 'somora', '--json']);
   if (r.code !== 0 || !r.stdout.trim()) return null;
   try {
-    const j = JSON.parse(r.stdout) as { version?: string; engines?: { node?: string } };
+    const j = JSON.parse(r.stdout) as { version?: string; engines?: { node?: string }; somora?: { glibc?: string; lastForOlderGlibc?: string } };
     if (typeof j.version !== 'string') return null;
-    return { version: j.version, node: j.engines?.node };
+    return {
+      version: j.version,
+      node: j.engines?.node,
+      ...(typeof j.somora?.glibc === 'string' ? { glibc: j.somora.glibc } : {}),
+      ...(typeof j.somora?.lastForOlderGlibc === 'string' ? { lastForOlderGlibc: j.somora.lastForOlderGlibc } : {}),
+    };
   } catch {
     return null;
   }
@@ -566,6 +571,14 @@ async function cmdUpdate(args: string[]): Promise<number> {
   if (target.node && !satisfiesNode(target.node, process.versions.node)) {
     process.stderr.write(`\n${label} needs a newer Node.js than this machine has — update aborted before installing.\n`);
     process.stderr.write(nodeUpgradeHint(target.node, process.versions.node, process.execPath));
+    return 1;
+  }
+  // And a newer Linux (glibc) than this machine has: its prebuilt native
+  // modules would not load, and there is no compile fallback.
+  const glibc = glibcVersion();
+  if (target.glibc && !satisfiesGlibc(target.glibc, glibc)) {
+    process.stderr.write(`\n${label} needs a newer Linux than this machine has — update aborted before installing.\n`);
+    process.stderr.write(glibcUpgradeHint(target.glibc, glibc ?? 'unknown', target.lastForOlderGlibc && target.lastForOlderGlibc !== SOMORA_VERSION ? target.lastForOlderGlibc : null));
     return 1;
   }
 

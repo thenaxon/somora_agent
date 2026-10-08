@@ -22,7 +22,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
   <a href="#status"><img src="https://img.shields.io/badge/status-active%20dev-green.svg" alt="Status: active development" /></a>
-  <a href="#requirements"><img src="https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg" alt="Node 22.13 or newer" /></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/node-%E2%89%A522.22-brightgreen.svg" alt="Node 22.22 or newer" /></a>
 </p>
 
 ## Install
@@ -39,7 +39,7 @@ models, your first agent, memory and HTTPS — details under
 | | |
 |---|---|
 | **One line** (recommended) | `curl -fsSL https://somora.ai/install.sh \| bash` |
-| **npm** — you already have Node ≥22.13 | `npm install -g somora && somora setup` |
+| **npm** — you already have Node ≥22.22 | `npm install -g somora && somora setup` |
 | **From source** — you want to work on somora itself | [docs/setup.md → Develop from a checkout](docs/setup.md#develop-from-a-checkout-contributors) |
 
 ## See it
@@ -153,8 +153,10 @@ On top of chat and memory, each optional and off until configured:
 
 Hard:
 
-- **Node ≥22.13** — uses native `node:sqlite` plus `better-sqlite3`. On an
+- **Node ≥22.22** — uses native `node:sqlite` plus `better-sqlite3`. On an
   older Node every `somora` command stops with the upgrade steps.
+- **macOS, or Linux with glibc ≥2.34** — Debian 12, Ubuntu 22.04, RHEL 9,
+  Fedora 35 or newer. The memory database ships prebuilt for these.
 - **tmux** — for the `tmux` tool (long-lived terminal sessions for agents)
   and the web tmux app.
 - **At least one LLM backend:** a Claude subscription (engine
@@ -206,7 +208,7 @@ Every step first looks at what is already there, so `somora setup` is safe
 to run again — as a whole or one step (`somora setup access`). Update
 later with `somora update`.
 
-Already have Node ≥22.13 and the tools from [Requirements](#requirements)?
+Already have Node ≥22.22 and the tools from [Requirements](#requirements)?
 Then it is two commands: `npm install -g somora && somora setup`.
 
 ### Already using a coding agent? Let it set up somora.

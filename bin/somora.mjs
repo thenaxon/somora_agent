@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { nodeUpgradeHint, satisfiesNode } from './node-version.mjs';
+import { glibcUpgradeHint, glibcVersion, nodeUpgradeHint, satisfiesGlibc, satisfiesNode } from './node-version.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = resolve(here, '..');
@@ -22,6 +22,12 @@ try {
   const range = pkg?.engines?.node;
   if (range && !satisfiesNode(range, process.versions.node)) {
     process.stderr.write(nodeUpgradeHint(range, process.versions.node, process.execPath));
+    process.exit(1);
+  }
+  // Same for an older Linux than the prebuilt native modules need.
+  const glibc = glibcVersion();
+  if (pkg?.somora?.glibc && !satisfiesGlibc(pkg.somora.glibc, glibc)) {
+    process.stderr.write(glibcUpgradeHint(pkg.somora.glibc, glibc, pkg.somora.lastForOlderGlibc));
     process.exit(1);
   }
 } catch {

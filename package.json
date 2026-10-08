@@ -27,8 +27,12 @@
   "publishConfig": {
     "access": "public"
   },
+  "somora": {
+    "glibc": "2.34",
+    "lastForOlderGlibc": "2026.1007.2"
+  },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.22.2"
   },
   "bin": {
     "somora": "bin/somora.mjs"
@@ -69,7 +73,7 @@
     "@mozilla/readability": "^0.6.0",
     "@openai/codex": "0.161.0",
     "adm-zip": "^0.6.0",
-    "better-sqlite3": "^12.9.0",
+    "better-sqlite3": "^13.0.3",
     "chokidar": "^5.0.0",
     "gray-matter": "^4.0.3",
     "hono": "4.13.13",

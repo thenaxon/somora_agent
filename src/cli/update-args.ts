@@ -59,7 +59,7 @@ export function compareVersions(a: string, b: string): number {
  *  today it only warns, a stricter default would leave node-pty and
  *  better-sqlite3 unbuilt. update-args.test.mts holds this list against
  *  package-lock.json and install.sh. */
-export const ALLOW_SCRIPTS = ['better-sqlite3', 'cpu-features', 'esbuild', 'fsevents', 'node-pty', 'onnxruntime-node', 'protobufjs', 'ssh2'];
+export const ALLOW_SCRIPTS = ['cpu-features', 'esbuild', 'fsevents', 'node-pty', 'onnxruntime-node', 'protobufjs', 'ssh2'];
 
 /** Extra arguments for `npm install -g`, given what `npm config get
  *  allow-scripts` printed: an npm that does not know the setting says

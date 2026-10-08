@@ -1,6 +1,7 @@
 // Run: npx tsx src/cli/node-version.test.mts
 import assert from 'node:assert/strict';
-import { minimumNodeVersion, satisfiesNode, nodeUpgradeHint } from '../../bin/node-version.mjs';
+import { readFileSync } from 'node:fs';
+import { glibcUpgradeHint, minimumNodeVersion, satisfiesGlibc, satisfiesNode, nodeUpgradeHint } from '../../bin/node-version.mjs';
 let pass = 0, fail = 0;
 const check = (n: string, c: boolean) => { if (c) pass++; else { fail++; console.error('FAIL', n); } };
 check('parse >=22.13.0', JSON.stringify(minimumNodeVersion('>=22.13.0')) === '[22,13,0]');
@@ -15,4 +16,18 @@ check('unparseable range never blocks', satisfiesNode('lts/*', '18.0.0'));
 check('current node passes our own engines', satisfiesNode('>=22.13.0', process.versions.node));
 const hint = nodeUpgradeHint('>=22.13.0', '20.19.0', '/usr/bin/node');
 check('hint names found + required + path', hint.includes('found v20.19.0') && hint.includes('>=22.13.0') && hint.includes('/usr/bin/node') && hint.includes('somora init'));
+// glibc gate: an older Linux is refused with the way back.
+check('glibc 2.36 passes 2.34', satisfiesGlibc('2.34', '2.36'));
+check('glibc 2.34 passes 2.34', satisfiesGlibc('2.34', '2.34'));
+check('glibc 2.31 (Ubuntu 20.04) fails 2.34', !satisfiesGlibc('2.34', '2.31'));
+check('no glibc (macOS, musl) never blocks', satisfiesGlibc('2.34', null));
+const gh = glibcUpgradeHint('2.34', '2.31', '2026.1007.2');
+check('glibc hint names floor and way back', gh.includes('glibc 2.34 or newer') && gh.includes('npm install -g somora@2026.1007.2 && somora server restart'));
+check('glibc hint without a fallback names no version', !glibcUpgradeHint('2.34', '2.31', null).includes('npm install -g'));
+// package.json and install.sh state the same floors.
+const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+const sh = readFileSync(new URL('../../install.sh', import.meta.url), 'utf8');
+check('install.sh GLIBC_MIN = package.json somora.glibc', sh.match(/^GLIBC_MIN="([^"]+)"/m)?.[1] === pkg.somora.glibc);
+check('install.sh NODE_MIN = package.json engines.node', sh.match(/^NODE_MIN="([^"]+)"/m)?.[1] === pkg.engines.node.replace('>=', ''));
+check('current node passes the new engines', satisfiesNode(pkg.engines.node, process.versions.node));
 console.log(`${pass} passed, ${fail} failed`); assert.equal(fail, 0);

@@ -597,7 +597,7 @@ not in `user`.
 
 ## Minimum versions
 
-- Node.js 22.13 or newer. Every `somora` command refuses an older Node.
+- Node.js 22.22 or newer. Every `somora` command refuses an older Node.
 - A current Claude Code for `claude-cli`.
 - Codex needs no separate install. somora bundles the exact version
   pinned in its `package.json`.

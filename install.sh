@@ -5,7 +5,7 @@
 #
 # What it does, in order — every step is skipped when already in place:
 #   1. system packages: tmux, ripgrep, git and a C/C++ toolchain
-#   2. Node.js (>= 22.13) when missing or too old
+#   2. Node.js (>= 22.22) when missing or too old
 #   3. an npm global folder inside your home directory
 #   4. the somora package from npm
 #   5. the background service (systemd user unit, survives logout)
@@ -23,7 +23,10 @@
 
 set -euo pipefail
 
-NODE_MIN="22.13.0"
+NODE_MIN="22.22.2"
+# Prebuilt native modules (better-sqlite3 13) need this glibc: Debian 12,
+# Ubuntu 22.04, RHEL 9 or newer. Same value as package.json somora.glibc.
+GLIBC_MIN="2.34"
 NODE_INSTALL_MAJOR="24"
 PKG_NAME="somora"
 LOCAL_NODE_DIR="$HOME/.local/share/somora/node"
@@ -32,7 +35,7 @@ PROFILE_MARK="# added by the somora installer"
 # Dependencies that build or fetch a binary while installing. Newer npm
 # versions want them named before they may do that (kept in step with
 # src/cli/update-args.ts by a test).
-ALLOW_SCRIPTS="better-sqlite3,cpu-features,esbuild,fsevents,node-pty,onnxruntime-node,protobufjs,ssh2"
+ALLOW_SCRIPTS="cpu-features,esbuild,fsevents,node-pty,onnxruntime-node,protobufjs,ssh2"
 
 VERSION="${SOMORA_VERSION:-latest}"
 YES="${SOMORA_YES:-}"
@@ -140,6 +143,14 @@ detect_platform() {
   fi
   if [ "$OS" = "linux" ] && [ -f /etc/alpine-release ]; then
     die "Alpine (musl) is not supported — Node's native modules here need glibc. Use Debian, Ubuntu or Fedora."
+  fi
+  if [ "$OS" = "linux" ]; then
+    local glibc
+    glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"
+    if [ -n "$glibc" ] && ! version_ge "$glibc" "$GLIBC_MIN"; then
+      die "this Linux is too old for somora: it has glibc $glibc, somora needs $GLIBC_MIN or newer
+       (Debian 12, Ubuntu 22.04, RHEL 9, Fedora 35 or later). Nothing was installed."
+    fi
   fi
   if have apt-get; then PM="apt"
   elif have dnf; then PM="dnf"

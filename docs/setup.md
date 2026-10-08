@@ -34,7 +34,7 @@ works through these steps. A step that is already in place is skipped.
 | Step | What happens | Admin rights |
 |---|---|---|
 | System packages | tmux, ripgrep and git. On Linux also a C and C++ compiler, make and python3. Installed with apt, dnf, pacman, zypper or Homebrew. | Asked first. Without them only the missing build tools stop the install. |
-| Node.js | Kept when it is 22.13 or newer. Otherwise Node 24 system wide (NodeSource or Homebrew), or the official build into `~/.local/share/somora/node`, checked against its checksum. | Only for the system wide variant. |
+| Node.js | Kept when it is 22.22 or newer. Otherwise Node 24 system wide (NodeSource or Homebrew), or the official build into `~/.local/share/somora/node`, checked against its checksum. | Only for the system wide variant. |
 | npm folder | When npm's global folder is not writable for you, it moves to `~/.npm-global` and is added to your `PATH`. | No. |
 | somora | `npm install -g somora`, about 1.5 GB with the bundled engines. | No. |
 | Service | Linux: systemd user unit, enabled at boot, lingering on so it survives logout. macOS: LaunchAgent that starts at every login. | Lingering may ask. |
@@ -108,7 +108,8 @@ The installer does nothing you cannot do yourself. You need:
 
 | Tool | Why |
 |---|---|
-| Node.js 22.13 or newer | The runtime. Every `somora` command refuses an older Node and prints the upgrade steps. |
+| Node.js 22.22 or newer | The runtime. Every `somora` command refuses an older Node and prints the upgrade steps. |
+| macOS, or Linux with glibc 2.34 or newer | Debian 12, Ubuntu 22.04, RHEL 9, Fedora 35 or later. The memory database ships prebuilt for these, with no build step. On an older Linux every `somora` command stops and names the last version that runs there. |
 | tmux | The `tmux` tool and the terminal windows of the web client. |
 | ripgrep (`rg`) | The `file_search` tool. |
 | git | Used by skills and by builder agents. |
@@ -838,9 +839,16 @@ called from a turn.
 or run `source ~/.profile`. The installer added npm's folder to your
 `PATH`.
 
-**A command says Node.js is too old.** Install Node 22.13 or newer, or
+**A command says Node.js is too old.** Install Node 22.22 or newer, or
 run the installer again. `somora update` checks this before it installs
 anything.
+
+**A command says the Linux is too old (glibc).** This somora needs glibc
+2.34 or newer. The message names the last version that still runs on
+your system: install that one with `npm install -g somora@<version>`,
+then `somora server restart`. `somora update` checks this before it
+installs anything; versions up to 2026.1007.2 did not, so an update
+from one of those can land on a release your Linux cannot run.
 
 **`npm install -g` fails with `EACCES`.** npm's global folder belongs
 to root. Run the installer again, or move the folder as shown under

@@ -8,7 +8,7 @@
 // obscure failures deep inside a dependency (pdf-to-img 7, 2026-09-03).
 // Failing at the door with the exact fix is kinder.
 
-/** Parse the minimum version out of an engines range like ">=22.13.0". */
+/** Parse the minimum version out of an engines range like ">=22.22.2". */
 export function minimumNodeVersion(range) {
   const m = /(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(range ?? ''));
   if (!m) return null;
@@ -40,6 +40,47 @@ export function nodeUpgradeHint(range, current, execPath) {
     '',
     '  If the service still fails after upgrading, the unit is running an',
     '  older node from /usr/bin — `somora init` rewrites it.',
+    '',
+  ].join('\n');
+}
+
+// glibc gate. Native modules ship prebuilt for one glibc floor
+// (better-sqlite3 13: glibc 2.34 — Debian 12, Ubuntu 22.04, RHEL 9) and
+// have no compile fallback, so an older Linux would fail with a dlopen
+// error deep inside the memory index. package.json `somora.glibc` is
+// the floor; `somora.lastForOlderGlibc` the last release that still
+// runs below it. musl and non-Linux report no glibc and pass.
+
+/** Runtime glibc version on Linux ("2.36"), else null. */
+export function glibcVersion() {
+  if (process.platform !== 'linux') return null;
+  try {
+    const v = process.report?.getReport?.()?.header?.glibcVersionRuntime;
+    return typeof v === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** true when `current` glibc is at least `min`; unknown either way → true. */
+export function satisfiesGlibc(min, current) {
+  if (!min || !current) return true;
+  return satisfiesNode(String(min), String(current));
+}
+
+/** Human message with the way out, for stderr. */
+export function glibcUpgradeHint(min, current, fallbackVersion) {
+  return [
+    `somora: this version needs Linux with glibc ${min} or newer (Debian 12, Ubuntu 22.04, RHEL 9 or later); this machine has glibc ${current}.`,
+    '',
+    ...(fallbackVersion
+      ? [
+          '  Go back to the last version that runs here, then restart:',
+          `    npm install -g somora@${fallbackVersion} && somora server restart`,
+          '',
+        ]
+      : []),
+    '  Or move to a newer Linux release; your ~/.somora folder carries over unchanged.',
     '',
   ].join('\n');
 }
