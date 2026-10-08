@@ -112,7 +112,7 @@ test('the old "only these" form: switching its last tool off does not open every
 
 // ─── skills ─────────────────────────────────────────────────────────
 
-const SKILLS = ['github', 'gog', 'skill-author', 'buchhaltung', 'reminders'];
+const SKILLS = ['github', 'gog', 'skill-author', 'invoices', 'reminders'];
 const svis = (kind: AgentKind, g: SkillGating, n: string) => isSkillAllowed(n, kind === 'builder' ? { ...g, defaultDeny: true } : g);
 
 test('skill clicks change exactly the clicked skills, from every starting point', () => {
@@ -120,7 +120,7 @@ test('skill clicks change exactly the clicked skills, from every starting point'
   const starts: [AgentKind, SkillGating][] = [
     ['chat', { deny: [], allow: [] }],
     ['chat', { deny: ['gog'], allow: [] }],
-    ['chat', { deny: [], allow: ['github', 'buchhaltung'] }], // old "only these" (oscar)
+    ['chat', { deny: [], allow: ['github', 'invoices'] }], // old "only these" form
     ['chat', { deny: ['*'], allow: ['reminders'] }],
     ['builder', { deny: [], allow: [] }],
     ['builder', { deny: [], allow: ['github'] }],
