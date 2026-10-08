@@ -1,9 +1,8 @@
 @import './tokens.css';
 @import './desktop.css';
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* The base reset, where Tailwind's base layer used to be (see reset.css). */
+@import './reset.css';
 
 html,
 body {
@@ -203,7 +202,7 @@ body {
   overflow: visible;
 }
 /* Markdown tables in chat bubbles (2026-09-08 report: they read like
- * tab-separated text — Tailwind's preflight strips every border and
+ * tab-separated text — the base reset (reset.css) strips every border and
  * nothing added cell padding back). The table stays a real table; the
  * wrapper AssistantMarkdown puts around it owns the horizontal scroll.
  * No text-align here: GFM column alignment arrives as inline style

@@ -814,7 +814,7 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   /* Long URLs, filesystem paths, and inline code can be > 100 chars
    * with no whitespace — `anywhere` breaks them inside the bubble
    * instead of forcing horizontal overflow. Ada 2026-05-13 polish
-   * report; Nova 2026-05-13 link visibility report. */
+   * report; the 2026-05-13 link visibility report. */
   overflow-wrap: anywhere;
   word-break: break-word;
   /* Explicit re-assert of `user-select: text` so descendants always
@@ -1107,10 +1107,10 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   color: var(--text-1);
 }
 
-/* Tailwind preflight (@tailwind base in globals.css) strips browser
+/* The base reset (reset.css, Tailwind's former preflight) strips browser
  * anchor styling (`a { color: inherit; text-decoration: inherit }`),
  * so without an explicit rule a Markdown link inside an assistant
- * bubble reads as plain text — same color, no underline. Nova
+ * bubble reads as plain text — same color, no underline. A report of
  * 2026-05-13: "link nicht klickbar" was actually "link nicht
  * erkennbar". Restore visible link affordance, scoped to the bubble
  * so we don't accidentally re-style unrelated anchors. */
@@ -1126,7 +1126,7 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 }
 
 /* Markdown lists inside assistant bubbles. Without these rules the
- * default tailwind-preflight `ul,ol { list-style: none; padding: 0 }`
+ * base reset's `ul,ol { list-style: none; padding: 0 }` (reset.css)
  * leaves bullet/number markers invisible and items glued to the bubble
  * edge — hard-to-scan for longer answers. Ada 2026-05-13 polish. */
 .chat-msg-bubble ul,
@@ -1882,7 +1882,7 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 
 /* Icons that sit inside a line of text.
  *
- * Tailwind preflight blockifies every graphic (`img,svg,video,… {
+ * The base reset (reset.css) blockifies every graphic (`img,svg,video,… {
  * display: block }`), so a lucide icon written next to a word gets a
  * line of its own and the `vertical-align` nudge beside it does
  * nothing — vertical-align has no effect on a block box. Measured on
