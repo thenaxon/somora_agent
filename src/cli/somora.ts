@@ -77,6 +77,8 @@ Usage:
                                      the two credential stores
   somora codex [args...]             run the bundled Codex CLI (e.g. \`somora codex login\`,
                                      \`somora codex debug models\`); somora mirrors the login
+  somora grok [args...]              run the bundled Grok CLI (e.g. \`somora grok login\`); somora
+                                     keeps the login in step with ~/.grok
   somora team init|check|show <a>    team.yaml: bootstrap from the agents on disk, validate,
                                      print the "# Your team" block an agent sees
   somora lsp status|install [id…]    language servers for builder agents (docs/lsp.md):
@@ -708,6 +710,10 @@ async function main(): Promise<number> {
     case 'codex': {
       const { runCodexCli } = await import('./codex.ts');
       return await runCodexCli(rest);
+    }
+    case 'grok': {
+      const { runGrokCli } = await import('./grok.ts');
+      return await runGrokCli(rest);
     }
     case 'team': {
       const { runTeamCli } = await import('./team.ts');

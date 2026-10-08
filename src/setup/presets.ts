@@ -15,7 +15,7 @@ export interface ModelPreset {
 export interface ProviderPreset {
   /** Key under `providers:`. */
   key: string;
-  engine: 'claude-cli' | 'codex-cli' | 'openai-compatible';
+  engine: 'claude-cli' | 'codex-cli' | 'grok-cli' | 'openai-compatible';
   baseUrl?: string;
   models: ModelPreset[];
 }
@@ -45,11 +45,19 @@ export const CODEX_PRESET: ProviderPreset = {
   ],
 };
 
+export const GROK_PRESET: ProviderPreset = {
+  key: 'xai',
+  engine: 'grok-cli',
+  models: [
+    { id: 'grok-4.7', alias: 'grok', contextWindow: 256000, capabilities: ['text', 'reasoning'], note: 'frontier model' },
+  ],
+};
+
 /** Default picks per job, in order of preference — the first alias that
  *  is configured wins. Chat wants the best model, the dream workers a
  *  cheap one (REM) or a careful one (Deep, Lucid). */
 export const PREFERRED = {
-  chat: ['opus', 'fable', 'gpt56', 'astra', 'sonnet', 'terra'],
+  chat: ['opus', 'fable', 'gpt56', 'astra', 'sonnet', 'terra', 'grok'],
   rem: ['haiku', 'luna', 'sonnet', 'terra'],
   deep: ['opus', 'gpt56', 'sonnet', 'terra', 'fable', 'astra'],
 } as const;

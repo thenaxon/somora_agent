@@ -95,6 +95,12 @@
     "yaml": "^2.9.1",
     "zod": "^4.4.3"
   },
+  "optionalDependencies": {
+    "@xai-official/grok-darwin-arm64": "1.0.46",
+    "@xai-official/grok-darwin-x64": "1.0.46",
+    "@xai-official/grok-linux-arm64": "1.0.46",
+    "@xai-official/grok-linux-x64": "1.0.46"
+  },
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
     "@types/better-sqlite3": "^7.6.13",

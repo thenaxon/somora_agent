@@ -19,7 +19,7 @@
 // grok 0.2.106 — see the `session/update` variants in mapUpdate().
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -33,6 +33,7 @@ import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import { grokCliReasoningArgs } from './thinking-params.ts';
 import { grokChildEnv, somoraGrokHome, syncGrokHome } from './grok-home.ts';
+import { resolveGrokLaunch } from './grok-bin.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 
 const ENGINE = 'grok-cli';
@@ -42,16 +43,6 @@ const DEFAULT_IDLE_MS = 300_000;
 
 /** Handshake must complete inside this or the binary is considered broken. */
 const HANDSHAKE_TIMEOUT_MS = 30_000;
-
-/** Resolved on every turn, not once at import: a Grok CLI installed
- *  while somora runs (into ~/.local/bin, often not on the service's PATH)
- *  is found by the next turn without a restart. */
-export function resolveGrokBin(): string {
-  if (process.env.SOMORA_GROK_BIN) return process.env.SOMORA_GROK_BIN;
-  const localBin = join(homedir(), '.local', 'bin', 'grok');
-  if (existsSync(localBin)) return localBin;
-  return 'grok';
-}
 
 /** A start failure in words that say what to do. Deliberately free of
  *  network phrases: a missing binary is not an outage, so the model is
@@ -598,7 +589,11 @@ export const grokCliEngine: AgentEngine = {
     if (home.action === 'missing') {
       logger.warn({ msg: 'engine.grok_auth_missing', engine: ENGINE, agent: input.agent, hint: 'run `grok login` — the turn will fail on authentication' });
     }
-    const bin = resolveGrokBin();
+    // Looked up on every turn (grok-bin.ts): the bundled binary unless
+    // SOMORA_GROK_BIN overrides it, a new version or a late install is
+    // picked up without a restart.
+    const launch = await resolveGrokLaunch();
+    const bin = launch.bin;
 
     const args = [
       'agent',
@@ -613,7 +608,7 @@ export const grokCliEngine: AgentEngine = {
     ];
 
     const client = new AcpClient(bin, args, cwd, grokChildEnv());
-    logger.info({ msg: 'engine.grok_spawn', engine: ENGINE, agent: input.agent, session: input.session, bin, grokHome: somoraGrokHome(), cwd });
+    logger.info({ msg: 'engine.grok_spawn', engine: ENGINE, agent: input.agent, session: input.session, bin, source: launch.source, version: launch.version, grokHome: somoraGrokHome(), cwd });
     const onAbort = () => client.kill();
     input.signal?.addEventListener('abort', onAbort, { once: true });
 

@@ -23,7 +23,8 @@ import { initialTeamFile, writeTeamFile } from '../team/write.ts';
 import {
   BASE_CONFIG, commit, configuredAliases, deleteIn, getIn, openYaml, setIn, upsertProvider, type YamlFile,
 } from '../setup/config-edit.ts';
-import { aliasFor, CLAUDE_PRESET, CODEX_PRESET, pickPreferred, type ModelPreset } from '../setup/presets.ts';
+import { aliasFor, CLAUDE_PRESET, CODEX_PRESET, GROK_PRESET, pickPreferred, type ModelPreset } from '../setup/presets.ts';
+import { grokAuthExpiry, somoraGrokHome, userGrokHome } from '../engine/grok-home.ts';
 import {
   bold, capture, cyan, dim, explain, fail, heading, ok, onPath, Prompter, say, warn, type Choice,
 } from '../setup/prompt.ts';
@@ -207,6 +208,12 @@ function claudeLoggedIn(): boolean {
     || existsSync(join(SOMORA_HOME, 'claude-home', '.credentials.json'));
 }
 
+// A Grok login that has not run out — Grok renews it while it is valid.
+function grokLoggedIn(): boolean {
+  const now = Date.now();
+  return grokAuthExpiry(join(somoraGrokHome(), 'auth.json')) > now || grokAuthExpiry(join(userGrokHome(), 'auth.json')) > now;
+}
+
 function codexLoggedIn(): boolean {
   return existsSync(join(SOMORA_HOME, 'codex-home', 'auth.json'))
     || existsSync(join(process.env.CODEX_HOME ?? join(HOME, '.codex'), 'auth.json'));
@@ -294,6 +301,31 @@ async function setupCodex(ctx: Ctx, config: YamlFile): Promise<void> {
   const have = configuredAliases(config).filter((a) => a.engine === 'codex-cli').map((a) => a.id);
   const models = await pickModels(p, 'Which ChatGPT models?', CODEX_PRESET.models, have);
   if (models.length) upsertProvider(config, { ...CODEX_PRESET, key: providerKeyFor(config, 'codex-cli', 'openai'), models: dedupeAliases(config, models) });
+}
+
+async function setupGrok(ctx: Ctx, config: YamlFile): Promise<void> {
+  const { p } = ctx;
+  if (grokLoggedIn()) {
+    ok('Grok login found');
+  } else {
+    explain(`Grok models run through the Grok CLI, which comes bundled with somora.
+      The login opens a browser on this machine. On a server without a screen,
+      choose the device login: it shows a code you enter on another device.`);
+    const how = await p.choose('Log in with your Grok subscription:', [
+      { label: 'Browser on this machine', value: 'browser' },
+      { label: 'Device login (no browser here)', value: 'device' },
+      { label: 'Not now', value: 'skip' },
+    ], onPath('xdg-open') || process.platform === 'darwin' ? 0 : 1);
+    if (how !== 'skip') {
+      const self = somoraSelf(['grok', 'login', ...(how === 'device' ? ['--device-auth'] : [])]);
+      p.handOver(self.cmd, self.args);
+    }
+    if (grokLoggedIn()) ok('logged in');
+    else warn('no login yet — the models are added anyway; log in later with:  somora grok login');
+  }
+  const have = configuredAliases(config).filter((a) => a.engine === 'grok-cli').map((a) => a.id);
+  const models = await pickModels(p, 'Which Grok models?', GROK_PRESET.models, have);
+  if (models.length) upsertProvider(config, { ...GROK_PRESET, key: providerKeyFor(config, 'grok-cli', 'xai'), models: dedupeAliases(config, models) });
 }
 
 /** Reuse the provider that already runs this engine, else `preferred`
@@ -399,14 +431,16 @@ async function stepModels(ctx: Ctx): Promise<void> {
       Connect at least one; more than one gives your agents a backup when one is down.`);
   }
   const engines = new Set(before.map((a) => a.engine));
-  const choices: Array<Choice<'claude' | 'codex' | 'own'>> = [
+  const choices: Array<Choice<'claude' | 'codex' | 'grok' | 'own'>> = [
     { label: 'Claude subscription (Pro / Max)', value: 'claude', hint: claudeLoggedIn() ? 'login found on this machine' : 'log in with your subscription' },
     { label: 'ChatGPT subscription (Plus / Pro / Business)', value: 'codex', hint: codexLoggedIn() ? 'login found on this machine' : 'Codex is bundled' },
+    { label: 'Grok subscription (SuperGrok / Premium)', value: 'grok', hint: grokLoggedIn() ? 'login found on this machine' : 'Grok CLI is bundled' },
     { label: 'My own model server or an API key', value: 'own', hint: 'Ollama, LM Studio, vLLM, OpenRouter, …' },
   ];
   const def: number[] = [];
   if (!engines.has('claude-cli') && claudeLoggedIn()) def.push(0);
   if (!engines.has('codex-cli') && codexLoggedIn()) def.push(1);
+  if (!engines.has('grok-cli') && grokLoggedIn()) def.push(2);
   if (def.length === 0 && before.length === 0) def.push(0);
   const wanted = await p.chooseMany('What do you want to connect?', choices, def);
   for (const w of wanted) {
@@ -414,6 +448,7 @@ async function stepModels(ctx: Ctx): Promise<void> {
     say(`  ${bold(choices.find((c) => c.value === w)!.label)}`);
     if (w === 'claude') await setupClaude(ctx, config);
     else if (w === 'codex') await setupCodex(ctx, config);
+    else if (w === 'grok') await setupGrok(ctx, config);
     else {
       do { await setupOwnServer(ctx, config); } while (await p.confirm('Add another server?', false));
     }

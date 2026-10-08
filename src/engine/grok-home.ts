@@ -79,8 +79,9 @@ export function syncGrokHome(): GrokAuthSync {
       logger.info({ msg: 'engine.grok_auth_synced', direction: 'pulled' });
       return { action: 'pulled', userAuthPath, somoraAuthPath };
     }
-    if (somoraWins && somoraExists) {
-      mkdirSync(userGrokHome(), { recursive: true, mode: 0o700 });
+    // Pushed back only to a person who uses Grok themselves: somora never
+    // creates a ~/.grok for someone who logged in through somora alone.
+    if (somoraWins && somoraExists && userExists) {
       copyFileSync(somoraAuthPath, userAuthPath);
       chmodSync(userAuthPath, 0o600);
       logger.info({ msg: 'engine.grok_auth_synced', direction: 'pushed' });

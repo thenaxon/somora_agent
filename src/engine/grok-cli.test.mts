@@ -8,6 +8,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildAgentProfile, describeSpawnFailure, GROK_TOOL_GUIDANCE, mcpStatuses } from './grok-cli.ts';
 import { grokAuthExpiry, grokChildEnv, somoraGrokHome, syncGrokHome } from './grok-home.ts';
+import { bundledGrokPackage, ensureBundledGrok, resolveGrokLaunch } from './grok-bin.ts';
+import { existsSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
 test('the agent profile allows only the two meta-tools that reach somora', () => {
   const p = buildAgentProfile('You are ada.');
@@ -72,5 +75,44 @@ test("somora's Grok home: own config, memory off, and the newer login wins both 
   } finally {
     if (saved.GROK_HOME === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = saved.GROK_HOME;
     if (saved.SOMORA_HOME === undefined) delete process.env.SOMORA_HOME; else process.env.SOMORA_HOME = saved.SOMORA_HOME;
+  }
+});
+
+test('a login made through somora alone never creates the person\'s ~/.grok', () => {
+  const root = mkdtempSync(join(tmpdir(), 'somora-grok-nouser-'));
+  const saved = { GROK_HOME: process.env.GROK_HOME, SOMORA_HOME: process.env.SOMORA_HOME };
+  process.env.GROK_HOME = join(root, 'user-grok');
+  process.env.SOMORA_HOME = join(root, 'somora');
+  try {
+    syncGrokHome();
+    writeFileSync(join(somoraGrokHome(), 'auth.json'), JSON.stringify({ c: { key: 'k', expires_at: '2026-10-08T22:00:00Z' } }));
+    assert.equal(syncGrokHome().action, 'noop');
+    assert.equal(existsSync(join(root, 'user-grok')), false);
+  } finally {
+    if (saved.GROK_HOME === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = saved.GROK_HOME;
+    if (saved.SOMORA_HOME === undefined) delete process.env.SOMORA_HOME; else process.env.SOMORA_HOME = saved.SOMORA_HOME;
+  }
+});
+
+test('the bundled Grok CLI is unpacked into somora\'s Grok home and runs', { skip: bundledGrokPackage() ? false : 'no bundled Grok for this platform' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'somora-grok-bin-'));
+  const saved = { SOMORA_HOME: process.env.SOMORA_HOME, SOMORA_GROK_BIN: process.env.SOMORA_GROK_BIN };
+  process.env.SOMORA_HOME = root;
+  delete process.env.SOMORA_GROK_BIN;
+  try {
+    const pkg = bundledGrokPackage()!;
+    const launch = await resolveGrokLaunch();
+    assert.equal(launch.source, 'bundled');
+    assert.equal(launch.bin, join(root, 'grok-home', 'bin', `grok-${pkg.version}`));
+    const v = spawnSync(launch.bin, ['--version'], { encoding: 'utf8' });
+    assert.equal(v.status, 0);
+    assert.match(v.stdout, new RegExp(pkg.version.replace(/\./g, '\\.')));
+    assert.equal(await ensureBundledGrok(), launch.bin, 'unpacked once, then reused');
+    process.env.SOMORA_GROK_BIN = '/opt/my-grok';
+    assert.deepEqual(await resolveGrokLaunch(), { bin: '/opt/my-grok', source: 'override', version: null });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    if (saved.SOMORA_HOME === undefined) delete process.env.SOMORA_HOME; else process.env.SOMORA_HOME = saved.SOMORA_HOME;
+    if (saved.SOMORA_GROK_BIN === undefined) delete process.env.SOMORA_GROK_BIN; else process.env.SOMORA_GROK_BIN = saved.SOMORA_GROK_BIN;
   }
 });
