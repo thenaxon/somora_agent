@@ -78,8 +78,8 @@ model knows what to expect: `typescript ✓`, `pyright — off`, or
   alone for ten minutes, then tried again.
 
 The servers live in the main somora process. The file tools ask it over
-loopback HTTP, so builders on the claude-cli and codex-cli engines get
-the same verdicts.
+loopback HTTP, so builders on the CLI engines (`claude-cli`,
+`codex-cli`, `grok-cli`) get the same verdicts.
 
 ## The project root
 

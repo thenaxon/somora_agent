@@ -392,8 +392,8 @@ Per agent, in `agent.yaml`:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `tools.deny` | none | Tools the agent does not get. Exact name, `toolset:<tag>`, or a name ending in `*`. Deny beats allow. |
-| `tools.allow` | none | When set, the agent gets only these. |
+| `tools.deny` | none | Tools the agent does not get. Exact name, `toolset:<tag>`, or a name ending in `*`. A name here beats `allow`; a family rule here does not. |
+| `tools.allow` | none | Exceptions: tools switched on inside a family that `deny` switches off. Without such a family rule it keeps the older meaning, only these tools. |
 
 ## Commands and routes
 

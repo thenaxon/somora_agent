@@ -116,7 +116,7 @@ How that block reaches the model depends on the engine.
 "Catch-up" is the summary of turns another engine answered, sent when
 you switch engines within a session.
 
-The first three engines keep the conversation themselves. somora only
+`claude-cli`, `codex-cli` and `grok-cli` keep the conversation themselves. somora only
 sends the new turn, and the provider's cache covers the rest.
 
 On `codex-cli` and `grok-cli` a resumed conversation also gets the

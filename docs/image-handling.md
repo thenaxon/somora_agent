@@ -67,9 +67,13 @@ For every image in the chat, the model gets one line with the original:
 [Image attachment "car.png" (6000×4000) — original, full resolution: /home/you/.somora/attachments/d8f1….png — what you are shown may be a scaled-down copy. Pass this path to tools that need the image file (for example image_generate reference_images); never pass a ".model-" copy.]
 ```
 
-The line names the original's size and its path. It is part of the
-message on every engine, and stays in the history, so the picture can be
-handed on in a later turn too. An agent passes this path to tools. It
+The line names the original's size as it is shown, so an upright phone
+photo reads as portrait, and its path. The size is left out when it
+cannot be read.
+
+The line is part of the message on every engine, and later turns still
+see it, so the picture can be handed on. An attachment whose file is
+gone loses the line. An agent passes this path to tools. It
 never passes the path of a `.model-` copy: that is the small version.
 
 ## Models without vision

@@ -390,8 +390,7 @@ The three builder tools:
 | `ask_user` | `question`, `options` (2 to 6, each `{label, description?}`), `header?`, `multiple?`, `timeout_ms?` | Asks in the task panel and waits. Returns `{answered, answers[], text?}`. |
 | `plan_write` | `content` | Writes the whole plan file. |
 
-A chat agent gets none of these three unless its `tools.allow` names
-one.
+A chat agent never gets these three, whatever its `agent.yaml` says.
 
 ## Routes
 

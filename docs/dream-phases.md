@@ -69,7 +69,9 @@ disk, whoever wrote them.
 
 A worker model can sit on an `openai-compatible` provider, on
 `claude-cli`, on `codex-cli` or on `grok-cli`. A Claude, ChatGPT or
-Grok subscription is therefore enough for all three phases.
+Grok subscription is therefore enough for all three phases. A worker on
+a subscription engine runs locked down like a chat turn: no shell, no
+web search, no plugins or MCP servers of its own.
 
 ## REM
 

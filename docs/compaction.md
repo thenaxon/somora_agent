@@ -153,7 +153,7 @@ The summary is saved in the session's meta data together with the time
 it covers. Later turns send the summary plus the exchanges after that
 time.
 
-`claude-cli` and `codex-cli` use the same record when they have to
+`claude-cli`, `codex-cli` and `grok-cli` use the same record when they have to
 rebuild a session, for example after a Codex thread is gone. That replay
 is limited to the 40 most recent exchanges and 60,000 characters.
 
@@ -239,14 +239,14 @@ all, the compaction fails.
 
 ### Without a list
 
-somora picks from every configured model on the three engines above:
+somora picks from every configured model on the four engines above:
 each model whose `contextWindow` is at least 1.3 times the estimated
 size of the summary request, smallest window first.
 
 Three things follow from this:
 
 - **A subscription model may be picked.** If the smallest fitting window
-  belongs to a Claude or Codex model, the summary runs through that CLI
+  belongs to a Claude, Codex or Grok model, the summary runs through that CLI
   and counts against that subscription. Nothing in the UI says so. Set
   `workers` to keep summaries on local models.
 - **A wrong `contextWindow` misleads the pick.** Too high makes a model

@@ -59,7 +59,7 @@ JSON object or array. Each question has a type:
 
 | Type | The agent writes | The answer |
 |---|---|---|
-| `boolean` | `instructions`, optional `criteria.true` and `criteria.false` | `probabilityTrue` from 0 to 1 |
+| `boolean` | `instructions`, or `criteria.true` and `criteria.false`, or both. One of them is required: the question id is not read. | `probabilityTrue` from 0 to 1 |
 | `choice` | `criteria`: 2 to 255 labels with descriptions | `choice`, `confidence` and every label's probability |
 | `score` | `criteria`: 2 to 10 ordered levels, lowest first | `score` from 0 to `max`, `confidence` and each level's probability |
 
@@ -74,7 +74,8 @@ JSON object or array. Each question has a type:
 }
 ```
 
-The questions are independent and answered in one pass. A question that
+A call takes 1 to 256 questions. They are independent and answered in
+one pass. A question that
 depends on another answer needs a second call. Question ids only label
 the answers: the meaning goes into `instructions` and `criteria`.
 
@@ -95,6 +96,12 @@ capability, agents do not see the `images` field.
 For a picture sent in the chat, the agent uses the original path named
 in the message. The image handling page explains which file is which.
 
+Paths go in the top-level `images` field. Image paths put inside the
+`state` would reach the model as text, so such a call is refused with
+`unsupported-input` and nothing is sent. After scaling, each image may
+be at most 4 MB and 16 megapixels, all images together at most 8 MB.
+The files are read under the same rules as `file_read`.
+
 Each image counts toward the input limit. One scaled image costs about
 3 000 tokens.
 
@@ -107,19 +114,41 @@ every ten minutes, so a change there takes effect without a restart.
 
 Before sending, somora estimates the size and refuses a clearly too long
 input. A server that rejects an input as too long (HTTP 413) passes its
-message on, with the token count and the limit. A server that cuts the
-input off silently is caught too: when it reports exactly its limit as
-the tokens read, the answers are discarded.
+error message on, or the limit when it sends none. A server that cuts
+the input off silently is caught too: when it reports exactly its limit
+as the tokens read, the answers are discarded. When the server allows
+more than your `maxInputTokens`, its exact count is checked against
+yours after the call.
 
 Long inputs and images take time. A short request answers in well under
 a second; several images or tens of thousands of tokens take tens of
 seconds, and long requests queue behind each other. `timeoutMs` defaults
 to 90 seconds for that reason.
 
+## What comes back
+
+A successful call returns the answers by question id, with the tokens
+read and the limit that applied:
+
+```json
+{
+  "status": "ok",
+  "model": "clef",
+  "answers": {
+    "outage": { "type": "boolean", "probabilityTrue": 0.93 },
+    "team": { "type": "choice", "choice": "technical", "confidence": 0.88, "probabilities": { "billing": 0.12, "technical": 0.88 } },
+    "urgency": { "type": "score", "score": 1.87, "max": 2, "confidence": 0.8, "probabilities": [0.02, 0.09, 0.89], "legend": ["can wait", "this week", "today"] }
+  },
+  "usage": { "inputTokens": 412, "outputTokens": 0 },
+  "inputLimit": 16000,
+  "ms": 240
+}
+```
+
 ## When it does not answer
 
 A result is either `ok` or `unavailable`. An unavailable result names a
-reason and tells the agent what to do. A failure never counts as a no.
+`reason`, adds `guidance` (what to do) and often a `detail`. A failure never counts as a no.
 
 | Reason | Meaning |
 |---|---|
@@ -128,8 +157,8 @@ reason and tells the agent what to do. A failure never counts as a no.
 | `authentication` | The server rejected the key. |
 | `rate-limited` | The server asks to slow down. |
 | `not-ready` | The server is up but the model is not, for example not loaded right now. |
-| `transport` | The server could not be reached. |
-| `too-long` | The input exceeds the limit. Nothing was evaluated. |
+| `transport` | The server could not be reached, or answered with an unexpected HTTP error. |
+| `too-long` | The input exceeds the limit. Nothing was sent, or the server's answers were discarded because its exact count was above your `maxInputTokens`. |
 | `truncated` | The server cut the input off. The answers were discarded. |
 | `unsupported-input` | The request was rejected, or an image could not be used. |
 | `invalid-response` | The answers did not match the questions. |

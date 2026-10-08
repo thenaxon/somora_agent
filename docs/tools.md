@@ -60,7 +60,7 @@ whatever your external MCP servers bring.
 | `media` | 1 | image or video generation is set up |
 | `browser` | 1 | `browser.enabled: true` |
 | `decision` | 1 | `decisions.model` names an entry in `decisions.models` |
-| `builder` | 3 | builder agents, or a chat agent whose `tools.allow` names the tool |
+| `builder` | 3 | builder agents only |
 | `mcp` | varies | servers listed under `mcp.servers` |
 
 ### Memory, docs and resources
@@ -274,7 +274,7 @@ Toolset `decision`.
 
 | Tool | What it does |
 |---|---|
-| `decision_evaluate` | Asks the configured decision model `boolean`, `choice` and `score` questions about a supplied `state`, optionally with up to four `images` (file paths). Returns probabilities, or `unavailable` with a reason. |
+| `decision_evaluate` | Asks the configured decision model `boolean`, `choice` and `score` questions about a supplied `state`, optionally with up to four `images` (file paths). Returns probabilities, or `unavailable` with a reason and guidance. |
 
 The `images` field is offered only when the decision model has the
 `image` capability. The decision models page has the details.
@@ -340,7 +340,7 @@ No `tools:` block means no restriction.
 | You click | Written |
 |---|---|
 | A family's eye, off | one rule for the family: `toolset:<tag>` or `mcp__<server>__*` |
-| A family's eye, on | the rule and the family's single entries removed |
+| A family's eye, on | the rule and the family's single entries removed; a tool still off after that goes under `allow` |
 | One tool off | its name under `deny` |
 | One tool on inside a family that is off | its name under `allow`, as an exception |
 
@@ -348,6 +348,7 @@ A family switched off as a whole shows "off incl. future" in its
 header: a tool that an MCP server or an update adds later stays off.
 The window stays editable whatever the file holds. Rules it did not
 write, such as `mcp__*`, are listed above the switches and still apply.
+Every save keeps the previous `agent.yaml` as `agent.yaml.bak-<time>` next to it; the newest five stay.
 
 An older form of the block holds only an `allow` list, meaning "only
 these tools". It keeps that meaning. The first click rewrites it as
@@ -460,7 +461,7 @@ Per agent, in `agent.yaml`:
 | Setting | Default | Meaning |
 |---|---|---|
 | `tools.deny` | none | Patterns of tools to hide from this agent. |
-| `tools.allow` | none | When set, only matching tools are offered. For a builder it adds to the builder list. |
+| `tools.allow` | none | Exceptions inside a family that `deny` switches off. Without such a family rule it means only these tools. For a builder it adds to the builder list. |
 | `kind` | `chat` | `builder` starts from the short builder list. |
 
 ## Routes

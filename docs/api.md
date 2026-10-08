@@ -827,6 +827,8 @@ HTTPS the connection is also pinged (`sse.h2PingIntervalMs`,
 | `input` | `{modality?: "text"\|"voice", source?: "stt"\|"realtime"}` when the turn was not typed. `stt` is dictation, `realtime` a sentence from a call. |
 | `steer`, `steer_id` | `steer: true` marks a message that went into the running turn `turnId`. `steer_id` matches the `steer_queued` event. |
 | `from_agent`, `from_session`, `agent_ask_call_id` | Older fields, derived from an `agent` origin. |
+| `attachments` | `{hash, name, mime, size}` of the files sent with the message. |
+| `attachment_descriptions` | Stored row only. The vision worker's description of each attachment the model could not see, one string per file. |
 | `from_system` | Older field, derived from the origin: `sentinel`, `tmux`, `browser`, `voice`, or for a wake its `about` (`a2a`, `subagent`, `job`, `system`). The shipped clients draw these as a divider, not as a bubble. |
 
 `origin` is one of:
@@ -1304,8 +1306,9 @@ Which tools an agent may use.
 
 `PUT` takes `{deny: string[], allow: string[]}` and rewrites only the
 `tools:` block of the agent's `agent.yaml`. Returns `{ok: true}`. `400`
-for a wrong body or a failed write. It applies from the agent's next
-turn.
+for a wrong body or a failed write, `404` for an unknown agent. It
+applies from the agent's next turn and keeps the previous file as a
+backup, like a click.
 
 ### `POST /agents/:agent/tools/toggle` · `POST /agents/:agent/skills/toggle`
 
@@ -1336,8 +1339,10 @@ skill is `{name, description, available, unavailableReason?, visible}`.
 
 `PUT` takes `{deny: string[], allow: string[]}` and rewrites only the
 `skills:` block of `agent.yaml`. Empty lists remove the block. Names
-are skill names (`[a-z0-9-]`). Returns `{ok: true}`, `400` on a wrong
-body. It applies from the next turn.
+are skill names (`[a-z0-9-]`), plus `*` under `deny` for every skill.
+Returns `{ok: true}`, `400` on a wrong body, `404` for an unknown
+agent. It applies from the next turn and keeps the previous file as a
+backup.
 
 ### `POST /agents/:agent/tools/:name`
 

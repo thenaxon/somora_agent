@@ -15,7 +15,7 @@ reference at the end lists every command, file and server setting.
   again at any time.
 - **A service that stays up.** somora starts at boot on Linux and at
   login on macOS, and comes back after a crash.
-- **Your subscriptions or your own server.** A Claude or ChatGPT
+- **Your subscriptions or your own server.** A Claude, ChatGPT or Grok
   subscription, a local model server or an API key. No model ships with
   somora.
 - **Updates in one command.** `somora update` installs the new version
@@ -34,7 +34,7 @@ works through these steps. A step that is already in place is skipped.
 | Step | What happens | Admin rights |
 |---|---|---|
 | System packages | tmux, ripgrep and git. On Linux also a C and C++ compiler, make and python3. Installed with apt, dnf, pacman, zypper or Homebrew. | Asked first. Without them only the missing build tools stop the install. |
-| Node.js | Kept when it is 22.22 or newer. Otherwise Node 24 system wide (NodeSource or Homebrew), or the official build into `~/.local/share/somora/node`, checked against its checksum. | Only for the system wide variant. |
+| Node.js | Kept when it is 22.22.2 or newer. Otherwise Node 24 system wide (NodeSource or Homebrew), or the official build into `~/.local/share/somora/node`, checked against its checksum. | Only for the system wide variant. |
 | npm folder | When npm's global folder is not writable for you, it moves to `~/.npm-global` and is added to your `PATH`. | No. |
 | somora | `npm install -g somora`, about 1.6 GB on Linux, 1.4 GB on macOS, with the bundled engines. | No. |
 | Service | Linux: systemd user unit, enabled at boot, lingering on so it survives logout. macOS: LaunchAgent that starts at every login. | Lingering may ask. |
@@ -44,7 +44,7 @@ Supported systems:
 
 | System | Support |
 |---|---|
-| Linux, x86_64 or arm64, with glibc | Yes. |
+| Linux, x86_64 or arm64, with glibc 2.34 or newer (Debian 12, Ubuntu 22.04, RHEL 9, Fedora 35 or later) | Yes. Debian 11, Ubuntu 20.04 and RHEL 8 are no longer supported; the last version that runs there is 2026.1007.2. |
 | macOS, Intel or Apple Silicon | Yes. Apple's command line tools must be installed first: `xcode-select --install`. |
 | Windows | Inside WSL2 only. |
 | Alpine Linux | No. The native modules need glibc. |
@@ -82,7 +82,7 @@ somora setup access     # one step only
 
 | Step | What it does |
 |---|---|
-| `models` | Connects a Claude subscription (runs the login of the Claude Code bundled with somora), a ChatGPT subscription (the bundled Codex login, in the browser or with a device code), or your own server. For a server it asks the address and key, lists the models and asks each one's context window. |
+| `models` | Connects a Claude subscription (runs the login of the Claude Code bundled with somora), a ChatGPT subscription (the bundled Codex login, in the browser or with a device code), a Grok subscription (the bundled Grok login, in the browser or with a device code), or your own server. For a server it asks the address and key, lists the models and asks each one's context window. |
 | `search` | Asks for a Brave Search API key, checks it with one real search and stores it as `web.brave.apiKey`. That gives the agents the `web_search` tool. |
 | `agent` | Creates an agent: name, what it calls you, answer language, model and backup model. On an existing install it lists the agents and offers to repair one whose model is gone. |
 | `memory` | Turns on REM per agent with a model and a backup model, offers the duplicate check for new notes, and sets up the shared wiki with Deep and Lucid, their model and a backup model. The wiki goes into a new folder or your Obsidian vault. |
@@ -94,8 +94,8 @@ Good to know:
 
 - A single step runs alone. When it changed something, the `start` step
   follows to apply it.
-- REM, Deep and Lucid accept any connected model, a Claude or ChatGPT
-  subscription included.
+- REM, Deep and Lucid accept any connected model, a Claude, ChatGPT or
+  Grok subscription included.
 - The assistant never rewrites a file wholesale. Comments and your own
   settings in `config.yaml` and `agent.yaml` stay.
 - The previous version of a changed file is kept next to it as
@@ -108,7 +108,7 @@ The installer does nothing you cannot do yourself. You need:
 
 | Tool | Why |
 |---|---|
-| Node.js 22.22 or newer | The runtime. Every `somora` command refuses an older Node and prints the upgrade steps. |
+| Node.js 22.22.2 or newer | The runtime. Every `somora` command refuses an older Node and prints the upgrade steps. |
 | macOS, or Linux with glibc 2.34 or newer | Debian 12, Ubuntu 22.04, RHEL 9, Fedora 35 or later. The memory database ships prebuilt for these, with no build step. On an older Linux every `somora` command stops and names the last version that runs there. |
 | tmux | The `tmux` tool and the terminal windows of the web client. |
 | ripgrep (`rg`) | The `file_search` tool. |
@@ -334,8 +334,9 @@ somora update 2026.930.1     # one specific version
 
 1. Asks npm which version is meant. When you already run it, nothing
    happens.
-2. Checks that your Node.js is new enough for that version, before
-   anything is installed.
+2. Checks that your Node.js and, on Linux, your glibc are new enough
+   for that version, before anything is installed. When glibc is too
+   old, it names the last version that runs on your system.
 3. Installs it with `npm install -g somora@<version>`.
 4. Runs `somora init` from the new install, so the service points at
    it.
@@ -736,6 +737,7 @@ in the agents guide.
 | `somora auth status` | Shows both Claude credential stores. |
 | `somora auth sync` | Reconciles the two stores now. |
 | `somora codex <args>` | Runs the bundled Codex: `login`, `logout`, `debug models`, `features list`, `--version`. |
+| `somora grok <args>` | Runs the bundled Grok CLI: `login`, `login --device-auth`, `logout`, `models`, `--version`. Without arguments it shows where the Grok CLI and its login are and how long the login is valid. |
 | `somora skill list`, `check`, `add`, `update`, `remove` | Manages skills. Run `somora skill` for the details. |
 | `somora team init [--principal <name>]` | Writes `team.yaml` from the agents on disk. Never overwrites. |
 | `somora team check` | Validates `team.yaml`. |
@@ -744,7 +746,7 @@ in the agents guide.
 | `somora lsp install [id…]` | Installs language servers into `~/.somora/lsp`. |
 | `somora wiki migrate [step] [id]` | Moves a grown wiki onto the folder template. Guided, or one of `plan`, `judge`, `status`, `approve`, `dry-run`, `run`, `undo`, `relink`. |
 | `somora --version`, `-v` | Prints the version. |
-| `somora --help`, `-h` | Prints the usage. `setup`, `update` and `codex` have their own `--help`. |
+| `somora --help`, `-h` | Prints the usage. `setup`, `update`, `codex` and `grok` have their own `--help`. |
 
 Useful routes for a quick check:
 
@@ -772,7 +774,7 @@ Everything somora keeps lives under `~/.somora/`, or under
 | `logs/launchd.log` | Output of the service on macOS. |
 | `locks/server.lock` | Process, port and version of the running server. |
 | `certs/` | TLS certificate and key. |
-| `claude-home/`, `codex-home/` | somora's own config folders for Claude Code and Codex, with a copy of each login. |
+| `claude-home/`, `codex-home/`, `grok-home/` | somora's own folders for Claude Code, Codex and Grok, with a copy of each login. `grok-home/bin` holds the unpacked Grok CLI. |
 | `dream-state/deep.json`, `lucid.json` | When Deep and Lucid last ran. |
 | `update-check.json` | The last answer of the update check. |
 | `restart-intent.json`, `restart-resume.json` | A restart an agent asked for, and who was woken after one. |
@@ -839,7 +841,12 @@ called from a turn.
 or run `source ~/.profile`. The installer added npm's folder to your
 `PATH`.
 
-**A command says Node.js is too old.** Install Node 22.22 or newer, or
+**A Grok turn fails with `grok could not be started`.** No Grok build
+ships for this platform, or `SOMORA_GROK_BIN` points to a missing file.
+Install `grok` on your `PATH` or fix the variable. Without a login, run
+`somora grok login`.
+
+**A command says Node.js is too old.** Install Node 22.22.2 or newer, or
 run the installer again. `somora update` checks this before it installs
 anything.
 

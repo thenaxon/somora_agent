@@ -39,7 +39,7 @@ models, your first agent, memory and HTTPS — details under
 | | |
 |---|---|
 | **One line** (recommended) | `curl -fsSL https://somora.ai/install.sh \| bash` |
-| **npm** — you already have Node ≥22.22 | `npm install -g somora && somora setup` |
+| **npm** — you already have Node ≥22.22.2 | `npm install -g somora && somora setup` |
 | **From source** — you want to work on somora itself | [docs/setup.md → Develop from a checkout](docs/setup.md#develop-from-a-checkout-contributors) |
 
 ## See it
@@ -156,10 +156,14 @@ On top of chat and memory, each optional and off until configured:
 
 Hard:
 
-- **Node ≥22.22** — uses native `node:sqlite` plus `better-sqlite3`. On an
+- **Node ≥22.22.2** — uses native `node:sqlite` plus `better-sqlite3`. On an
   older Node every `somora` command stops with the upgrade steps.
 - **macOS, or Linux with glibc ≥2.34** — Debian 12, Ubuntu 22.04, RHEL 9,
   Fedora 35 or newer. The memory database ships prebuilt for these.
+- **About 1.6 GB of disk** on Linux, 1.4 GB on macOS, mostly the
+  bundled Codex, Claude and Grok engines.
+- **A current browser** for the web and mobile clients: Chrome or Edge
+  111, Firefox 114, Safari 16.4 (iOS and iPadOS 16.4) or newer.
 - **tmux** — for the `tmux` tool (long-lived terminal sessions for agents)
   and the web tmux app.
 - **At least one LLM backend:** a Claude subscription (engine
@@ -198,7 +202,7 @@ then starts the **setup assistant**:
 
 ```text
 somora setup
-  1  Models        connect a Claude or ChatGPT subscription, or your own model server
+  1  Models        connect a Claude, ChatGPT or Grok subscription, or your own model server
   2  Web search    a Brave Search API key, so agents can search the web
   3  First agent   name, language, model and a backup model
   4  Memory        REM, Deep and Lucid — and where the shared wiki lives
@@ -211,7 +215,7 @@ Every step first looks at what is already there, so `somora setup` is safe
 to run again — as a whole or one step (`somora setup access`). Update
 later with `somora update`.
 
-Already have Node ≥22.22 and the tools from [Requirements](#requirements)?
+Already have Node ≥22.22.2 and the tools from [Requirements](#requirements)?
 Then it is two commands: `npm install -g somora && somora setup`.
 
 ### Already using a coding agent? Let it set up somora.
@@ -271,6 +275,7 @@ npm install -g somora
 # 3. Log in to at least one LLM backend (pick one or more)
 somora auth login                         # Claude subscription; Claude Code is bundled
 somora codex login                        # ChatGPT subscription; Codex is bundled
+somora grok login                         # SuperGrok or Premium subscription; the Grok CLI is bundled
 # local models: run Ollama / LM Studio / oMLX and add the endpoint to
 # ~/.somora/config.yaml after step 4
 

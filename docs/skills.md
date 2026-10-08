@@ -289,7 +289,8 @@ agent's next turn.
 
 The eye on the section switches all skills. Off writes `*` under
 `deny`, so a skill you install later stays off too. A skill switched on
-after that goes under `allow`, as an exception.
+after that goes under `allow`, as an exception. The section header then
+shows "off incl. future". Every save keeps the previous `agent.yaml` as `agent.yaml.bak-<time>` next to it; the newest five stay.
 
 **By hand in `agent.yaml`.** Use one of these forms:
 

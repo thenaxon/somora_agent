@@ -211,7 +211,8 @@ In the web client (`/web`), right-click the agent tile and choose
 
 Tools and skills are switched per agent in the Abilities window. It
 writes `tools:` and `skills:` in `agent.yaml`: a name per switched
-tool, and one rule for a whole family switched off.
+tool, and one rule for a whole family switched off. Every save keeps
+the previous file as `agent.yaml.bak-<time>`; the newest five stay.
 
 ## Sessions
 
@@ -617,7 +618,7 @@ How the fallback chain works:
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `kind` | `chat`, `builder` | `chat` | The kind of agent. Set once at creation. |
-| `steering` | boolean | `false` | Default for a message typed in the web client while a turn runs. `true` hands it into the running turn before its next step. `false` queues it as its own turn. The toggle next to Send flips it per message. Steering works on `openai-compatible`, `claude-cli` and `codex-cli`. Other engines always queue. |
+| `steering` | boolean | `false` | Default for a message typed in the web client while a turn runs. `true` hands it into the running turn before its next step. `false` queues it as its own turn. The toggle next to Send flips it per message. Steering works on every engine: `openai-compatible`, `claude-cli`, `codex-cli` and `grok-cli`. |
 | `imageReview` | `never`, `always` | `never` | `always` feeds each generated image back to the agent so it can judge it, about 2k tokens per image. Not a lock: the agent can set `return_image` per call either way. |
 | `agentLoop.maxRounds` | integer | server value (8) | Rounds per turn on the `openai-compatible` engine. Builders default to 500. |
 | `agentLoop.maxToolCallsPerTurn` | integer | server value (30) | Tool calls per turn, across all rounds. Builders default to 2000. |
@@ -629,7 +630,7 @@ How the fallback chain works:
 |---|---|---|---|
 | `workspace.path` | string | `workspace.default` in `config.yaml` (`~/somoraworkspace`) | Default folder for the `file_*` tools. `~` expands. Created at server start. |
 | `tools.deny` | list | empty | Tools to hide. |
-| `tools.allow` | list | empty | When not empty, only these tools are offered. |
+| `tools.allow` | list | empty | Exceptions inside a family that `deny` switches off. Without such a family rule it means only these tools. For a builder it adds to the builder list. |
 | `skills.deny` | list | empty | Skills to hide. |
 | `skills.allow` | list | empty | When not empty, only these skills are offered. A plain list (`skills: [a, b]`) means the same. |
 | `resources.deny` | list | empty | Remote resources to hide. There is no allow list. |

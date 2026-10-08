@@ -21,10 +21,12 @@ Terminals, file windows and the multi-window desktop stay in the
 
 ## Install it
 
-You need two things first:
+You need three things first:
 
-1. Tailscale installed and connected on the phone.
-2. somora served over HTTPS. A home-screen app only installs from a
+1. iOS or iPadOS 16.4, or a current Chrome on Android (version 111 or
+   newer).
+2. Tailscale installed and connected on the phone.
+3. somora served over HTTPS. A home-screen app only installs from a
    secure address. The setup guide covers this under
    "HTTPS (Tailscale)".
 

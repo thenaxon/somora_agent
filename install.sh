@@ -5,7 +5,7 @@
 #
 # What it does, in order — every step is skipped when already in place:
 #   1. system packages: tmux, ripgrep, git and a C/C++ toolchain
-#   2. Node.js (>= 22.22) when missing or too old
+#   2. Node.js (>= 22.22.2) when missing or too old
 #   3. an npm global folder inside your home directory
 #   4. the somora package from npm
 #   5. the background service (systemd user unit, survives logout)
@@ -407,7 +407,7 @@ install_somora() {
   if have somora; then current="$(somora --version 2>/dev/null || true)"; fi
   if [ -n "$current" ]; then info "installed: $current"; fi
   info "npm install -g $spec"
-  info "about 1.6 GB: somora itself is 20 MB, the rest are the bundled Codex, Claude and Grok engines,"
+  info "about $([ "$OS" = darwin ] && echo 1.4 || echo 1.6) GB: somora itself is 20 MB, the rest are the bundled Codex, Claude and Grok engines,"
   info "the embedding runtime for the memory search, the image library and the terminal module"
   local allow=()
   # npm without the setting answers "undefined" — and would reject the flag.

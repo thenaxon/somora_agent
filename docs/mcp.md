@@ -138,7 +138,9 @@ tools:
 ```
 
 A pattern is an exact tool name, `toolset:<tag>` for a family, or a
-name ending in `*`. `deny` beats `allow`. An agent without a `tools:`
+name ending in `*`. A name under `deny` beats everything; a match under
+`allow` beats a family, server or `*` rule under `deny`, which makes it
+an exception. An agent without a `tools:`
 block sees everything. A change applies from the agent's next turn.
 
 A hidden tool is absent from the model's tool list on all four engines,
@@ -387,8 +389,9 @@ curl -sk https://localhost:18737/mcp/status | jq
 curl -sk -X POST https://localhost:18737/mcp/servers/<name>/reconnect
 ```
 
-The abilities window reads and writes an agent's tool visibility with
-`GET` and `PUT /agents/<name>/tools`.
+The abilities window reads an agent's tool visibility with
+`GET /agents/<name>/tools` and writes one click at a time with
+`POST /agents/<name>/tools/toggle`. `PUT` replaces the whole block.
 
 ## Files
 

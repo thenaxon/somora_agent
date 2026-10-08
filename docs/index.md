@@ -10,7 +10,7 @@ each page is for.
 - **Agents with memory.** Each agent has its own character, model and
   notes. Background phases turn finished conversations into notes and
   into a shared wiki.
-- **Your models.** A Claude or ChatGPT subscription, a local model
+- **Your models.** A Claude, ChatGPT or Grok subscription, a local model
   server or an API key. somora brings no model of its own.
 - **Three clients.** A desktop in the browser, an app for the phone and
   a terminal client. All talk to the same server.

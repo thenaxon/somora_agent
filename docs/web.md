@@ -28,6 +28,9 @@ https://<your-host>.<your-tailnet>.ts.net:18737/web/
 ```
 
 On the machine somora runs on, `http://127.0.0.1:18737/web/` works too.
+
+The web client needs Chrome or Edge 111, Firefox 114, Safari 16.4 or
+newer.
 To reach it from other devices, set `server.host: 0.0.0.0` in
 `~/.somora/config.yaml` and restart.
 
@@ -390,7 +393,7 @@ live, archived, dreamed and partial sessions.
 | Agent | The agent's name in its colour. |
 | Slug | The session name. A dot marks unread activity. |
 | Project | The session's project. Only with `projects.enabled`. |
-| Engine | `claude-cli`, `codex-cli` or `openai-compatible`: the engine that last ran it. |
+| Engine | `claude-cli`, `codex-cli`, `grok-cli` or `openai-compatible`: the engine that last ran it. |
 | Status | `●` a client is connected to it right now. `📦` archived. `★` the `main` session. |
 | Last activity | Relative time. |
 | Msgs | Number of user and assistant messages. |

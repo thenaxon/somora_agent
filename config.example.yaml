@@ -2,7 +2,7 @@
 # (created with sane defaults on first server start).
 #
 # Secrets:
-# - Subscription engines (claude-cli, codex-cli) do not need any keys
+# - Subscription engines (claude-cli, codex-cli, grok-cli) do not need any keys
 #   here — they authenticate via their CLI's own `login` flow.
 # - OpenAI-compatible providers (custom endpoints, OpenRouter, oMLX,
 #   Ollama, …) read `apiKey` directly from this file. The recommended
@@ -92,17 +92,17 @@ providers:
         contextWindow: 400000
         capabilities: [text, reasoning]
 
-  # xAI via the Grok Build CLI (`grok`), driven over ACP — a SuperGrok /
-  # Premium subscription authenticates the binary (`grok login`), no API
-  # key. Text attachments only; no image/PDF input. Community-maintained
-  # engine — see docs/setup.md#xai-via-grok-build-cli-subscription-no-api-key.
+  # xAI via the Grok CLI, bundled with somora. A SuperGrok or Premium
+  # subscription signs it in with `somora grok login`; no API key. Images
+  # go to Grok as images, PDFs as page images. See docs/models.md, section
+  # "Grok subscription".
   # xai:
   #   engine: grok-cli
   #   models:
-  #     - id: grok-4.5
+  #     - id: grok-4.7
   #       alias: grok
-  #       contextWindow: 500000
-  #       capabilities: [text, reasoning]
+  #       contextWindow: 256000
+  #       capabilities: [text, image, reasoning]
 
   # Local OpenAI-compatible server (Ollama, LM Studio, oMLX, vLLM, ...).
   # Multiple providers of the same engine are fine — just give each a unique key.
@@ -299,6 +299,21 @@ providers:
 #     mobile:
 #       autoPlayVoiceReplies: false
 #       allowUserOverride: true
+
+# Decision models (docs/decisions.md): agents ask a System One decision
+# model yes/no, choice and score questions with the `decision_evaluate`
+# tool. Off until `model` names an entry; requests go to
+# <baseUrl>/v1/systemone.
+# decisions:
+#   model: clef
+#   models:
+#     - name: clef
+#       baseUrl: https://<your-host>/clef
+#       apiKey: <key>                           # leave out without authentication
+#       model: clef
+#       capabilities: [text, image]             # image: the tool takes up to four images
+#       # maxInputTokens: 16000                 # optional; the lower of this and the server's limit applies
+#       # timeoutMs: 90000                      # default
 
 # Image generation — text-to-image via an OpenAI-shaped image endpoint
 # (OpenRouter's /api/v1/images, OpenAI's /v1/images/generations, or a
@@ -533,7 +548,7 @@ providers:
 # their own tool-call loop — currently openai-compatible — for the per-
 # tool-call race. The longTask* values ALSO inform CLI-engine tools
 # (subagent_result, agent_ask) which run inside MCP children, so all
-# three engines honor the same caller-friendly politik for slow models.
+# engines honor the same caller-friendly policy for slow models.
 #
 # Three timeout knobs, each for a different tool class:
 #   1. toolCallTimeoutMs       — fast tools (memory, web, file, time)
