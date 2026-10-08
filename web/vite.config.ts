@@ -31,6 +31,8 @@ const httpsConfig = tlsAvailable
   : undefined;
 const proxyTarget = tlsAvailable ? `https://${tlsHost}:18737` : 'http://127.0.0.1:18737';
 
+const BROWSERS = ['chrome111', 'edge111', 'firefox114', 'safari16.4', 'ios16.4'];
+
 export default defineConfig({
   plugins: [react()],
   base: '/web/',
@@ -38,6 +40,11 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: true,
+    // Vite 8's default floor (browsers from 2023), spelled out with iOS
+    // Safari included: without `ios`, Lightning CSS drops iOS-only
+    // prefixes such as -webkit-text-size-adjust.
+    target: BROWSERS,
+    cssTarget: BROWSERS,
   },
   server: {
     // Bind to all interfaces so the dev server is reachable from the
