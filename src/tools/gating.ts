@@ -94,6 +94,24 @@ export function effectiveToolGating(kind: AgentKind, own: ToolGating | undefined
   return { deny: own?.deny ?? [], allow: [...new Set(allow)] };
 }
 
+/** A rule the kind already implies: a chat agent's `toolset:builder`
+ *  deny is added by effectiveToolGating on every turn. Written into
+ *  agent.yaml (every Abilities save did that until 2026-10-08) it adds
+ *  nothing, and as a `toolset:` rule it switched the Abilities matrix to
+ *  read-only for that agent. */
+export function isImpliedRule(kind: AgentKind, pattern: string): boolean {
+  return kind !== 'builder' && pattern === 'toolset:builder';
+}
+
+/** What a save writes: the client's rules without repeats and without
+ *  rules the kind implies. */
+export function gatingToStore(kind: AgentKind, gating: ToolGating): ToolGating {
+  return {
+    deny: [...new Set(gating.deny)].filter((p) => !isImpliedRule(kind, p)),
+    allow: [...new Set(gating.allow)],
+  };
+}
+
 export function isToolAllowed(
   name: string,
   toolset: Toolset | undefined,

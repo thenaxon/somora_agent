@@ -3,7 +3,7 @@
 // Run: npx tsx src/tools/gating.test.mts
 
 import assert from 'node:assert/strict';
-import { isToolAllowed, matchesToolPattern } from './gating.ts';
+import { gatingToStore, isImpliedRule, isToolAllowed, matchesToolPattern } from './gating.ts';
 
 let pass = 0;
 let fail = 0;
@@ -47,6 +47,15 @@ check('allow survives sibling deny', isToolAllowed('mcp__parallel__web_fetch', '
 const nativeOnly = { deny: ['mcp__parallel__web_search'], allow: [] };
 check('scenario: native visible', isToolAllowed('web_search', 'web', nativeOnly));
 check('scenario: MCP twin hidden', !isToolAllowed('mcp__parallel__web_search', 'mcp', nativeOnly));
+
+// A chat agent's toolset:builder deny is implied: it never locks the
+// Abilities matrix and is not written back on save.
+assert.equal(isImpliedRule('chat', 'toolset:builder'), true);
+assert.equal(isImpliedRule('builder', 'toolset:builder'), false);
+assert.equal(isImpliedRule('chat', 'toolset:exec'), false);
+assert.deepEqual(gatingToStore('chat', { deny: ['x', 'toolset:builder', 'x', 'toolset:builder'], allow: ['y', 'y'] }), { deny: ['x'], allow: ['y'] });
+assert.deepEqual(gatingToStore('builder', { deny: ['toolset:builder'], allow: [] }), { deny: ['toolset:builder'], allow: [] });
+console.log('implied-rule checks ok');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

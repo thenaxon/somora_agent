@@ -148,7 +148,7 @@ import {
   ToolRegistry,
 } from '../tools/index.ts';
 import type { ToolContext } from '../tools/types.ts';
-import { BUILDER_TOOL_ALLOW, isToolAllowed } from '../tools/gating.ts';
+import { BUILDER_TOOL_ALLOW, gatingToStore, isImpliedRule, isToolAllowed } from '../tools/gating.ts';
 import { writeAgentToolGating } from '../persona/tool-gating-store.ts';
 import { writeAgentSkillGating } from '../persona/skill-gating-store.ts';
 import { isSkillAllowed } from '../skills/gating.ts';
@@ -1236,7 +1236,7 @@ app.get('/agents/:agent/tools', async (c) => {
   const hasPatternRules =
     raw !== null &&
     (raw.allow.length > 0 ||
-      raw.deny.some((p) => p.includes('*') || p.startsWith('toolset:')));
+      raw.deny.some((p) => !isImpliedRule(persona.kind, p) && (p.includes('*') || p.startsWith('toolset:'))));
   const ctx: ToolContext = {
     agent,
     getMemoryManager: () =>
@@ -1283,7 +1283,8 @@ app.get('/agents/:agent/tools', async (c) => {
 
 app.put('/agents/:agent/tools', async (c) => {
   const agent = c.req.param('agent');
-  if (!(await loadPersona(agent))) {
+  const persona = await loadPersona(agent);
+  if (!persona) {
     return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const body = (await c.req.json().catch(() => null)) as {
@@ -1294,7 +1295,7 @@ app.put('/agents/:agent/tools', async (c) => {
     return c.json({ error: 'body must be { deny: string[], allow: string[] }' }, 400);
   }
   try {
-    await writeAgentToolGating(agent, { deny: body.deny, allow: body.allow });
+    await writeAgentToolGating(agent, gatingToStore(persona.kind, { deny: body.deny, allow: body.allow }));
     logger.info({
       msg: 'agents.tool_gating_updated',
       agent,
