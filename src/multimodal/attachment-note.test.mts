@@ -35,3 +35,12 @@ test('without an original path the sent path is named; no images, no text', () =
   assert.match(notes, /^\[Image attachment "x\.png" — original, full resolution: \/nowhere\/x\.png/);
   assert.equal(imageOriginalNotes([]), '');
 });
+
+test('a phone photo stored landscape but tagged to show portrait is named by its shown size', async () => {
+  const sharp = (await import('sharp')).default;
+  const dir = mkdtempSync(join(tmpdir(), 'somora-note-'));
+  const photo = join(dir, 'phone.jpg');
+  writeFileSync(photo, await sharp({ create: { width: 400, height: 300, channels: 3, background: '#0a0' } }).withMetadata({ orientation: 6 }).jpeg().toBuffer());
+  const notes = imageOriginalNotes([{ hash: 'p', path: photo, originalPath: photo, name: 'IMG.jpg', mime: { kind: 'image', mimeType: 'image/jpeg' }, size: 1 } as never]);
+  assert.match(notes, /\(300×400\)/);
+});
