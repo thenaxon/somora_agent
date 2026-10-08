@@ -58,7 +58,8 @@ t('an expanded group renders its rows', () => {
 t('hidden abilities are counted in the header', () => {
   const html = group({ hidden: 3 });
   assert(html.includes('3 hidden'), 'hidden count missing');
-  assert(!group({ hidden: 0 }).includes('hidden'), 'says hidden with nothing hidden');
+  // lucide 1.x marks icons aria-hidden="true": look for the count text only.
+  assert(!/\d+ hidden/.test(group({ hidden: 0 })), 'says hidden with nothing hidden');
 });
 
 t('a fully hidden group shows the closed eye', () => {
