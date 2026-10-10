@@ -35,13 +35,14 @@ import { diffConfigSections, restartRequiredFor, RESTART_REQUIRED_SECTIONS } fro
 import { spawn as spawnChild, spawnSync as spawnSyncChild } from 'node:child_process';
 import { mkdir as mkdirFs, rename as renameFs, stat as statFile, writeFile as writeFileFs } from 'node:fs/promises';
 import { workerChain, type Config, resolveAnyRef, describeModelRefs, type ThinkingLevel, SamplingSchema,
-  listAllModels,
+  listAllModels, VideoMediaTypeSchema,
 } from '../config/types.ts';
 import { mergeSampling, SAMPLING_KEYS } from '../engine/sampling.ts';
 import { storeAttachment } from '../attachments/store.ts';
 import { generateImage, ImageGenError } from '../imagegen/generate.ts';
 import { referenceFromBase64 } from '../imagegen/references.ts';
 import { startVideoJob, VideoGenError } from '../videogen/generate.ts';
+import { mediaItemFromBytes, type MediaItem } from '../videogen/media.ts';
 import { checkSlot as checkVideoSlot, listJobs as listVideoJobs } from '../videogen/jobs.ts';
 import { configureVideoNotifier, startVideoRunner } from '../videogen/runner.ts';
 import { configureVideoWake, wakeForJob } from '../videogen/wake.ts';
@@ -4850,6 +4851,26 @@ app.post('/video/generate', async (c) => {
         .filter((r): r is string => typeof r === 'string')
         .map((r, i) => referenceFromBase64(r, i))
     : [];
+  // Input files by meaning, as base64 (or data: URIs) for the same reason.
+  let media: MediaItem[] = [];
+  if (Array.isArray(body.media)) {
+    try {
+      media = body.media.map((m: unknown, i: number) => {
+        const r = (m ?? {}) as Record<string, unknown>;
+        const type = VideoMediaTypeSchema.safeParse(r.type);
+        if (!type.success) throw new Error(`media #${i + 1}: unknown type ${JSON.stringify(r.type)}`);
+        if (typeof r.data !== 'string' || r.data.length === 0) throw new Error(`media #${i + 1}: data (base64) is required`);
+        const comma = r.data.indexOf(',');
+        const bare = r.data.startsWith('data:') && comma > 0 ? r.data.slice(comma + 1) : r.data;
+        return mediaItemFromBytes(type.data, Buffer.from(bare, 'base64'), typeof r.filename === 'string' ? r.filename : `${type.data}-${i + 1}`, {
+          ...(typeof r.seconds === 'number' ? { seconds: r.seconds } : {}),
+          ...(typeof r.strength === 'number' ? { strength: r.strength } : {}),
+        });
+      });
+    } catch (err) {
+      return c.json({ error: (err as Error).message, kind: 'input' }, 400);
+    }
+  }
 
   try {
     const { job } = await startVideoJob(
@@ -4858,6 +4879,7 @@ app.post('/video/generate', async (c) => {
         ...(typeof body.model === 'string' ? { model: body.model } : {}),
         specs,
         ...(references.length > 0 ? { references } : {}),
+        ...(media.length > 0 ? { media } : {}),
         ...(typeof body.agent === 'string' ? { agent: body.agent } : {}),
         ...(typeof body.session === 'string' ? { session: body.session } : {}),
       },

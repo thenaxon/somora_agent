@@ -2442,7 +2442,8 @@ Starts a job.
 | `prompt` | yes | What to show. |
 | `model` | no | A configured model name. |
 | `seconds`, `size`, `aspect_ratio`, `audio`, `quality`, `seed` | no | Specs. |
-| `reference_images` | no | Images as base64 strings. |
+| `reference_images` | no | Images as base64 strings: one is the opening frame, two are opening and closing frame. |
+| `media` | no | Input files by meaning: `[{type, data, filename?, seconds?, strength?}]`, `data` in base64 or as a `data:` URI. Types as in the video guide, "Input files". Not together with `reference_images`. |
 | `agent`, `session` | no | Who is woken when the job ends. |
 
 Returns `{job}`. Follow it with `GET /video/status`.

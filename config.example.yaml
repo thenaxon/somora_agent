@@ -452,6 +452,18 @@ providers:
 #         variants: [video, thumbnail]      # thumbnail → gallery preview,
 #         maxReferences: 1                  #  and analyze_file can read it
 #
+#     # Input files by meaning (docs/videogen.md, "Input files"). Without
+#     # a catalog that publishes accepted_media, name the provider's field
+#     # per type; this list is then the model's complete set of inputs.
+#     - name: animate
+#       provider: local-video
+#       model: wan-animate-replace
+#       wire: passthrough
+#       transport: json                     # files as data: URIs in JSON
+#       media:
+#         input_video: { field: video_url, min: 1, max: 1, maxSeconds: 30 }
+#         character_image: { field: image_url, min: 1, max: 1 }
+#
 #     # ⚠ NOT YET VERIFIED against a live endpoint — somora has had no
 #     # Vertex access to test with. The dialect is written from Google's
 #     # published shape (operation name instead of a job id, POST to poll,

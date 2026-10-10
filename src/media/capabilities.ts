@@ -25,6 +25,7 @@
 import type { ImageModel, OpenAiCompatibleProvider } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import {
+  type CatalogMedia,
   ENUMERABLE_SPEC_FIELDS,
   type EnumerableSpecField,
   type ImageSpecs,
@@ -305,12 +306,43 @@ export async function resolveCapabilities(
     maxReferences:
       rangeMax(params, 'input_references', true) ??
       readNumber(row.raw, ['max_input_references', 'max_references'], true),
+    // Video input media (`accepted_media`, published beside the
+    // parameters because files are not parameters) and the frame rate
+    // keyframe times are converted with.
+    ...(acceptedMedia(row.raw) ? { media: acceptedMedia(row.raw) } : {}),
+    ...(readNumber(row.raw, ['fps', 'frames_per_second']) !== undefined
+      ? { fps: readNumber(row.raw, ['fps', 'frames_per_second']) }
+      : {}),
     // Not a request parameter, so it lives beside supported_parameters
     // rather than inside it: variants are options on the CONTENT call.
     ...(asStringArray(row.raw.supported_variants)
       ? { variants: asStringArray(row.raw.supported_variants) }
       : {}),
   };
+}
+
+/** A catalog's `accepted_media`: `{ <type>: {kind, min, max, fields,
+ *  max_seconds} }`. Entries that are not objects are skipped; numbers that
+ *  are not finite are left out rather than guessed. */
+function acceptedMedia(raw: Record<string, unknown>): Record<string, CatalogMedia> | undefined {
+  const am = raw.accepted_media;
+  if (!am || typeof am !== 'object' || Array.isArray(am)) return undefined;
+  const out: Record<string, CatalogMedia> = {};
+  for (const [type, spec] of Object.entries(am as Record<string, unknown>)) {
+    if (!spec || typeof spec !== 'object' || Array.isArray(spec)) continue;
+    const r = spec as Record<string, unknown>;
+    const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
+    const m: CatalogMedia = {};
+    if (typeof r.kind === 'string') m.kind = r.kind;
+    if (n(r.min) !== undefined) m.min = n(r.min);
+    if (n(r.max) !== undefined) m.max = n(r.max);
+    const secs = n(r.max_seconds) ?? n(r.maxSeconds);
+    if (secs !== undefined) m.maxSeconds = secs;
+    const fields = asStringArray(r.fields);
+    if (fields) m.fields = fields;
+    out[type] = m;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**

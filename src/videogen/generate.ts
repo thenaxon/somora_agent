@@ -28,6 +28,7 @@ import {
   type JobState,
 } from './dialects.ts';
 import { checkSlot, isActive, readJob, updateJob, writeJob, type VideoJob } from './jobs.ts';
+import { buildCreateBody, checkMedia, mediaFromReferences, type MediaItem } from './media.ts';
 
 /** Thrown for anything the caller can fix. Relayed to the model as-is;
  *  `unavailable` means "not right now" and is not the caller's fault. */
@@ -46,8 +47,11 @@ export interface StartInput {
   model?: string;
   specs?: Record<string, unknown>;
   /** Ordered — with two, the first is the opening frame and the second
-   *  the closing one. Order carries meaning here, unlike with images. */
+   *  the closing one. Order carries meaning here, unlike with images.
+   *  The older form of `media` (mediaFromReferences). */
   references?: ReferenceImage[];
+  /** Input files by meaning (media.ts). Not together with `references`. */
+  media?: MediaItem[];
   saveTo?: string;
   agent?: string;
   session?: string;
@@ -152,6 +156,12 @@ export async function startVideoJob(input: StartInput, config: Config): Promise<
   const specs: Record<string, unknown> = { ...entry.defaults, ...(input.specs ?? {}) };
   const problems = validateSpecs(specs as never, caps, label);
   const references = input.references ?? [];
+  if (references.length > 0 && (input.media?.length ?? 0) > 0) {
+    throw new VideoGenError('Pass input files either as reference_images or as media, not both.', 'input');
+  }
+  const items = input.media ?? mediaFromReferences(references);
+  const media = checkMedia(items, entry, caps, label);
+  problems.push(...media.problems);
   if (caps.maxReferences !== undefined && references.length > caps.maxReferences) {
     problems.push(
       caps.maxReferences === 0
@@ -166,32 +176,21 @@ export async function startVideoJob(input: StartInput, config: Config): Promise<
   const url = dialect.createUrl(provider.baseUrl, ep, entry.model);
   const timeoutMs = config.videoGen?.requestTimeoutMs ?? 120_000;
 
-  // Multipart once files are involved, JSON otherwise — the same split
-  // images make, for the same reason.
-  let body: BodyInit;
+  // The body in the dialect's published format: JSON without files,
+  // multipart parts or data: URIs with them (media.ts).
   const headers = authHeaders(provider);
-  if (references.length > 0) {
-    const form = new FormData();
-    form.append('model', entry.model);
-    form.append('prompt', prompt);
-    for (const [k, v] of Object.entries(specs)) {
-      if (v !== undefined) form.append(k, String(v));
-    }
-    // Two references mean first frame and last frame, and the endpoint
-    // must be told WHICH is which — leaving that to array order would
-    // make the result depend on how a caller happened to sort a
-    // directory listing.
-    if (references.length === 2) {
-      form.append('first_frame', blobOf(references[0]!), references[0]!.filename);
-      form.append('last_frame', blobOf(references[1]!), references[1]!.filename);
-    } else {
-      for (const ref of references) form.append('image[]', blobOf(ref), ref.filename);
-    }
-    body = form;
-  } else {
-    headers['content-type'] = 'application/json';
-    body = JSON.stringify({ model: entry.model, prompt, ...specs });
-  }
+  const built = buildCreateBody({
+    wire: entry.wire,
+    model: entry.model,
+    prompt,
+    specs,
+    items,
+    slots: media.slots,
+    ...(entry.transport ? { transport: entry.transport } : {}),
+    ...((entry.fps ?? caps.fps) !== undefined ? { fps: entry.fps ?? caps.fps } : {}),
+  });
+  const body = built.body;
+  if (built.contentType) headers['content-type'] = built.contentType;
 
   let res: Response;
   try {
@@ -234,7 +233,7 @@ export async function startVideoJob(input: StartInput, config: Config): Promise<
     updatedAt: now,
     ...(input.agent ? { agent: input.agent } : {}),
     ...(input.session ? { session: input.session } : {}),
-    ...(references.length > 0 ? { references: references.length } : {}),
+    ...(items.length > 0 ? { references: items.length } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
   await writeJob(job);
@@ -263,10 +262,6 @@ export async function startVideoJob(input: StartInput, config: Config): Promise<
     limit: slot.limit,
   });
   return { job };
-}
-
-function blobOf(ref: ReferenceImage): Blob {
-  return new Blob([new Uint8Array(ref.bytes)], { type: ref.mime });
 }
 
 /** `ignored_params` and `warnings`, where a provider volunteers them. */

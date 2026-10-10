@@ -1,6 +1,7 @@
 # Video generation
 
-Your agents can make short videos from a text prompt. A render takes
+Your agents can make short videos from a text prompt, and from images,
+videos and sound you give them. A render takes
 minutes, so nobody waits for it: the agent starts the job, carries on,
 and is woken when the video is ready. The feature is off until you
 configure a `videoGen` block.
@@ -126,19 +127,107 @@ slots. When the limit is reached, the next caller is refused with a
 message that names the numbers. It is not queued, because the wait
 would be an unknown number of minutes.
 
-## Reference images
+## Input files
 
-`reference_images` takes file paths, read under the same rules as
-`file_read`. The order carries meaning:
+An agent passes files by what they are for, in `media`. Each entry is a
+`type` and a local `path`:
 
-| Images | Result |
+```json
+{
+  "prompt": "The woman from the photo walks through the scene instead.",
+  "model": "animate",
+  "media": [
+    { "type": "input_video", "path": "~/clips/street.mp4" },
+    { "type": "character_image", "path": "~/photos/person.png" }
+  ]
+}
+```
+
+| `type` | File | What it is |
+|---|---|---|
+| `first_frame` | image | The opening frame. |
+| `last_frame` | image | The closing frame. The video is interpolated between the two. |
+| `reference_image` | image | Something that should appear, or a look to follow. |
+| `reference_video` | video | A clip to follow. |
+| `input_video` | video | The video to change, for example to swap a person. |
+| `character_image` | image | Who appears instead. |
+| `keyframe_image`, `keyframe_video` | image, video | A frame or clip at a moment, with `seconds`. |
+| `reference_audio` | audio | Sound to follow. |
+
+Files are read under the same rules as `file_read`: a path `file_read`
+may not open is refused here too. The bytes go to the provider; a local
+path never does. One file may be up to 200 MB.
+
+`reference_images` is the short form for frames: one image is the
+opening frame, two are opening and closing frame, more are reference
+images. A call uses one of the two fields, not both.
+
+### Which field a file becomes
+
+Providers name the same input differently, often per model. somora
+decides the field name per model, in this order:
+
+1. **The model's `media` block** in `config.yaml`. Without a catalog it
+   is the model's complete list. Over a catalog it renames or adds a
+   single type.
+2. **The provider catalog's `accepted_media`**, when the catalog
+   publishes it. Types it does not list are refused.
+3. **The dialect's published format**, see the table below.
+
+| `wire` | Takes without configuration |
 |---|---|
-| none | Text-to-video. |
-| one | That image is the opening frame. |
-| two | Opening and closing frame. The video is interpolated between them. |
+| `openai` | `first_frame` as `input_reference`. OpenAI's video API takes one opening image and nothing else. |
+| `veo` | `first_frame` as `image`, `last_frame` as `lastFrame`, up to three `reference_image` as `referenceImages`, inside Google's `instances`. |
+| `passthrough` | `first_frame` and `last_frame` under those names, and up to four `reference_image` as `image[]`, exactly as before. |
 
-With two images somora sends them as `first_frame` and `last_frame`, so
-the result does not depend on how a list happened to be sorted.
+A type the model does not take is refused before the request goes out,
+with the way to add it.
+
+### Naming a field yourself
+
+A provider that names a field differently, or takes inputs no dialect
+knows, gets a `media` block on the model:
+
+```yaml
+    - name: animate
+      provider: local-video
+      model: wan-animate-replace
+      wire: passthrough
+      transport: json               # files as data: URIs in a JSON body
+      media:
+        input_video: { field: video_url, min: 1, max: 1, maxSeconds: 30 }
+        character_image: { field: image_url, min: 1, max: 1 }
+```
+
+With `transport: json` a dotted field nests (`input.video_url`), and
+several files of one type become a list. With the default `multipart`
+each file is a file part under its field name.
+
+### Keyframes
+
+A keyframe carries `seconds`: where in the video it belongs. Providers
+that take keyframes want them as a list of objects, so a keyframe type
+needs an `item` format and `transport: json`:
+
+```yaml
+      fps: 24
+      media:
+        keyframe_image:
+          field: images
+          item: { url: image_url, frame: start_frame_num, strength: strength }
+```
+
+With `seconds` in `item` the time goes as given. With `frame` it is
+converted with the model's `fps`, or the catalog's. When neither is
+known the call is refused rather than guessed.
+
+### What is checked before sending
+
+- the type is one the model takes, and not too many of it
+- every type the model needs (`min`) is there
+- the file is the right kind: an image for an image type, and so on
+- a video is no longer than `maxSeconds`, where its length can be read
+- `seconds` only on keyframes
 
 ## Thumbnails
 
@@ -165,6 +254,12 @@ the spelling.
 | `openai` (default) | `POST /videos` | `GET /videos/{id}` | `GET /videos/{id}/content?variant=…` |
 | `passthrough` | `POST /vid/create` | `GET /vid/status?id=` | `GET /vid/content?id=&variant=…` |
 | `veo` | `…:predictLongRunning` | `…:fetchPredictOperation` | in the poll response |
+
+Each dialect sends the request in its provider's published format.
+`openai` sends `seconds` as a string, as OpenAI's API defines it. `veo`
+sends the prompt and images inside `instances` and the settings as
+camelCase `parameters` (`durationSeconds`, `aspectRatio`,
+`generateAudio`).
 
 `openai` keeps the job id in the path. `passthrough` keeps it in a
 query parameter. That shape survives a proxy that forwards exact paths
@@ -248,6 +343,9 @@ Each entry under `models`:
 | `createEndpoint`, `statusEndpoint`, `contentEndpoint` | per dialect | Override a path of the dialect. Appended to `baseUrl`. |
 | `capabilitiesEndpoint` | `null` | Path of the provider's model catalog, which says what each model accepts. |
 | `defaults` | `{}` | Parameters applied when the caller leaves them out. |
+| `media` | none | Field name per input type. See "Naming a field yourself". |
+| `transport` | `multipart` | `multipart` or `json`: how input files travel. `veo` always uses its own JSON. |
+| `fps` | from the catalog | Frames per second, for keyframes given as frame numbers. |
 | `allow` | none | Declares what the model accepts when the provider has no catalog. Takes precedence over a catalog. |
 | `fallback` | none | Handle of another video model. Accepted by the config. The video path does not act on it yet. |
 
@@ -258,8 +356,18 @@ Keys under `allow`:
 | `supported` | The complete list of parameters the model takes. Anything else is rejected. |
 | `variants` | Content variants the provider serves. Include `thumbnail` to get stills. Without it only `video` is fetched. |
 | `aspect_ratio`, `size` | The allowed values for that parameter. |
-| `maxReferences` | Most reference images the model takes, 0 to 4. |
+| `maxReferences` | Most images `reference_images` may carry for this model, 0 to 4. |
 | `maxSeconds` | Accepted by the config. Not checked yet. |
+
+Keys of an entry under `media`:
+
+| Key | Meaning |
+|---|---|
+| `field` | Required. The field name. With `transport: json` a dotted path nests it. |
+| `max`, `min` | How many files of this type the model takes, and needs. |
+| `maxSeconds` | Longest video or audio of this type. |
+| `array` | JSON only: send a list even for one file. |
+| `item` | Keyframes: `url` and either `seconds` or `frame`, optionally `strength`. Names of the keys in each list entry. |
 
 The wake delay is `agentLoop.wakeGraceMs` (default `3000`). It is
 shared with every other kind of background work.
@@ -289,7 +397,8 @@ same tool that finds an older image.
 | `audio` | Generate sound, where the model can. |
 | `quality` | Slower and better. |
 | `seed` | Repeat a previous result. |
-| `reference_images` | Up to four file paths. See "Reference images". |
+| `media` | Input files by meaning: `{type, path, seconds?, strength?}`, up to 32. See "Input files". |
+| `reference_images` | Up to four image paths, the short form for frames. Not together with `media`. |
 | `extra` | Provider-specific fields, passed through untouched. |
 | `save_to` | Accepted. It has no effect at present: the video is stored in `outputDir` only. |
 
@@ -310,6 +419,10 @@ known-good values for it, such as a fixed set of canvas sizes, they
 show under `recommended`. A size off that list is what a backend with a
 fixed canvas rejects. `max_references` and `variants` are listed too.
 
+`media` lists the input files the model takes: for each type the kind
+of file, `max`, `min` and `max_seconds`. A type with `min` has to be
+passed.
+
 ## Routes
 
 | Route | Purpose |
@@ -322,9 +435,11 @@ fixed canvas rejects. `max_references` and `variants` are listed too.
 
 `POST /video/generate` takes JSON with `prompt` and, optionally,
 `model`, `seconds`, `size`, `aspect_ratio`, `audio`, `quality`, `seed`,
-`reference_images`, `agent` and `session`. Here `reference_images` are
-base64 strings, not paths. With `agent` set, that agent is woken when
-the render finishes, in `session` or in `main`.
+`reference_images`, `media`, `agent` and `session`. Here
+`reference_images` are base64 strings, not paths. `media` entries are
+`{type, data, filename?, seconds?, strength?}` with `data` in base64 or
+as a `data:` URI. With `agent` set, that agent is woken when the render
+finishes, in `session` or in `main`.
 
 Errors: `400` for a bad request, `429` when all slots are busy, `502`
 when the provider failed, `503` when video is not configured or the
@@ -337,6 +452,9 @@ model is not available right now.
 | `all N video slots are busy` | `maxConcurrent` is reached. Try again in a few minutes, or look at `video_status`. |
 | `<model> does not accept '<field>'` | The model does not take that parameter. `video_models` lists what it takes. |
 | `gave up after N minutes without a result` | The job passed `jobTimeoutMs`. Raise it for long renders on a slow backend. |
+| `<model> takes no <type>` | The model, or its dialect, has no field for that input. Add it under the model's `media` if the provider does take it. |
+| `<model> needs 1 × <type>` | The model requires that input, for example a video to change. |
+| `frame rate is unknown` | Keyframes go as frame numbers and neither `fps` nor the catalog gives the rate. |
 | A video without a still in the gallery | The provider serves no `thumbnail` variant, or it is not declared under `allow.variants`. |
 | No wake after a finished render | The render was started from the web client, or the agent no longer exists. somora tries five times, then leaves it. The video is in the Media window either way. |
 
@@ -352,6 +470,9 @@ for example `videogen.job_failed` and `videogen.job_timeout`.
 - **No cost metering** on pass-through routes. A proxy that only
   forwards requests does not count cost.
 - **`veo` and live `openai` are unverified.** See "The three dialects".
+- **No upload step.** Files go inline, as multipart parts or `data:`
+  URIs. A provider that wants large files uploaded first is not
+  supported yet.
 
 ## See also
 

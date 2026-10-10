@@ -250,7 +250,7 @@ Toolsets `image`, `video`, `media` and `browser`.
 |---|---|
 | `image_generate` | Creates images from a prompt. Returns paths and metadata. `return_image: true` also shows the image to the agent. |
 | `image_models` | Lists the configured image models and what each accepts. |
-| `video_generate` | Starts a video render and returns at once. The agent is woken when it lands. |
+| `video_generate` | Starts a video render and returns at once. Takes input files by meaning (opening frame, input video, character image, keyframes and more). The agent is woken when it lands. |
 | `video_status` | Reports on video jobs. |
 | `video_models` | Lists the configured video models and what each accepts. |
 | `media_list` | Finds images and videos generated earlier, newest first, with an optional `type` filter. |

@@ -12,11 +12,13 @@
 // than starting a loop that would die with the child.
 
 import { z } from 'zod';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
+import type { Buffer } from 'node:buffer';
+import { MAX_MEDIA_BYTES, MEDIA_KIND, mediaItemFromBytes, mediaSlots, type MediaItem } from '../../videogen/media.ts';
 import { startVideoJob, VideoGenError } from '../../videogen/generate.ts';
 import { checkSlot, listJobs, readJob } from '../../videogen/jobs.ts';
 import { resolveCapabilities } from '../../media/capabilities.ts';
-import { resolveVideoModel } from '../../config/types.ts';
+import { resolveVideoModel, VideoMediaTypeSchema } from '../../config/types.ts';
 import { referenceFromBytes } from '../../imagegen/references.ts';
 import { ImageGenError } from '../../imagegen/generate.ts';
 import {
@@ -44,6 +46,20 @@ const GenerateInput = z
     quality: z.boolean().optional(),
     seed: z.number().int().optional(),
     reference_images: z.array(z.string().min(1)).max(4).optional(),
+    media: z
+      .array(
+        z
+          .object({
+            type: VideoMediaTypeSchema,
+            path: z.string().min(1),
+            seconds: z.number().min(0).optional(),
+            strength: z.number().optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(32)
+      .optional(),
     save_to: z.string().min(1).optional(),
     extra: z.record(z.string(), z.unknown()).optional(),
   })
@@ -59,6 +75,41 @@ interface StartOutput {
   active_jobs: number;
   slot_limit: number;
   warnings?: string[];
+}
+
+/** One file the caller named, read under the same policy as file_read —
+ *  videos included, with nothing added on top. */
+async function readPolicedFile(path: string, ctx: ToolContext, what: string): Promise<Buffer> {
+  const { absolute } = await resolveLocalPath(path, ctx.agent, ctx.config, ctx.session);
+  for (const candidate of [absolute, await realpathSafeAncestor(absolute)]) {
+    const verdict = checkReadAllowed(candidate);
+    if (!verdict.ok) throw new Error(`video_generate: ${what} ${verdict.reason}`);
+  }
+  const info = await stat(absolute).catch((err: Error) => {
+    throw new Error(`video_generate: could not read ${what} '${path}': ${err.message}`);
+  });
+  if (info.size > MAX_MEDIA_BYTES) {
+    throw new Error(`video_generate: ${what} '${path}' is ${(info.size / 1048576).toFixed(0)} MB; somora sends at most ${MAX_MEDIA_BYTES / 1048576} MB per file.`);
+  }
+  try {
+    return await readFile(absolute);
+  } catch (err) {
+    throw new Error(`video_generate: could not read ${what} '${path}': ${(err as Error).message}`);
+  }
+}
+
+/** The files in `media`, read and typed. */
+async function readMedia(input: GenerateArgs, ctx: ToolContext): Promise<MediaItem[]> {
+  const out: MediaItem[] = [];
+  for (const m of input.media ?? []) {
+    const bytes = await readPolicedFile(m.path, ctx, `media ${m.type}`);
+    try {
+      out.push(mediaItemFromBytes(m.type, bytes, m.path, { ...(m.seconds !== undefined ? { seconds: m.seconds } : {}), ...(m.strength !== undefined ? { strength: m.strength } : {}) }));
+    } catch (err) {
+      throw new Error(`video_generate: ${(err as Error).message}`);
+    }
+  }
+  return out;
 }
 
 /** Read reference images from disk under the same policy as file_read.
@@ -135,9 +186,13 @@ export const videoGenerate: ToolDefinition<GenerateArgs, StartOutput> = {
     'and the backend does one at a time, so you get a job id now and are woken with the ' +
     'finished video later; carry on with something else in the meantime. Use video_status to ' +
     'look in on it. Which fields a model takes differs per model (video_models tells you) and ' +
-    'one it does not take is rejected before the request goes out. reference_images takes FILE ' +
-    'PATHS and the ORDER matters: none = text-to-video, one = that image is the opening frame, ' +
-    'two = opening and closing frame with the video interpolated between them.',
+    'one it does not take is rejected before the request goes out. Input files are FILE PATHS. ' +
+    'media types each file: first_frame, last_frame, reference_image, reference_video, ' +
+    'input_video (the video to change, e.g. to swap a person), character_image (who appears ' +
+    'instead), keyframe_image / keyframe_video (with seconds: where in the video), ' +
+    'reference_audio. Which types and how many a model takes differs — video_models lists them ' +
+    'under media. reference_images is the short form for frames only: one = opening frame, ' +
+    'two = opening and closing frame. Use one of the two fields, not both.',
   inputSchema: GenerateInput,
   jsonSchema: {
     type: 'object',
@@ -156,6 +211,24 @@ export const videoGenerate: ToolDefinition<GenerateArgs, StartOutput> = {
         description:
           'Paths. One = opening frame; two = opening and closing frame, in that order.',
       },
+      media: {
+        type: 'array',
+        description: 'Input files by meaning. See the tool description and video_models.',
+        items: {
+          type: 'object',
+          properties: {
+            type: {
+              type: 'string',
+              enum: ['first_frame', 'last_frame', 'reference_image', 'reference_video', 'input_video', 'character_image', 'keyframe_image', 'keyframe_video', 'reference_audio'],
+            },
+            path: { type: 'string', description: 'Local file path.' },
+            seconds: { type: 'number', description: 'Keyframes only: where in the video, in seconds.' },
+            strength: { type: 'number', description: 'Keyframes only, where the model takes it.' },
+          },
+          required: ['type', 'path'],
+          additionalProperties: false,
+        },
+      },
       save_to: { type: 'string', description: 'Extra destination for the finished file.' },
       extra: {
         type: 'object',
@@ -168,7 +241,11 @@ export const videoGenerate: ToolDefinition<GenerateArgs, StartOutput> = {
   },
   available: (ctx) => videoGenEnabled(ctx),
   async handler(input, ctx): Promise<StartOutput> {
+    if (input.reference_images?.length && input.media?.length) {
+      throw new Error('video_generate: pass input files either as reference_images or as media, not both.');
+    }
     const references = await readReferences(input, ctx);
+    const media = await readMedia(input, ctx);
     const specs: Record<string, unknown> = { ...(input.extra ?? {}) };
     for (const key of ['seconds', 'size', 'aspect_ratio', 'audio', 'quality', 'seed'] as const) {
       if (input[key] !== undefined) specs[key] = input[key];
@@ -186,6 +263,17 @@ export const videoGenerate: ToolDefinition<GenerateArgs, StartOutput> = {
         ...(ctx.session ? { session: ctx.session } : {}),
         ...(references.length > 0
           ? { reference_images: references.map((r) => r.bytes.toString('base64')) }
+          : {}),
+        ...(media.length > 0
+          ? {
+              media: media.map((m) => ({
+                type: m.type,
+                data: m.bytes.toString('base64'),
+                filename: m.filename,
+                ...(m.seconds !== undefined ? { seconds: m.seconds } : {}),
+                ...(m.strength !== undefined ? { strength: m.strength } : {}),
+              })),
+            }
           : {}),
       });
       return {
@@ -208,6 +296,7 @@ export const videoGenerate: ToolDefinition<GenerateArgs, StartOutput> = {
           ...(input.model ? { model: input.model } : {}),
           specs,
           ...(references.length > 0 ? { references } : {}),
+          ...(media.length > 0 ? { media } : {}),
           ...(input.save_to ? { saveTo: input.save_to } : {}),
           agent: ctx.agent,
           ...(ctx.session ? { session: ctx.session } : {}),
@@ -306,8 +395,24 @@ interface VideoModelRow {
    *  400, so prefer these. */
   recommended?: Record<string, string[]>;
   max_references?: number;
+  /** Input files the model takes, by type: kind, how many, how long. */
+  media?: Record<string, { kind: string; max?: number; min?: number; max_seconds?: number }>;
   variants?: string[];
   note?: string;
+}
+
+function mediaRow(slots: ReturnType<typeof mediaSlots>): VideoModelRow['media'] {
+  const out: NonNullable<VideoModelRow['media']> = {};
+  for (const [type, slot] of Object.entries(slots)) {
+    if (!slot) continue;
+    out[type] = {
+      kind: MEDIA_KIND[type as keyof typeof MEDIA_KIND],
+      ...(slot.max !== undefined ? { max: slot.max } : {}),
+      ...(slot.min ? { min: slot.min } : {}),
+      ...(slot.maxSeconds !== undefined ? { max_seconds: slot.maxSeconds } : {}),
+    };
+  }
+  return out;
 }
 
 /**
@@ -328,7 +433,8 @@ export const videoModels: ToolDefinition<ModelsArgs, { models: VideoModelRow[] }
     'List the configured video models for video_generate. Call this before rendering when you ' +
     'need a model other than the default, or to see which parameters a model actually accepts — ' +
     'they differ a lot between video models, and one that is not accepted is rejected. Pass ' +
-    'model: "<handle>" for the detail of one, including how many reference images it takes.',
+    'model: "<handle>" for the detail of one, including which input files it takes (media: ' +
+    'type → kind, max, min, max_seconds). A type a model needs (min) must be passed.',
   inputSchema: ModelsInput,
   jsonSchema: {
     type: 'object',
@@ -375,6 +481,7 @@ export const videoModels: ToolDefinition<ModelsArgs, { models: VideoModelRow[] }
           );
           if (entry.allow.maxReferences !== undefined) row.max_references = entry.allow.maxReferences;
           if (entry.allow.variants) row.variants = entry.allow.variants;
+          row.media = mediaRow(mediaSlots(entry, {}));
           row.note = 'Declared in config; this provider publishes no catalog.';
         } else {
           try {
@@ -402,6 +509,7 @@ export const videoModels: ToolDefinition<ModelsArgs, { models: VideoModelRow[] }
             }
             if (caps.maxReferences !== undefined) row.max_references = caps.maxReferences;
             if (caps.variants) row.variants = caps.variants;
+            row.media = mediaRow(mediaSlots(entry, caps));
           } catch (err) {
             row.note = `could not load capabilities: ${(err as Error).message}`;
             logger.debug({ msg: 'videogen.capabilities_lookup_failed', model: entry.name });

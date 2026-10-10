@@ -1536,6 +1536,54 @@ export function activeDecisionModel(config: { decisions?: DecisionsConfig }): De
 export const VideoWireSchema = z.enum(['openai', 'passthrough', 'veo']);
 export type VideoWire = z.infer<typeof VideoWireSchema>;
 
+/** What an input file IS for a video render, independent of how any
+ *  provider names it (docs/videogen.md, "Media inputs"). The dialect, the
+ *  provider's catalog or the model's `media` block turns a type into a
+ *  field name. */
+export const VideoMediaTypeSchema = z.enum([
+  'first_frame',
+  'last_frame',
+  'reference_image',
+  'reference_video',
+  'input_video',
+  'character_image',
+  'keyframe_image',
+  'keyframe_video',
+  'reference_audio',
+]);
+export type VideoMediaType = z.infer<typeof VideoMediaTypeSchema>;
+
+/** How one media type goes on the wire for one model. */
+export const VideoMediaFieldSchema = z
+  .object({
+    /** Field name. With `transport: json` a dotted path nests it
+     *  (`input.video_url`). */
+    field: z.string().min(1),
+    /** How many files of this type the model takes. */
+    max: z.number().int().min(0).max(64).optional(),
+    /** How many it needs; a render without them is refused. */
+    min: z.number().int().min(0).max(64).optional(),
+    /** Longest video or audio of this type, in seconds. */
+    maxSeconds: z.number().positive().optional(),
+    /** JSON only: send a list even for a single file. */
+    array: z.boolean().optional(),
+    /** Keyframes (JSON only): each file becomes an object in a list at
+     *  `field`, with the file under `url` and its time under `seconds`
+     *  or, converted with the model's `fps`, as a frame number under
+     *  `frame`. `strength` names the key for an optional strength. */
+    item: z
+      .object({
+        url: z.string().min(1),
+        seconds: z.string().min(1).optional(),
+        frame: z.string().min(1).optional(),
+        strength: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type VideoMediaField = z.infer<typeof VideoMediaFieldSchema>;
+
 export const VideoModelSchema = z.object({
   /** Short handle used by the tool's `model` arg and the UI picker. */
   name: z
@@ -1586,6 +1634,22 @@ export const VideoModelSchema = z.object({
   capabilitiesEndpoint: z.string().min(1).nullable().default(null),
   /** Specs applied when the caller omits them. */
   defaults: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
+  /**
+   * Field names per input media type, for a model whose provider names
+   * them differently from the dialect's published format, or publishes
+   * no catalog. Wins over the catalog's `accepted_media` for the types it
+   * names. Example for a provider that takes JSON with URLs or data URIs:
+   *   media: { input_video: { field: video_url }, character_image: { field: image_url } }
+   *   transport: json
+   */
+  media: z.partialRecord(VideoMediaTypeSchema, VideoMediaFieldSchema).optional(),
+  /** How input files travel: as multipart file parts, or inside a JSON
+   *  body as `data:` URIs. Default: what the dialect publishes (multipart
+   *  for `openai` and `passthrough`; `veo` always uses its own JSON). */
+  transport: z.enum(['multipart', 'json']).optional(),
+  /** Frames per second, for keyframes whose field takes a frame number.
+   *  Read from the catalog's `fps` when there is one. */
+  fps: z.number().positive().optional(),
   /** Offline capability override — same meaning as imageGen's. */
   allow: z
     .object({

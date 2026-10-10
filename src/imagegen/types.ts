@@ -112,6 +112,23 @@ export interface ModelCapabilities {
    *  such as an edit model taking its shape from the first reference. */
   endpointNote?: string;
   paramNotes?: Record<string, string>;
+  /**
+   * Video only: the input media a model takes, by type (`first_frame`,
+   * `input_video`, …), from the catalog's `accepted_media`. `fields`
+   * lists the names the endpoint accepts for that type, `min`/`max` the
+   * count, `maxSeconds` the longest clip. See docs/videogen.md.
+   */
+  media?: Record<string, CatalogMedia>;
+  /** Video only: frames per second, from the catalog's `fps`. */
+  fps?: number;
+}
+
+export interface CatalogMedia {
+  kind?: string;
+  min?: number;
+  max?: number;
+  maxSeconds?: number;
+  fields?: string[];
 }
 
 /** Does this model accept `field`? Unknown counts as yes — see the note
