@@ -131,7 +131,7 @@ export interface CatalogMedia {
   minSeconds?: number;
   fields?: string[];
   /** Keyframes: the keys of each list entry (file, time, strength). */
-  item?: { url: string; seconds?: string; frame?: string; strength?: string };
+  item?: { url: string; seconds?: string; frame?: string; strength?: string; strengthRange?: [number, number] };
   /** Frame rate a keyframe's frame number counts at (`anchor_fps`). */
   fps?: number;
 }

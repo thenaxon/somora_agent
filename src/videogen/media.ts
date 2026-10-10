@@ -116,7 +116,8 @@ export function mediaItemFromBytes(
 
 /** How one type goes on the wire for this model, and where that came
  *  from — the source decides the wording of a refusal. */
-export interface MediaSlot extends VideoMediaField {
+export interface MediaSlot extends Omit<VideoMediaField, 'item'> {
+  item?: VideoMediaField['item'] & { strengthRange?: [number, number] };
   source: 'config' | 'catalog' | 'dialect';
   /** Frame rate this type's frame numbers count at, from the catalog. */
   fps?: number;
@@ -296,6 +297,10 @@ export function checkMedia(
     const keyframe = it.type === 'keyframe_image' || it.type === 'keyframe_video';
     if (keyframe) {
       if (it.seconds === undefined) problems.push(`${it.type} ${it.filename} needs seconds: where in the video it belongs.`);
+      const range = slot?.item?.strengthRange;
+      if (range && it.strength !== undefined && (it.strength < range[0] || it.strength > range[1])) {
+        problems.push(`strength ${it.strength} is outside ${range[0]}–${range[1]} for ${it.type} on ${label}.`);
+      }
       if (slot && entry.wire !== 'veo') {
         if (!slot.item) {
           problems.push(

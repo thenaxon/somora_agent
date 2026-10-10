@@ -227,6 +227,11 @@ test('catalog accepted_media: field picked per dialect, counts and needs enforce
   await assert.rejects(start(model, { media: [item('reference_audio', Buffer.from('ID3\x03\0\0\0\0\0\0', 'latin1'), 'a.mp3')] }), /takes no reference_audio/);
 });
 
+test('an empty accepted_media means the model takes no files', async () => {
+  catalog = { data: [{ id: 'mod-x', accepted_media: {} }] };
+  await assert.rejects(start({ wire: 'passthrough', capabilitiesEndpoint: '/video/models' }, { media: [item('first_frame', PNG, 'a.png')] }), /takes no first_frame — it takes no input files/);
+});
+
 test('catalog first_frame offers input_reference: the openai dialect picks it', async () => {
   catalog = { data: [{ id: 'mod-x', accepted_media: { first_frame: { kind: 'image', max: 1, fields: ['image_url', 'input_reference'] } } }] };
   await start({ wire: 'openai', capabilitiesEndpoint: '/video/models' }, { references: [ref(0)] });
@@ -250,7 +255,7 @@ test('catalog keyframe form and anchor_fps: frame numbers at the type\'s rate, J
   catalog = { data: [{ id: 'mod-x', accepted_media: {
     reference_image: { kind: 'image', max: 9, fields: ['reference_image_urls'] },
     reference_video: { kind: 'video', max: 3, fields: ['reference_video_urls'], max_seconds: 15, min_seconds: 2 },
-    keyframe_image: { kind: 'image', max: 8, fields: ['images'], anchor_fps: 24, item: { url: 'image_url', frame: 'frame', strength: 'strength' } },
+    keyframe_image: { kind: 'image', max: 8, fields: ['images'], anchor_fps: 24, item: { url: 'image_url', frame: 'frame', frame_unit: 'frames', strength: 'strength', strength_range: [0, 1] } },
   } }] };
   const model = { wire: 'passthrough', capabilitiesEndpoint: '/video/models' };
   await start(model, { media: [item('reference_image', PNG, 'a.png'), item('keyframe_image', JPG, 'k.jpg', { seconds: 2, strength: 0.5 })] });
@@ -258,6 +263,7 @@ test('catalog keyframe form and anchor_fps: frame numbers at the type\'s rate, J
   assert.deepEqual(j.images, [{ image_url: `data:image/jpeg;base64,${JPG.toString('base64')}`, frame: 48, strength: 0.5 }]);
   assert.deepEqual(j.reference_image_urls, [`data:image/png;base64,${PNG.toString('base64')}`], 'a list, since the model takes up to nine');
   await assert.rejects(start(model, { media: [item('reference_video', mp4(1), 'short.mp4')] }), /needs at least 2 s/);
+  await assert.rejects(start(model, { media: [item('keyframe_image', JPG, 'k.jpg', { seconds: 1, strength: 1.5 })] }), /strength 1\.5 is outside 0–1/);
   seen = [];
   await start(model, { media: [item('reference_image', PNG, 'a.png'), item('reference_image', JPG, 'b.jpg')] });
   assert.deepEqual(seen[0]!.parts!.slice(2).map((p) => p.name), ['reference_image_urls', 'reference_image_urls'], 'without keyframes: multipart parts under the catalog field');

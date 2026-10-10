@@ -352,11 +352,15 @@ function acceptedMedia(raw: Record<string, unknown>): Record<string, CatalogMedi
         ...(key(item.seconds) ? { seconds: key(item.seconds)! } : {}),
         ...(key(item.frame) ? { frame: key(item.frame)! } : {}),
         ...(key(item.strength) ? { strength: key(item.strength)! } : {}),
+        ...(Array.isArray(item.strength_range) && item.strength_range.length === 2 && item.strength_range.every((x) => typeof x === 'number' && Number.isFinite(x))
+          ? { strengthRange: [item.strength_range[0] as number, item.strength_range[1] as number] as [number, number] }
+          : {}),
       };
     }
     out[type] = m;
   }
-  return Object.keys(out).length > 0 ? out : undefined;
+  // An empty object is a statement too: the model takes no input files.
+  return out;
 }
 
 /**
