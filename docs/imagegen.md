@@ -216,6 +216,63 @@ another handle to try. That one may name a fallback of its own.
 When a fallback was used, the tool result and the HTTP response say so
 and name the models that were skipped.
 
+When the `503` body carries `retry_after_seconds`, or the response a
+numeric `Retry-After` header, the message says when to try again.
+
+## Long waits: image jobs
+
+Normally an image is one request that waits until the picture is done.
+A proxy between somora and the provider can cut that short: Cloudflare
+closes any request after 100 seconds, many gateways after 60. If the
+provider's GPU is busy with something else, the request is closed,
+the provider renders the image anyway, and nobody receives it.
+
+Some endpoints therefore also take the request as a job:
+
+1. somora creates the job and gets back an id.
+2. It asks for the job's status every 2 seconds.
+3. When the status is `completed`, it fetches the image.
+
+For the agent nothing changes. `image_generate` still returns the
+finished image in the same call.
+
+**When jobs are used.** In this order:
+
+1. `lifecycle: sync` or `lifecycle: jobs` on the model.
+2. Paths under `jobs:` on the model turn jobs on.
+3. An `async` block on the model's entry in the provider's catalog:
+   `"async": {"create": "/img/create", "status": "/img/status?id=", "content": "/img/content?id="}`.
+4. Otherwise one request, as before.
+
+A model with an `allow` block does not read the catalog. To use jobs
+there, set `lifecycle: jobs` and `jobs:`.
+
+**What is sent.** The job is created with exactly the request the
+single call would send, JSON or multipart with reference images. Only
+the address changes. In the status and content paths `{id}` is replaced
+by the job id. Without `{id}` the id is appended, so `/img/status?id=`
+and `/jobs/` both work.
+
+**What is read.** The status answer may spell the state as `queued`,
+`in_progress`, `completed` or `failed`, or as `running`, `succeeded`,
+`error` and similar. A failed job's reason is passed on, and the
+fallback chain moves on as for any other failure. `warnings` and
+`ignored_params` are read from the status answer, so they reach the
+agent even when a router strips them from a single-request answer. The
+content answer is either the image itself or JSON in the single-request
+shape.
+
+If the status says `waiting_for_gpu: true`, somora counts the time.
+When the image waited 10 seconds or more, the result says how long.
+When the endpoint's warning already names the size it delivered,
+somora adds no second note about the size.
+
+**Time limit.** A job may take `imageGen.jobTimeoutMs`, 15 minutes by
+default, or the model's own `jobTimeoutMs`. After that somora stops
+waiting and reports it with the job id and its status path, so the
+finished image can still be fetched from the provider. Each single status or content call still has
+`imageGen.timeoutMs`.
+
 ## Where images go
 
 Every image lands in `imageGen.outputDir`, whichever agent made it.
@@ -291,6 +348,7 @@ imageGen:
   monthlyFolders: false
   maxImagesPerTurn: 5
   timeoutMs: 300000
+  jobTimeoutMs: 900000
   models:
     - name: local-flux
       provider: local-images
@@ -301,6 +359,11 @@ imageGen:
       editEndpoint: /images/edits
       capabilitiesEndpoint: null      # default: /images/models
       fallback: grok-imagine
+      lifecycle: jobs                 # default: the catalog decides, else sync
+      jobs:
+        create: /img/create
+        status: /img/status?id=
+        content: /img/content?id=
       defaults: {}
       allow:
         supported: [size, aspect_ratio, seed, steps, guidance, n]
@@ -315,6 +378,7 @@ imageGen:
 | `imageGen.monthlyFolders` | `false` | Sort files into `<outputDir>/YYYY-MM/`. |
 | `imageGen.maxImagesPerTurn` | `5` | Images one turn may produce, 1 to 100. Also the upper limit for `n` in one call. |
 | `imageGen.timeoutMs` | `300000` | Time limit for one request to the provider, 5 seconds to 30 minutes. |
+| `imageGen.jobTimeoutMs` | `900000` | Time limit for one image job, from creating it to the finished file, 5 seconds to 60 minutes. See [image jobs](#long-waits-image-jobs). |
 | `imageGen.models` | none | At least one model. The first is the default. |
 
 Per model:
@@ -330,6 +394,9 @@ Per model:
 | `editEndpoint` | `/images/edits` | Path for requests with reference images. `wire: openai` only. |
 | `capabilitiesEndpoint` | `/images/models` | Path of the provider's model catalog. `null` when there is none, for example a local image server. |
 | `fallback` | none | Handle of the model to try when this one is unavailable. |
+| `lifecycle` | catalog, else `sync` | `sync` for one request, `jobs` for create, status and content. |
+| `jobs` | none | `create`, `status` and `content` paths after `baseUrl`. Overrides the catalog's `async` block. |
+| `jobTimeoutMs` | `imageGen.jobTimeoutMs` | Time limit for this model's jobs. |
 | `defaults` | `{}` | Values used when the caller sets none: `resolution`, `aspect_ratio`, `size`, `quality`, `output_format`, `background`, `steps`, `cfg`, `guidance`. |
 | `allow` | none | Your own list of what the model accepts. Replaces the catalog. |
 
@@ -452,10 +519,16 @@ log lines `imagegen.request` (what was sent, never the image bytes),
 `imagegen.aspect_ratio_substituted` show what happened.
 
 **"not available right now".** The provider answered `503` or `504`.
-Try later, or set `fallback:` on the model.
+Try later, or set `fallback:` on the model. When the provider offers
+[image jobs](#long-waits-image-jobs), somora waits for a busy GPU
+instead.
 
 **The request times out.** Large renders take minutes. Raise
-`imageGen.timeoutMs`.
+`imageGen.timeoutMs`. If a proxy closes the request earlier than that,
+use [image jobs](#long-waits-image-jobs).
+
+**"did not finish within".** An image job ran past its time limit.
+Raise `imageGen.jobTimeoutMs` or the model's `jobTimeoutMs`.
 
 **The image URL could not be fetched, with 401 or 403.** The provider
 returned a link on another host than its `baseUrl`, and the key is not

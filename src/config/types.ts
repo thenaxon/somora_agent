@@ -1391,6 +1391,34 @@ export const ImageModelSchema = z.object({
    * answers the second one with a 503.
    */
   fallback: z.string().min(1).optional(),
+  /**
+   * How a request reaches the endpoint:
+   *
+   *   sync — one request that waits for the image (OpenAI's image API).
+   *   jobs — create a job, ask for its status until it is done, then
+   *          fetch the image. Survives a proxy that closes long
+   *          requests (Cloudflare: 100 s) while the endpoint waits for
+   *          a busy GPU.
+   *
+   * Unset → the provider's catalog decides (an `async` block on the
+   * model's entry turns jobs on), otherwise sync. The create body is the
+   * same one the sync request carries; only the URL changes.
+   */
+  lifecycle: z.enum(['sync', 'jobs']).optional(),
+  /**
+   * The three job paths, appended to baseUrl. `{id}` in status/content
+   * is replaced by the job id; without it the id is appended, so
+   * `/img/status?id=` and `/jobs/` both work. Overrides the catalog's
+   * `async` block; required for `lifecycle: jobs` when the catalog has
+   * none.
+   */
+  jobs: z
+    .object({ create: z.string().min(1), status: z.string().min(1), content: z.string().min(1) })
+    .strict()
+    .optional(),
+  /** How long a job may take before somora stops waiting. Defaults to
+   *  imageGen.jobTimeoutMs. */
+  jobTimeoutMs: z.number().int().min(5_000).max(3_600_000).optional(),
   /** Path for the model-capability catalog, appended to baseUrl.
    *  Defaults to `/images/models` (OpenRouter). Set to null when the
    *  provider has none — validation then falls back to `allow`, or to
@@ -1464,6 +1492,11 @@ export const ImageGenConfigSchema = z
      *  a 4K render legitimately takes minutes, so this sits far above
      *  the usual HTTP timeouts. */
     timeoutMs: z.number().int().min(5_000).max(1_800_000).default(300_000),
+    /** Wall-clock cap for one image JOB (`lifecycle: jobs`), from create
+     *  to the finished file. Longer than timeoutMs because no proxy limit
+     *  applies to the short status calls, and a job may wait for a GPU
+     *  that is busy rendering a video. */
+    jobTimeoutMs: z.number().int().min(5_000).max(3_600_000).default(900_000),
     /** Configured image models. First entry is the default when a
      *  caller omits `model`. */
     models: z.array(ImageModelSchema).min(1),

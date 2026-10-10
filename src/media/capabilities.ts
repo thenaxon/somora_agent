@@ -28,6 +28,7 @@ import {
   type CatalogMedia,
   ENUMERABLE_SPEC_FIELDS,
   type EnumerableSpecField,
+  type ImageJobPaths,
   type ImageSpecs,
   type ModelCapabilities,
   supportsField,
@@ -310,6 +311,9 @@ export async function resolveCapabilities(
     // parameters because files are not parameters) and the frame rate
     // keyframe times are converted with.
     ...(acceptedMedia(row.raw) ? { media: acceptedMedia(row.raw) } : {}),
+    // Image job paths (`async`): the endpoint also takes the request as
+    // a job, which is what survives a proxy with a short request limit.
+    ...(jobPaths(row.raw) ? { jobs: jobPaths(row.raw) } : {}),
     ...(readNumber(row.raw, ['fps', 'frames_per_second']) !== undefined
       ? { fps: readNumber(row.raw, ['fps', 'frames_per_second']) }
       : {}),
@@ -319,6 +323,17 @@ export async function resolveCapabilities(
       ? { variants: asStringArray(row.raw.supported_variants) }
       : {}),
   };
+}
+
+/** A catalog's `async` block: `{create, status, content}`, all three
+ *  paths or nothing — half a job route cannot be used. */
+function jobPaths(raw: Record<string, unknown>): ImageJobPaths | undefined {
+  const a = raw.async;
+  if (!a || typeof a !== 'object' || Array.isArray(a)) return undefined;
+  const { create, status, content } = a as Record<string, unknown>;
+  if (typeof create !== 'string' || typeof status !== 'string' || typeof content !== 'string') return undefined;
+  if (!create || !status || !content) return undefined;
+  return { create, status, content };
 }
 
 /** A catalog's `accepted_media`: `{ <type>: {kind, min, max, fields,

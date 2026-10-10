@@ -121,6 +121,15 @@ export interface ModelCapabilities {
   media?: Record<string, CatalogMedia>;
   /** Video only: frames per second, from the catalog's `fps`. */
   fps?: number;
+  /** Image only: the job paths from the catalog's `async` block, when
+   *  the endpoint offers create → status → content (docs/imagegen.md). */
+  jobs?: ImageJobPaths;
+}
+
+export interface ImageJobPaths {
+  create: string;
+  status: string;
+  content: string;
 }
 
 export interface CatalogMedia {

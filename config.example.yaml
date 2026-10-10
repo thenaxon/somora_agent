@@ -344,6 +344,7 @@ providers:
 #   monthlyFolders: false                       # true → <outputDir>/2026-08/
 #   maxImagesPerTurn: 5                         # cost brake per turn
 #   timeoutMs: 300000                           # image models are slow; 5 min
+#   jobTimeoutMs: 900000                        # one image JOB (lifecycle: jobs); 15 min
 #   models:
 #     - name: grok-imagine                      # handle used by tool + UI
 #       provider: openrouter                    # ← references providers.openrouter
@@ -360,6 +361,11 @@ providers:
 #       #                                       #  once per process: restart after
 #       #                                       #  adding a model there.
 #       #                                       #  null = no catalog (local server)
+#       # lifecycle: jobs                       # sync = one request; jobs = create →
+#       # jobs:                                 #  status → content, survives a proxy
+#       #   create: /img/create                 #  that closes long requests. Unset:
+#       #   status: /img/status?id=             #  the catalog's `async` block decides,
+#       #   content: /img/content?id=           #  else sync. {id} or appended.
 #       defaults:                               # applied when the caller omits them
 #         resolution: 1K
 #         aspect_ratio: "16:9"

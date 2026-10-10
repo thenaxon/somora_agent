@@ -119,7 +119,7 @@ export function errorMessage(raw: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-function normaliseStatus(v: unknown): VideoJobStatus {
+export function normaliseStatus(v: unknown): VideoJobStatus {
   const s = String(v ?? '').toLowerCase();
   if (s === 'completed' || s === 'succeeded' || s === 'success') return 'completed';
   if (s === 'failed' || s === 'error' || s === 'cancelled' || s === 'expired') return 'failed';

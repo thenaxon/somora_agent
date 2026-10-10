@@ -22,7 +22,8 @@ import { applyDefaults, resolveCapabilities, validateSpecs } from '../media/capa
 import { linkMedia, storeMedia } from '../media/store.ts';
 import { parseSizeSpec, readDimensions } from '../multimodal/dimensions.ts';
 import { newMediaId, writeRecord } from '../media/records.ts';
-import type { ImageSpecs } from './types.ts';
+import type { ImageJobPaths, ImageSpecs, ModelCapabilities } from './types.ts';
+import { errorMessage, normaliseStatus } from '../videogen/dialects.ts';
 import type { MediaRecord } from '../media/types.ts';
 
 /** One reference image, as handed to the generator. */
@@ -256,6 +257,244 @@ async function rowToBytes(
   return { bytes: buf, mime: res.headers.get('content-type') ?? mime };
 }
 
+/** What an image endpoint answers with — the sync response, or for a
+ *  job the fields its create and status answers carried. */
+interface UpstreamPayload {
+  data?: RawImageRow[];
+  images?: RawImageRow[];
+  usage?: { cost?: number };
+  /** Non-standard, and worth reading where a provider offers it: the
+   *  parameters it accepted but did not use, and free-text notes
+   *  about anything it adjusted. Absent almost everywhere — a strict
+   *  OpenAI-shaped proxy in front of a backend will drop them, which
+   *  is exactly why the size check below does not depend on them. */
+  ignored_params?: unknown;
+  warnings?: unknown;
+}
+
+/** The error for a non-2xx answer. 503/504 means "not right now": the
+ *  upstream body typically names WHY — the active GPU profile, a busy
+ *  GPU — so it is relayed verbatim rather than summarised away, with
+ *  the endpoint's own retry hint when it gives one. */
+async function upstreamFailure(res: Response, modelName: string): Promise<ImageGenError> {
+  const text = await res.text().catch(() => '');
+  logger.warn({ msg: 'imagegen.upstream_error', status: res.status, body: text.slice(0, 500) });
+  if (res.status === 503 || res.status === 504) {
+    const retry = retryAfterSeconds(res, text);
+    return new ImageGenError(
+      `Image model '${modelName}' is not available right now (upstream ${res.status}). ` +
+        `This is usually temporary.${retry !== undefined ? ` The endpoint suggests trying again in about ${retry}s.` : ''} ` +
+        `Upstream says: ${text.slice(0, 300)}`,
+      'unavailable',
+    );
+  }
+  return new ImageGenError(`Image upstream returned ${res.status}: ${text.slice(0, 300)}`, 'upstream');
+}
+
+/** A retry hint in seconds: `retry_after_seconds` in a JSON body, else a
+ *  numeric `Retry-After` header. */
+function retryAfterSeconds(res: Response, text: string): number | undefined {
+  try {
+    const v = (JSON.parse(text) as Record<string, unknown>).retry_after_seconds;
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return Math.round(v);
+  } catch {
+    // not JSON — the header is the other place it lives
+  }
+  const h = Number(res.headers.get('retry-after'));
+  return Number.isFinite(h) && h >= 0 && res.headers.get('retry-after') !== null ? Math.round(h) : undefined;
+}
+
+/**
+ * The job paths to use, or null for the sync request. The operator's
+ * `lifecycle` wins; unset, configured `jobs` paths or the catalog's
+ * `async` block turn jobs on. A model with `allow` does not read the
+ * catalog, so it only uses jobs when configured.
+ */
+function jobRoute(entry: ImageModel, caps: ModelCapabilities, label: string): ImageJobPaths | null {
+  if (entry.lifecycle === 'sync') return null;
+  const paths = entry.jobs ?? caps.jobs ?? null;
+  if (entry.lifecycle === 'jobs' && !paths) {
+    throw new ImageGenError(
+      `${label} is set to lifecycle: jobs, but neither its config (jobs: {create, status, content}) nor the provider's catalog names the job paths.`,
+      'config',
+    );
+  }
+  return paths;
+}
+
+/** A job path with the id in it: `{id}` is replaced, otherwise the id
+ *  is appended (`/img/status?id=` + id, `/jobs/` + id). */
+function jobUrl(base: string, path: string, id: string): string {
+  const enc = encodeURIComponent(id);
+  return base + (path.includes('{id}') ? path.replaceAll('{id}', enc) : path + enc);
+}
+
+let jobPollMs = 2_000;
+/** Tests only: poll faster than the 2 s a real endpoint deserves. */
+export function setImageJobPollMs(ms: number): void {
+  jobPollMs = ms;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The same request as the sync call, sent as a job: create it, ask for
+ * its status until it is done, fetch the image. For the caller nothing
+ * changes — this returns what the sync answer would have carried.
+ *
+ * Status answers are read with the video code's vocabulary (queued |
+ * in_progress | completed | failed, the provider's spelling folded in);
+ * `warnings` and `ignored_params` are taken from the last answer that
+ * had them, because an endpoint stores them with the job.
+ */
+async function runImageJob(a: {
+  base: string;
+  paths: ImageJobPaths;
+  headers: Record<string, string>;
+  body: BodyInit;
+  requestTimeoutMs: number;
+  jobTimeoutMs: number;
+  label: string;
+  modelName: string;
+  baseUrl: string;
+  apiKey?: string;
+  warnings: string[];
+}): Promise<{ payload: UpstreamPayload; decoded: UpstreamImage[] }> {
+  const deadline = Date.now() + a.jobTimeoutMs;
+  const auth: Record<string, string> = a.headers.authorization ? { authorization: a.headers.authorization } : {};
+  const unreachable = (err: unknown, what: string): ImageGenError => {
+    logger.warn({ msg: 'imagegen.job_unreachable', model: a.modelName, step: what, err: (err as Error).message });
+    return new ImageGenError(`Image upstream unreachable (${what}): ${(err as Error).message}`, 'upstream');
+  };
+
+  let res: Response;
+  try {
+    res = await fetch(a.base + a.paths.create, {
+      method: 'POST',
+      headers: a.headers,
+      body: a.body,
+      signal: AbortSignal.timeout(a.requestTimeoutMs),
+    });
+  } catch (err) {
+    throw unreachable(err, 'create');
+  }
+  if (!res.ok) throw await upstreamFailure(res, a.modelName);
+  const created = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  const id = typeof created.id === 'string' && created.id ? created.id : undefined;
+  if (!id) {
+    throw new ImageGenError('The image endpoint accepted the job but returned no job id.', 'upstream');
+  }
+  logger.info({ msg: 'imagegen.job_created', model: a.modelName, id, waitingForGpu: created.waiting_for_gpu === true });
+
+  // Time spent waiting for a GPU, reported back so a slow answer has a
+  // reason the caller can see.
+  let waitStart: number | undefined = created.waiting_for_gpu === true ? Date.now() : undefined;
+  let waitedMs = 0;
+  let last: Record<string, unknown> = created;
+  let failures = 0;
+  const stillWaiting = (p: Record<string, unknown>) => {
+    if (p.waiting_for_gpu === true) waitStart ??= Date.now();
+    else if (waitStart !== undefined) {
+      waitedMs += Date.now() - waitStart;
+      waitStart = undefined;
+    }
+  };
+  const timedOut = (): ImageGenError => {
+    logger.warn({ msg: 'imagegen.job_timeout', model: a.modelName, id, jobTimeoutMs: a.jobTimeoutMs });
+    return new ImageGenError(
+      `The image job for ${a.label} did not finish within ${a.jobTimeoutMs >= 120_000 ? `${Math.round(a.jobTimeoutMs / 60_000)} min` : `${Math.round(a.jobTimeoutMs / 1000)}s`}. ` +
+        `The endpoint may still finish it: job ${id}, status at ${jobUrl('', a.paths.status, id)} on the provider. ` +
+        "somora stopped waiting — raise imageGen.jobTimeoutMs (or the model's jobTimeoutMs) if this repeats.",
+      'upstream',
+    );
+  };
+
+  let done = normaliseStatus(created.status) === 'completed';
+  while (!done) {
+    if (Date.now() >= deadline) throw timedOut();
+    await sleep(jobPollMs);
+    let sres: Response;
+    try {
+      sres = await fetch(jobUrl(a.base, a.paths.status, id), { headers: auth, signal: AbortSignal.timeout(a.requestTimeoutMs) });
+    } catch (err) {
+      // One lost status call is not a lost job.
+      if (++failures >= 5) throw unreachable(err, 'status');
+      continue;
+    }
+    if (sres.status === 404) {
+      throw new ImageGenError(`The image endpoint no longer knows job ${id} (404) — it expired or was dropped.`, 'upstream');
+    }
+    if (!sres.ok) {
+      const text = await sres.text().catch(() => '');
+      if (sres.status >= 500 && ++failures < 5) continue;
+      throw new ImageGenError(`Image job status returned ${sres.status}: ${text.slice(0, 300)}`, 'upstream');
+    }
+    failures = 0;
+    last = (await sres.json().catch(() => ({}))) as Record<string, unknown>;
+    stillWaiting(last);
+    const status = normaliseStatus(last.status);
+    if (status === 'failed') {
+      logger.warn({ msg: 'imagegen.job_failed', model: a.modelName, id, error: last.error });
+      throw new ImageGenError(`The image job for ${a.label} failed: ${errorMessage(last) ?? 'the endpoint gave no reason'}`, 'upstream');
+    }
+    done = status === 'completed';
+  }
+  if (waitStart !== undefined) waitedMs += Date.now() - waitStart;
+
+  // The result. A 409 means "not ready yet" even after a completed
+  // status on an endpoint that writes the file a moment later.
+  let decoded: UpstreamImage[] = [];
+  let contentPayload: UpstreamPayload = {};
+  for (;;) {
+    let cres: Response;
+    try {
+      cres = await fetch(jobUrl(a.base, a.paths.content, id), { headers: auth, signal: AbortSignal.timeout(a.requestTimeoutMs) });
+    } catch (err) {
+      throw unreachable(err, 'content');
+    }
+    if (cres.status === 409) {
+      if (Date.now() >= deadline) throw timedOut();
+      await sleep(jobPollMs);
+      continue;
+    }
+    if (!cres.ok) {
+      const text = await cres.text().catch(() => '');
+      throw new ImageGenError(`Fetching the finished image returned ${cres.status}: ${text.slice(0, 300)}`, 'upstream');
+    }
+    const ct = cres.headers.get('content-type') ?? '';
+    if (ct.includes('json')) {
+      // An endpoint that answers in the sync response's shape.
+      contentPayload = (await cres.json()) as UpstreamPayload;
+      for (const row of contentPayload.data ?? contentPayload.images ?? []) {
+        const img = await rowToBytes(row, a.requestTimeoutMs, a.baseUrl, a.apiKey);
+        if (img && img.bytes.length > 0) decoded.push(img);
+      }
+    } else {
+      const bytes = Buffer.from(await cres.arrayBuffer());
+      if (bytes.length > 0) decoded = [{ bytes, ...(ct ? { mime: ct.split(';')[0]!.trim() } : {}) }];
+    }
+    break;
+  }
+  if (decoded.length === 0) {
+    throw new ImageGenError('The image job finished but its content held no image data.', 'upstream');
+  }
+
+  // Below this it is the normal hand-over to the GPU, not a busy one.
+  if (waitedMs >= 10_000) {
+    a.warnings.push(`The endpoint's GPU was busy: this image waited about ${Math.round(waitedMs / 1000)}s before rendering started.`);
+  }
+  logger.info({ msg: 'imagegen.job_done', model: a.modelName, id, waitedForGpuMs: waitedMs });
+  const pick = (k: keyof UpstreamPayload) => contentPayload[k] ?? last[k] ?? created[k];
+  return {
+    payload: {
+      ignored_params: pick('ignored_params'),
+      warnings: pick('warnings'),
+      ...(pick('usage') ? { usage: pick('usage') as UpstreamPayload['usage'] } : {}),
+    },
+    decoded,
+  };
+}
+
 /**
  * Build the ordered list of model handles to try, following each
  * entry's `fallback:`. A cycle in the config (a → b → a) would
@@ -450,6 +689,8 @@ async function generateOnce(
     requestBody = JSON.stringify(body);
   }
 
+  const jobPaths = jobRoute(entry, caps, label);
+
   // The fields as sent (no bytes) — the arbiter when a shape comes back
   // wrong. The 2026-09-06 case took a day to pin on the router because
   // nothing recorded what left somora.
@@ -459,81 +700,72 @@ async function generateOnce(
     wire: entry.wire,
     endpoint: useMultipart ? entry.editEndpoint : entry.endpoint,
     multipart: useMultipart,
+    ...(jobPaths ? { lifecycle: 'jobs', create: jobPaths.create } : {}),
     references: references.length,
     specs: Object.fromEntries(Object.entries(wireSpecs).filter(([, v]) => v !== undefined)),
     ...(input.extra && Object.keys(input.extra).length > 0 ? { extra: Object.keys(input.extra) } : {}),
   });
 
   const startedAt = Date.now();
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
+  let payload: UpstreamPayload;
+  let decoded: UpstreamImage[];
+  if (jobPaths) {
+    ({ payload, decoded } = await runImageJob({
+      base,
+      paths: jobPaths,
       headers,
       body: requestBody,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch (err) {
-    const msg = (err as Error).message;
-    const timedOut = (err as Error).name === 'TimeoutError';
-    logger.warn({ msg: 'imagegen.upstream_unreachable', url, err: msg });
-    throw new ImageGenError(
-      timedOut
-        ? `Image request timed out after ${Math.round(timeoutMs / 1000)}s. Large resolutions take longer — raise imageGen.timeoutMs if this repeats.`
-        : `Image upstream unreachable: ${msg}`,
-      'upstream',
-    );
-  }
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    logger.warn({ msg: 'imagegen.upstream_error', status: res.status, body: text.slice(0, 500) });
-    // 503/504 means "not right now". The upstream body typically names
-    // WHY — the active GPU profile, for instance — so it is relayed
-    // verbatim rather than summarised away.
-    if (res.status === 503 || res.status === 504) {
+      requestTimeoutMs: timeoutMs,
+      jobTimeoutMs: entry.jobTimeoutMs ?? config.imageGen?.jobTimeoutMs ?? 900_000,
+      label,
+      modelName: entry.name,
+      baseUrl: provider.baseUrl,
+      apiKey: provider.apiKey,
+      warnings,
+    }));
+  } else {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: requestBody,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      const msg = (err as Error).message;
+      const timedOut = (err as Error).name === 'TimeoutError';
+      logger.warn({ msg: 'imagegen.upstream_unreachable', url, err: msg });
       throw new ImageGenError(
-        `Image model '${entry.name}' is not available right now (upstream ${res.status}). ` +
-          `This is usually temporary. Upstream says: ${text.slice(0, 300)}`,
-        'unavailable',
+        timedOut
+          ? `Image request timed out after ${Math.round(timeoutMs / 1000)}s. Large resolutions take longer — raise imageGen.timeoutMs if this repeats.`
+          : `Image upstream unreachable: ${msg}`,
+        'upstream',
       );
     }
-    throw new ImageGenError(
-      `Image upstream returned ${res.status}: ${text.slice(0, 300)}`,
-      'upstream',
-    );
-  }
 
-  const payload = (await res.json()) as {
-    data?: RawImageRow[];
-    images?: RawImageRow[];
-    usage?: { cost?: number };
-    /** Non-standard, and worth reading where a provider offers it: the
-     *  parameters it accepted but did not use, and free-text notes
-     *  about anything it adjusted. Absent almost everywhere — a strict
-     *  OpenAI-shaped proxy in front of a backend will drop them, which
-     *  is exactly why the size check below does not depend on them. */
-    ignored_params?: unknown;
-    warnings?: unknown;
-  };
-  const rows = payload.data ?? payload.images ?? [];
-  if (!Array.isArray(rows) || rows.length === 0) {
-    throw new ImageGenError(
-      'Image upstream returned no image data. The model may not support this endpoint.',
-      'upstream',
-    );
-  }
+    if (!res.ok) throw await upstreamFailure(res, entry.name);
 
-  const decoded: UpstreamImage[] = [];
-  for (const row of rows) {
-    const img = await rowToBytes(row, timeoutMs, provider.baseUrl, provider.apiKey);
-    if (img && img.bytes.length > 0) decoded.push(img);
-  }
-  if (decoded.length === 0) {
-    throw new ImageGenError(
-      'Image upstream returned rows without usable image data (no b64_json and no fetchable url).',
-      'upstream',
-    );
+    payload = (await res.json()) as UpstreamPayload;
+    const rows = payload.data ?? payload.images ?? [];
+    if (!Array.isArray(rows) || rows.length === 0) {
+      throw new ImageGenError(
+        'Image upstream returned no image data. The model may not support this endpoint.',
+        'upstream',
+      );
+    }
+
+    decoded = [];
+    for (const row of rows) {
+      const img = await rowToBytes(row, timeoutMs, provider.baseUrl, provider.apiKey);
+      if (img && img.bytes.length > 0) decoded.push(img);
+    }
+    if (decoded.length === 0) {
+      throw new ImageGenError(
+        'Image upstream returned rows without usable image data (no b64_json and no fetchable url).',
+        'upstream',
+      );
+    }
   }
 
   const costUsd = typeof payload.usage?.cost === 'number' ? payload.usage.cost : undefined;
@@ -547,8 +779,12 @@ async function generateOnce(
       );
     }
   }
+  const endpointNotes: string[] = [];
   if (Array.isArray(payload.warnings)) {
-    for (const w of payload.warnings) if (typeof w === 'string' && w) warnings.push(w);
+    for (const w of payload.warnings) if (typeof w === 'string' && w) {
+      warnings.push(w);
+      endpointNotes.push(w);
+    }
   }
 
   // And the check that needs no cooperation: did we get the size we
@@ -560,7 +796,12 @@ async function generateOnce(
   const firstDims = readDimensions(decoded[0]!.bytes);
   if (requested && firstDims &&
       (requested.width !== firstDims.width || requested.height !== firstDims.height)) {
-    warnings.push(sizeSubstitutionNote(requested, firstDims, references[0] ? readDimensions(references[0].bytes) : null, references.length));
+    // The endpoint may already have said why, naming the size it
+    // delivered; a second explanation of the same thing is noise.
+    const explained = endpointNotes.some((w) => w.includes(`${firstDims.width}x${firstDims.height}`));
+    if (!explained) {
+      warnings.push(sizeSubstitutionNote(requested, firstDims, references[0] ? readDimensions(references[0].bytes) : null, references.length));
+    }
     logger.info({
       msg: 'imagegen.size_substituted',
       model: entry.name,
