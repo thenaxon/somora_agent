@@ -315,8 +315,23 @@ export interface VideoStatusResponse {
   reason?: string;
   active?: number;
   limit?: number;
-  models?: Array<{ name: string; label: string; model: string; provider: string; wire: string }>;
+  models?: Array<{
+    name: string;
+    label: string;
+    model: string;
+    provider: string;
+    wire: string;
+    /** Input files the model takes, by type (docs/videogen.md). */
+    media?: Record<string, VideoMediaSummary>;
+  }>;
   jobs?: VideoJobDto[];
+}
+
+export interface VideoMediaSummary {
+  kind: 'image' | 'video' | 'audio';
+  max?: number;
+  min?: number;
+  max_seconds?: number;
 }
 
 export interface GenerateVideoBody {
@@ -328,6 +343,8 @@ export interface GenerateVideoBody {
   audio?: boolean;
   quality?: boolean;
   seed?: number;
+  /** Input files by meaning; `data` is a data: URI or bare base64. */
+  media?: Array<{ type: string; data: string; filename?: string }>;
 }
 
 export type ImageSpecField =

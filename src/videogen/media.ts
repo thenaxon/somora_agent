@@ -173,6 +173,28 @@ export function mediaSlots(
   return slots;
 }
 
+/** What a client shows about a model's inputs: per type the kind of
+ *  file, how many, how many are needed, how long. */
+export interface MediaSummary {
+  kind: MediaKind;
+  max?: number;
+  min?: number;
+  max_seconds?: number;
+}
+
+export function describeSlots(slots: Partial<Record<VideoMediaType, MediaSlot>>): Partial<Record<VideoMediaType, MediaSummary>> {
+  const out: Partial<Record<VideoMediaType, MediaSummary>> = {};
+  for (const [type, slot] of Object.entries(slots) as [VideoMediaType, MediaSlot][]) {
+    out[type] = {
+      kind: MEDIA_KIND[type],
+      ...(slot.max !== undefined ? { max: slot.max } : {}),
+      ...(slot.min ? { min: slot.min } : {}),
+      ...(slot.maxSeconds !== undefined ? { max_seconds: slot.maxSeconds } : {}),
+    };
+  }
+  return out;
+}
+
 /** `reference_images` in media terms — the meaning the tool has always
  *  documented: one is the opening frame, two are opening and closing
  *  frame, more are reference images. */

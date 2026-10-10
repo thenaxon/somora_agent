@@ -48,7 +48,11 @@ comes back with the video in the chat.
 
 You can also start a render yourself. Open the Media window in the web
 client, switch to **Video**, type a prompt and press **Start render**.
-The form offers the model, the length in seconds and the aspect ratio.
+The form offers the model, the length in seconds and the aspect ratio,
+and a file picker for each input the chosen model takes, such as the
+video to change and the character image, marked "needed" where the
+model requires it. Keyframes are left to agents, since each one needs a
+time.
 
 ## Nothing appears until it is configured
 

@@ -15,6 +15,7 @@ import {
   formatWhen,
   MediaWindow,
   specSummary,
+  VideoMediaInputs,
 } from './MediaWindow';
 
 let ok = 0;
@@ -140,6 +141,32 @@ t('ohne Katalog sind die Spec-Felder Freitext', () => {
 t('nennt den Ablageort im Formular', () => {
   const html = renderToString(React.createElement(MediaWindow));
   assert(html.includes('Every image is kept in'), 'Hinweis zum Ablageort fehlt');
+});
+
+// ── video input pickers ─────────────────────────────────────────────
+
+t('video form offers one picker per input the model takes, marks what is needed', () => {
+  const html = renderToString(
+    React.createElement(VideoMediaInputs, {
+      media: {
+        input_video: { kind: 'video', min: 1, max: 1, max_seconds: 30 },
+        character_image: { kind: 'image', min: 1, max: 1 },
+        reference_image: { kind: 'image', max: 4 },
+        keyframe_image: { kind: 'image' },
+      },
+      files: {},
+      onChange: () => {},
+    }),
+  ).replace(/<!-- -->/g, '');
+  assert(html.includes('video-media-input_video') && html.includes('video-media-character_image'), 'pickers missing');
+  assert(html.includes('Input video (needed)') && html.includes('up to 30 s'), 'needed / length not shown');
+  assert(html.includes('accept="video/*"') && html.includes('accept="image/*"'), 'accept filter missing');
+  assert(html.includes('up to 4') && /multiple=""/.test(html), 'several reference images not offered');
+  assert(!html.includes('keyframe'), 'keyframes are left to agents');
+});
+
+t('no pickers for a model that takes no files', () => {
+  assert(renderToString(React.createElement(VideoMediaInputs, { media: {}, files: {}, onChange: () => {} })) === '', 'rendered something');
 });
 
 console.log(`\n${ok} ok, ${bad} fehlgeschlagen`);

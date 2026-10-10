@@ -28,7 +28,7 @@ import {
   type JobState,
 } from './dialects.ts';
 import { checkSlot, isActive, readJob, updateJob, writeJob, type VideoJob } from './jobs.ts';
-import { buildCreateBody, checkMedia, mediaFromReferences, type MediaItem } from './media.ts';
+import { buildCreateBody, checkMedia, describeSlots, mediaFromReferences, mediaSlots, type MediaItem } from './media.ts';
 
 /** Thrown for anything the caller can fix. Relayed to the model as-is;
  *  `unavailable` means "not right now" and is not the caller's fault. */
@@ -116,6 +116,17 @@ async function capsFor(
     model: entry.model,
     capabilitiesEndpoint: entry.capabilitiesEndpoint,
   } as never);
+}
+
+/** The input files a configured model takes, as clients show them
+ *  (GET /video/status). Empty when the model or its provider is unusable. */
+export async function videoModelMedia(config: Config, name: string): Promise<ReturnType<typeof describeSlots>> {
+  const resolved = resolveVideoModel(config, name);
+  if (!resolved || resolved.provider.engine !== 'openai-compatible') return {};
+  const caps: ModelCapabilities = await capsFor(resolved.providerName, resolved.provider as OpenAiCompatibleProvider, resolved.entry).catch(
+    (): ModelCapabilities => ({ known: false, source: 'unknown', values: {} }),
+  );
+  return describeSlots(mediaSlots(resolved.entry, caps));
 }
 
 /** Which content flavours this model serves. The catalog answers it;

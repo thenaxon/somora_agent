@@ -14,7 +14,7 @@
 import { z } from 'zod';
 import { readFile, stat } from 'node:fs/promises';
 import type { Buffer } from 'node:buffer';
-import { MAX_MEDIA_BYTES, MEDIA_KIND, mediaItemFromBytes, mediaSlots, type MediaItem } from '../../videogen/media.ts';
+import { describeSlots, MAX_MEDIA_BYTES, mediaItemFromBytes, mediaSlots, type MediaItem } from '../../videogen/media.ts';
 import { startVideoJob, VideoGenError } from '../../videogen/generate.ts';
 import { checkSlot, listJobs, readJob } from '../../videogen/jobs.ts';
 import { resolveCapabilities } from '../../media/capabilities.ts';
@@ -402,17 +402,7 @@ interface VideoModelRow {
 }
 
 function mediaRow(slots: ReturnType<typeof mediaSlots>): VideoModelRow['media'] {
-  const out: NonNullable<VideoModelRow['media']> = {};
-  for (const [type, slot] of Object.entries(slots)) {
-    if (!slot) continue;
-    out[type] = {
-      kind: MEDIA_KIND[type as keyof typeof MEDIA_KIND],
-      ...(slot.max !== undefined ? { max: slot.max } : {}),
-      ...(slot.min ? { min: slot.min } : {}),
-      ...(slot.maxSeconds !== undefined ? { max_seconds: slot.maxSeconds } : {}),
-    };
-  }
-  return out;
+  return describeSlots(slots) as VideoModelRow['media'];
 }
 
 /**

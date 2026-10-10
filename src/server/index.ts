@@ -41,7 +41,7 @@ import { mergeSampling, SAMPLING_KEYS } from '../engine/sampling.ts';
 import { storeAttachment } from '../attachments/store.ts';
 import { generateImage, ImageGenError } from '../imagegen/generate.ts';
 import { referenceFromBase64 } from '../imagegen/references.ts';
-import { startVideoJob, VideoGenError } from '../videogen/generate.ts';
+import { startVideoJob, VideoGenError, videoModelMedia } from '../videogen/generate.ts';
 import { mediaItemFromBytes, type MediaItem } from '../videogen/media.ts';
 import { checkSlot as checkVideoSlot, listJobs as listVideoJobs } from '../videogen/jobs.ts';
 import { configureVideoNotifier, startVideoRunner } from '../videogen/runner.ts';
@@ -4821,13 +4821,17 @@ app.get('/video/status', async (c) => {
     enabled: true,
     active: slot.active,
     limit: slot.limit,
-    models: config.videoGen!.models.map((m) => ({
-      name: m.name,
-      label: m.label ?? m.name,
-      model: m.model,
-      provider: m.provider,
-      wire: m.wire,
-    })),
+    models: await Promise.all(
+      config.videoGen!.models.map(async (m) => ({
+        name: m.name,
+        label: m.label ?? m.name,
+        model: m.model,
+        provider: m.provider,
+        wire: m.wire,
+        // The input files it takes, so a form can offer the right pickers.
+        media: await videoModelMedia(config, m.name),
+      })),
+    ),
     jobs,
   });
 });

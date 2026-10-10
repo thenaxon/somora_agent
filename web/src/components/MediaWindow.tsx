@@ -24,6 +24,8 @@ import {
   type ImageModelOption,
   type ImageRecordDto,
   type MediaRecordDto,
+  type GenerateVideoBody,
+  type VideoMediaSummary,
   type VideoStatusResponse,
   type ImagesStatus,
   type ImageSpecField,
@@ -97,6 +99,11 @@ export function MediaWindow() {
   const [videoModel, setVideoModel] = useState('');
   const [seconds, setSeconds] = useState('');
   const [videoSpecs, setVideoSpecs] = useState<{ aspect_ratio?: string; size?: string }>({});
+  /** Files picked for the video form, by media type. Cleared when the
+   *  model changes, because another model takes other inputs. */
+  const [videoFiles, setVideoFiles] = useState<Record<string, File[]>>({});
+  /** Bumped to empty the file pickers themselves (they are uncontrolled). */
+  const [pickerReset, setPickerReset] = useState(0);
   const [reloadTick, setReloadTick] = useState(0);
   const [selected, setSelected] = useState<MediaRecordDto | null>(null);
 
@@ -248,12 +255,22 @@ export function MediaWindow() {
     setBusy(true);
     setError(null);
     try {
+      const media: NonNullable<GenerateVideoBody['media']> = [];
+      for (const [type, files] of Object.entries(videoFiles)) {
+        for (const f of files) {
+          if (f.size > MAX_VIDEO_INPUT_BYTES) throw new Error(`${f.name} is larger than 200 MB.`);
+          media.push({ type, data: await readAsDataUrl(f), filename: f.name });
+        }
+      }
       await api.generateVideo({
         prompt: prompt.trim(),
         ...(videoModel ? { model: videoModel } : {}),
         ...(seconds.trim() ? { seconds: Number(seconds.trim()) } : {}),
         ...(videoSpecs.aspect_ratio ? { aspect_ratio: videoSpecs.aspect_ratio } : {}),
+        ...(media.length > 0 ? { media } : {}),
       });
+      setVideoFiles({});
+      setPickerReset((n) => n + 1);
       // The job list picks it up on its next tick; nothing to show yet.
       setVideo(await api.videoStatus());
     } catch (err) {
@@ -261,7 +278,7 @@ export function MediaWindow() {
     } finally {
       setBusy(false);
     }
-  }, [prompt, busy, videoModel, seconds, videoSpecs]);
+  }, [prompt, busy, videoModel, seconds, videoSpecs, videoFiles]);
 
   const generate = useCallback(async () => {
     if (!prompt.trim() || busy) return;
@@ -381,7 +398,11 @@ export function MediaWindow() {
           {mode === 'video' ? (
             <select
               value={videoModel}
-              onChange={(e) => setVideoModel(e.target.value)}
+              onChange={(e) => {
+                setVideoModel(e.target.value);
+                setVideoFiles({});
+                setPickerReset((n) => n + 1);
+              }}
               style={inputStyle}
             >
               {(video?.models ?? []).map((m) => (
@@ -447,6 +468,12 @@ export function MediaWindow() {
                 ))}
               </select>
             </label>
+            <VideoMediaInputs
+              key={pickerReset}
+              media={(video?.models ?? []).find((m) => m.name === (videoModel || video?.models?.[0]?.name))?.media}
+              files={videoFiles}
+              onChange={(type, files) => setVideoFiles((v) => ({ ...v, [type]: files }))}
+            />
             <div style={{ color: 'var(--text-3)', fontSize: 11, lineHeight: 1.4 }}>
               A render takes minutes. This starts it and returns — the gallery updates by itself
               when it lands.
@@ -1014,6 +1041,72 @@ function PathRow({
         {outcome === 'copied' ? <Check size={11} /> : <Copy size={11} />} {label}
       </button>
     </div>
+  );
+}
+
+const MAX_VIDEO_INPUT_BYTES = 200 * 1024 * 1024;
+
+/** Labels for the media types a video model can take. Keyframes are not
+ *  offered here: each needs a time, which agents give per file. */
+const MEDIA_LABELS: Record<string, string> = {
+  first_frame: 'Opening frame',
+  last_frame: 'Closing frame',
+  reference_image: 'Reference images',
+  reference_video: 'Reference videos',
+  input_video: 'Input video',
+  character_image: 'Character image',
+  reference_audio: 'Reference audio',
+};
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(new Error(`could not read ${file.name}`));
+    r.readAsDataURL(file);
+  });
+}
+
+/** One file picker per input the chosen video model takes. Exported for
+ *  media-render.test.mts. */
+export function VideoMediaInputs({
+  media,
+  files,
+  onChange,
+}: {
+  media: Record<string, VideoMediaSummary> | undefined;
+  files: Record<string, File[]>;
+  onChange: (type: string, files: File[]) => void;
+}) {
+  const entries = Object.entries(media ?? {}).filter(([type]) => type in MEDIA_LABELS);
+  if (entries.length === 0) return null;
+  return (
+    <>
+      {entries.map(([type, m]) => {
+        const many = m.max === undefined || m.max > 1;
+        const picked = files[type] ?? [];
+        return (
+          <label key={type} style={labelStyle} data-testid={`video-media-${type}`}>
+            <span>
+              {MEDIA_LABELS[type]}
+              {m.min ? ' (needed)' : ''}
+              {many && m.max !== undefined ? ` · up to ${m.max}` : ''}
+              {m.max_seconds !== undefined ? ` · up to ${m.max_seconds} s` : ''}
+            </span>
+            <input
+              type="file"
+              accept={`${m.kind}/*`}
+              multiple={many}
+              onChange={(e) => onChange(type, Array.from(e.target.files ?? []))}
+              style={{ ...inputStyle, padding: '4px 6px' }}
+            />
+            {picked.length > 0 && (
+              <span style={{ color: 'var(--text-3)' }}>{picked.map((f) => f.name).join(', ')}</span>
+            )}
+          </label>
+        );
+      })}
+    </>
   );
 }
 
