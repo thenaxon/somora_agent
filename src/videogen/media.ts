@@ -118,6 +118,8 @@ export function mediaItemFromBytes(
  *  from — the source decides the wording of a refusal. */
 export interface MediaSlot extends VideoMediaField {
   source: 'config' | 'catalog' | 'dialect';
+  /** Frame rate this type's frame numbers count at, from the catalog. */
+  fps?: number;
 }
 
 /** The dialects' published formats. `passthrough` is somora's own
@@ -157,6 +159,9 @@ export function mediaSlots(
         ...(m.max !== undefined ? { max: m.max } : {}),
         ...(m.min !== undefined ? { min: m.min } : {}),
         ...(m.maxSeconds !== undefined ? { maxSeconds: m.maxSeconds } : {}),
+        ...(m.minSeconds !== undefined ? { minSeconds: m.minSeconds } : {}),
+        ...(m.item ? { item: m.item } : {}),
+        ...(m.fps !== undefined ? { fps: m.fps } : {}),
         source: 'catalog',
       };
     }
@@ -283,6 +288,11 @@ export function checkMedia(
         `${it.filename} runs ${it.durationSec.toFixed(1)} s, but ${label} takes at most ${slot.maxSeconds} s for ${it.type}.`,
       );
     }
+    if (slot?.minSeconds !== undefined && it.durationSec !== undefined && it.durationSec < slot.minSeconds) {
+      problems.push(
+        `${it.filename} runs ${it.durationSec.toFixed(1)} s, but ${label} needs at least ${slot.minSeconds} s for ${it.type}.`,
+      );
+    }
     const keyframe = it.type === 'keyframe_image' || it.type === 'keyframe_video';
     if (keyframe) {
       if (it.seconds === undefined) problems.push(`${it.type} ${it.filename} needs seconds: where in the video it belongs.`);
@@ -291,7 +301,7 @@ export function checkMedia(
           problems.push(
             `${label} has no keyframe format configured for ${it.type}: set videoGen.models[].media.${it.type}.item (url and seconds or frame) in config.yaml.`,
           );
-        } else if (slot.item.frame && !slot.item.seconds && fps === undefined) {
+        } else if (slot.item.frame && !slot.item.seconds && (slot.fps ?? fps) === undefined) {
           // Seconds in, and a refusal rather than a guessed frame rate.
           problems.push(
             `${label} takes keyframes as frame numbers, and its frame rate is unknown — set videoGen.models[].fps, or have the catalog publish fps.`,
@@ -320,7 +330,7 @@ export function checkMedia(
       problems.push(`a last_frame needs a first_frame with it on ${label}.`);
     }
   }
-  const transport = entry.transport ?? 'multipart';
+  const transport = effectiveTransport(items, slots, entry.transport);
   if (entry.wire !== 'veo' && transport === 'multipart') {
     for (const it of items) {
       if (slots[it.type]?.item) {
@@ -332,10 +342,28 @@ export function checkMedia(
   return { slots, problems };
 }
 
-/** True when every file in the request uses a slot the passthrough
- *  dialect supplied itself — then the old field rules apply unchanged. */
+/** True when every file in the request goes under one of the field names
+ *  passthrough has always used (first_frame, last_frame, image[]) —
+ *  whether the dialect, a catalog or the config chose that name. Then the
+ *  old rules apply unchanged, so a single opening frame still goes as
+ *  image[]: an existing setup sends the same bytes after a provider's
+ *  catalog starts naming its fields. */
 function usesLegacyPassthrough(items: MediaItem[], slots: Partial<Record<VideoMediaType, MediaSlot>>): boolean {
-  return items.length > 0 && items.every((it) => slots[it.type]?.source === 'dialect');
+  return items.length > 0 && items.every((it) => {
+    const legacy = DIALECT_SLOTS.passthrough[it.type]?.field;
+    return legacy !== undefined && slots[it.type]?.field === legacy;
+  });
+}
+
+/** Multipart unless the model says otherwise — or a file type that needs
+ *  JSON (a keyframe list) is in the request and nothing forbids it. */
+export function effectiveTransport(
+  items: MediaItem[],
+  slots: Partial<Record<VideoMediaType, MediaSlot>>,
+  configured?: 'multipart' | 'json',
+): 'multipart' | 'json' {
+  if (configured) return configured;
+  return items.some((it) => slots[it.type]?.item) ? 'json' : 'multipart';
 }
 
 function blobOf(it: MediaItem): Blob {
@@ -414,7 +442,7 @@ export function buildCreateBody(args: {
 
   if (wire === 'veo') return veoBody(prompt, specs, items, slots);
 
-  const transport = args.transport ?? 'multipart';
+  const transport = effectiveTransport(items, slots, args.transport);
   if (items.length === 0) {
     return { body: JSON.stringify({ model, prompt, ...specs }), contentType: 'application/json' };
   }
@@ -453,7 +481,7 @@ export function buildCreateBody(args: {
   for (const [field, list] of byField) {
     const slot = slots[list[0]!.type]!;
     if (slot.item) {
-      const objs = list.map((it) => keyframeObject(it, slot, args.fps));
+      const objs = list.map((it) => keyframeObject(it, slot, slot.fps ?? args.fps));
       const existing = getPath(body, field);
       setPath(body, field, [...(Array.isArray(existing) ? existing : []), ...objs]);
       continue;

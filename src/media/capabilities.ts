@@ -338,8 +338,22 @@ function acceptedMedia(raw: Record<string, unknown>): Record<string, CatalogMedi
     if (n(r.max) !== undefined) m.max = n(r.max);
     const secs = n(r.max_seconds) ?? n(r.maxSeconds);
     if (secs !== undefined) m.maxSeconds = secs;
+    const minSecs = n(r.min_seconds) ?? n(r.minSeconds);
+    if (minSecs !== undefined) m.minSeconds = minSecs;
     const fields = asStringArray(r.fields);
     if (fields) m.fields = fields;
+    const fps = n(r.anchor_fps) ?? n(r.fps);
+    if (fps) m.fps = fps;
+    const item = r.item && typeof r.item === 'object' && !Array.isArray(r.item) ? (r.item as Record<string, unknown>) : null;
+    const key = (v: unknown) => (typeof v === 'string' && v.length > 0 ? v : undefined);
+    if (item && key(item.url)) {
+      m.item = {
+        url: key(item.url)!,
+        ...(key(item.seconds) ? { seconds: key(item.seconds)! } : {}),
+        ...(key(item.frame) ? { frame: key(item.frame)! } : {}),
+        ...(key(item.strength) ? { strength: key(item.strength)! } : {}),
+      };
+    }
     out[type] = m;
   }
   return Object.keys(out).length > 0 ? out : undefined;

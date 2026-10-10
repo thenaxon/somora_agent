@@ -46,13 +46,15 @@ async function tick(getConfig: () => Config): Promise<void> {
     const config = getConfig();
     if (!config.videoGen?.enabled) return;
 
-    const jobTimeoutMs = config.videoGen.jobTimeoutMs;
+    const videoGen = config.videoGen;
+    const jobTimeoutMs = videoGen.jobTimeoutMs;
     const active = await listJobs({ active: true });
 
     await Promise.all(
       active.map(async (job) => {
         const age = Date.now() - new Date(job.createdAt).getTime();
-        if (age > jobTimeoutMs) {
+        const limit = videoGen.models.find((m) => m.name === job.modelName)?.jobTimeoutMs ?? jobTimeoutMs;
+        if (age > limit) {
           logger.warn({ msg: 'videogen.job_timeout', job: job.id, ageMs: age });
           await updateJob(job.id, {
             status: 'failed',

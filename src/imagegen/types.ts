@@ -128,7 +128,12 @@ export interface CatalogMedia {
   min?: number;
   max?: number;
   maxSeconds?: number;
+  minSeconds?: number;
   fields?: string[];
+  /** Keyframes: the keys of each list entry (file, time, strength). */
+  item?: { url: string; seconds?: string; frame?: string; strength?: string };
+  /** Frame rate a keyframe's frame number counts at (`anchor_fps`). */
+  fps?: number;
 }
 
 /** Does this model accept `field`? Unknown counts as yes — see the note

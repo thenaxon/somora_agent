@@ -205,13 +205,18 @@ knows, gets a `media` block on the model:
 
 With `transport: json` a dotted field nests (`input.video_url`), and
 several files of one type become a list. With the default `multipart`
-each file is a file part under its field name.
+each file is a file part under its field name. A request with keyframes
+goes as JSON on its own, unless the model sets `transport: multipart`.
+
+A catalog that publishes `accepted_media` gives the same per type:
+`fields`, `min`, `max`, `max_seconds`, `min_seconds`, and for keyframes
+`item` and `anchor_fps`, the frame rate its frame numbers count at.
 
 ### Keyframes
 
 A keyframe carries `seconds`: where in the video it belongs. Providers
 that take keyframes want them as a list of objects, so a keyframe type
-needs an `item` format and `transport: json`:
+needs an `item` format, from the catalog or the config:
 
 ```yaml
       fps: 24
@@ -222,15 +227,16 @@ needs an `item` format and `transport: json`:
 ```
 
 With `seconds` in `item` the time goes as given. With `frame` it is
-converted with the model's `fps`, or the catalog's. When neither is
-known the call is refused rather than guessed.
+converted with the catalog's `anchor_fps` for that type, or the model's
+`fps`. When neither is known the call is refused rather than guessed.
 
 ### What is checked before sending
 
 - the type is one the model takes, and not too many of it
 - every type the model needs (`min`) is there
 - the file is the right kind: an image for an image type, and so on
-- a video is no longer than `maxSeconds`, where its length can be read
+- a video is no longer than `maxSeconds` and no shorter than
+  `minSeconds`, where its length can be read
 - `seconds` only on keyframes
 
 ## Thumbnails
@@ -331,7 +337,7 @@ videoGen:
 | `monthlyFolders` | `false` | Store into a `YYYY-MM` subfolder. |
 | `maxConcurrent` | `4` | Renders in flight across all agents. 1 to 32. |
 | `pollIntervalMs` | `8000` | How often running jobs are checked. Minimum 1000. Read once when the server starts. |
-| `jobTimeoutMs` | `2700000` | A job older than this is given up and marked failed, so a stuck job does not hold a slot forever. |
+| `jobTimeoutMs` | `2700000` | A job older than this is given up and marked failed, so a stuck job does not hold a slot forever. A model can set its own. |
 | `requestTimeoutMs` | `120000` | Time limit for a single create, poll or download request. Not for the render. |
 | `models` | none | The video models. The first one is the default. |
 
@@ -350,6 +356,7 @@ Each entry under `models`:
 | `media` | none | Field name per input type. See "Naming a field yourself". |
 | `transport` | `multipart` | `multipart` or `json`: how input files travel. `veo` always uses its own JSON. |
 | `fps` | from the catalog | Frames per second, for keyframes given as frame numbers. |
+| `jobTimeoutMs` | `videoGen.jobTimeoutMs` | This model's own limit for one render, for a model much slower than the rest. |
 | `allow` | none | Declares what the model accepts when the provider has no catalog. Takes precedence over a catalog. |
 | `fallback` | none | Handle of another video model. Accepted by the config. The video path does not act on it yet. |
 
@@ -369,7 +376,7 @@ Keys of an entry under `media`:
 |---|---|
 | `field` | Required. The field name. With `transport: json` a dotted path nests it. |
 | `max`, `min` | How many files of this type the model takes, and needs. |
-| `maxSeconds` | Longest video or audio of this type. |
+| `maxSeconds`, `minSeconds` | Longest and shortest video or audio of this type. |
 | `array` | JSON only: send a list even for one file. |
 | `item` | Keyframes: `url` and either `seconds` or `frame`, optionally `strength`. Names of the keys in each list entry. |
 

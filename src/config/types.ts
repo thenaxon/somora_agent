@@ -1565,6 +1565,8 @@ export const VideoMediaFieldSchema = z
     min: z.number().int().min(0).max(64).optional(),
     /** Longest video or audio of this type, in seconds. */
     maxSeconds: z.number().positive().optional(),
+    /** Shortest video or audio of this type, in seconds. */
+    minSeconds: z.number().positive().optional(),
     /** JSON only: send a list even for a single file. */
     array: z.boolean().optional(),
     /** Keyframes (JSON only): each file becomes an object in a list at
@@ -1650,6 +1652,10 @@ export const VideoModelSchema = z.object({
   /** Frames per second, for keyframes whose field takes a frame number.
    *  Read from the catalog's `fps` when there is one. */
   fps: z.number().positive().optional(),
+  /** This model's own limit for one render, instead of
+   *  `videoGen.jobTimeoutMs` — for a model far slower than the rest, such
+   *  as one that turns a minute of input video into an hour of work. */
+  jobTimeoutMs: z.number().int().positive().optional(),
   /** Offline capability override — same meaning as imageGen's. */
   allow: z
     .object({

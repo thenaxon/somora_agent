@@ -233,6 +233,36 @@ test('catalog first_frame offers input_reference: the openai dialect picks it', 
   assert.equal(seen[0]!.parts!.at(-1)!.name, 'input_reference');
 });
 
+test('passthrough with a catalog that names the old fields still sends the old bytes', async () => {
+  catalog = { data: [{ id: 'mod-x', accepted_media: {
+    first_frame: { kind: 'image', max: 1, fields: ['image_url', 'start_image_url', 'input_reference', 'first_frame'] },
+    last_frame: { kind: 'image', max: 1, fields: ['end_image_url', 'last_frame'] },
+  } }] };
+  const model = { wire: 'passthrough', capabilitiesEndpoint: '/video/models' };
+  await start(model, { references: [ref(0)] });
+  assert.deepEqual(seen[0]!.parts!.slice(2).map((p) => p.name), ['image[]'], 'one opening frame stays image[]');
+  seen = [];
+  await start(model, { references: [ref(0), ref(1)] });
+  assert.deepEqual(seen[0]!.parts!.slice(2).map((p) => p.name), ['first_frame', 'last_frame']);
+});
+
+test('catalog keyframe form and anchor_fps: frame numbers at the type\'s rate, JSON chosen on its own', async () => {
+  catalog = { data: [{ id: 'mod-x', accepted_media: {
+    reference_image: { kind: 'image', max: 9, fields: ['reference_image_urls'] },
+    reference_video: { kind: 'video', max: 3, fields: ['reference_video_urls'], max_seconds: 15, min_seconds: 2 },
+    keyframe_image: { kind: 'image', max: 8, fields: ['images'], anchor_fps: 24, item: { url: 'image_url', frame: 'frame', strength: 'strength' } },
+  } }] };
+  const model = { wire: 'passthrough', capabilitiesEndpoint: '/video/models' };
+  await start(model, { media: [item('reference_image', PNG, 'a.png'), item('keyframe_image', JPG, 'k.jpg', { seconds: 2, strength: 0.5 })] });
+  const j = seen[0]!.json!;
+  assert.deepEqual(j.images, [{ image_url: `data:image/jpeg;base64,${JPG.toString('base64')}`, frame: 48, strength: 0.5 }]);
+  assert.deepEqual(j.reference_image_urls, [`data:image/png;base64,${PNG.toString('base64')}`], 'a list, since the model takes up to nine');
+  await assert.rejects(start(model, { media: [item('reference_video', mp4(1), 'short.mp4')] }), /needs at least 2 s/);
+  seen = [];
+  await start(model, { media: [item('reference_image', PNG, 'a.png'), item('reference_image', JPG, 'b.jpg')] });
+  assert.deepEqual(seen[0]!.parts!.slice(2).map((p) => p.name), ['reference_image_urls', 'reference_image_urls'], 'without keyframes: multipart parts under the catalog field');
+});
+
 // ─── keyframes ─────────────────────────────────────────────────────────
 
 test('keyframes: seconds as given, or a frame number from fps; refused without fps or format', async () => {
@@ -245,7 +275,10 @@ test('keyframes: seconds as given, or a frame number from fps; refused without f
   await start({ wire: 'passthrough', transport: 'json', media: bySeconds }, { media: [item('keyframe_image', PNG, 'k.png', { seconds: 3 })] });
   assert.deepEqual(seen[0]!.json!.keyframes, [{ uri: `data:image/png;base64,${PNG.toString('base64')}`, seconds: 3 }]);
   await assert.rejects(start({ wire: 'passthrough', transport: 'json', media: bySeconds }, { media: [item('keyframe_image', PNG, 'k.png')] }), /needs seconds/);
-  await assert.rejects(start({ wire: 'passthrough', media: bySeconds }, { media: [item('keyframe_image', PNG, 'k.png', { seconds: 1 })] }), /needs transport: json/);
+  await assert.rejects(start({ wire: 'passthrough', transport: 'multipart', media: bySeconds }, { media: [item('keyframe_image', PNG, 'k.png', { seconds: 1 })] }), /needs transport: json/);
+  seen = [];
+  await start({ wire: 'passthrough', media: bySeconds }, { media: [item('keyframe_image', PNG, 'k.png', { seconds: 1 })] });
+  assert.ok(seen[0]!.json?.keyframes, 'without a configured transport a keyframe request goes as JSON');
   await assert.rejects(start({ wire: 'veo', media: bySeconds }, { media: [item('keyframe_image', PNG, 'k.png', { seconds: 1 })] }), /no keyframes/);
   await assert.rejects(start({ wire: 'passthrough' }, { media: [item('first_frame', PNG, 'k.png', { seconds: 1 })] }), /seconds belongs to keyframes only/);
 });
