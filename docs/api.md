@@ -2426,7 +2426,7 @@ Returns `{enabled: false, reason}` when it is off. Otherwise:
 | Field | Meaning |
 |---|---|
 | `active`, `limit` | Jobs running now and the most allowed at once (`videoGen.maxConcurrent`). |
-| `models` | `[{name, label, model, provider, wire}]` |
+| `models` | `[{name, label, model, provider, wire, media}]`. `media` lists the input files the model takes, by type: `{kind, max?, min?, max_seconds?}`. |
 | `jobs` | Each `{id, providerJobId, modelName, provider, prompt, specs, status, progress?, queuePosition?, error?, createdAt, updatedAt, mediaId?, path?, agent?, session?, references?}`. |
 
 A job's `status` is `queued`, `in_progress`, `completed` or `failed`.
