@@ -76,6 +76,8 @@ export interface SessionQuestion {
   question: string;
   header?: string;
   options: Array<{ label: string; description?: string }>;
+  /** Several options may be chosen ("1,3"). */
+  multiple?: boolean;
   expiresAt: number;
 }
 

@@ -14,10 +14,13 @@ function remaining(expiresAt: number): string {
   return s >= 60 ? `${Math.round(s / 60)} min` : `${s} s`;
 }
 
-function tone(kind: string | undefined): string {
-  if (kind?.startsWith('allow')) return 'allow';
-  if (kind?.startsWith('reject')) return 'reject';
-  return '';
+const KINDS = new Set(['allow_once', 'allow_always', 'reject_once', 'reject_always']);
+
+/** An external agent's option carries its kind as description; a
+ *  builder's carries an explanation for the person. */
+function tone(description: string | undefined): string {
+  if (!description || !KINDS.has(description)) return '';
+  return description.startsWith('allow') ? 'allow' : 'reject';
 }
 
 export function useSessionQuestion(agent: string | null, session: string, streaming: boolean): { question: SessionQuestion | null; refresh: () => void } {
@@ -51,14 +54,16 @@ export function useSessionQuestion(agent: string | null, session: string, stream
 export function QuestionCard({ agent, session, question, onAnswered }: { agent: string; session: string; question: SessionQuestion; onAnswered: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const answer = async (label: string) => {
+  // A question with several answers allowed: tap to pick, then send.
+  const [picked, setPicked] = useState<string[]>([]);
+  const answer = async (labels: string[]) => {
     setBusy(true);
     setError(null);
     try {
       const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/questions/${encodeURIComponent(question.id)}/answer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answers: [label] }),
+        body: JSON.stringify({ answers: labels }),
       });
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`);
       onAnswered();
@@ -76,12 +81,30 @@ export function QuestionCard({ agent, session, question, onAnswered }: { agent: 
       </div>
       <div className="question-card-text">{question.question}</div>
       <div className="question-card-options">
-        {question.options.map((o) => (
-          <button key={o.label} type="button" disabled={busy} className={tone(o.description)} data-testid={`question-option-${o.label}`} onClick={() => void answer(o.label)}>
-            {o.label}
-          </button>
-        ))}
+        {question.options.map((o) => {
+          const on = picked.includes(o.label);
+          const note = o.description && !KINDS.has(o.description) ? o.description : null;
+          return (
+            <button
+              key={o.label}
+              type="button"
+              disabled={busy}
+              className={`${tone(o.description)} ${on ? 'picked' : ''}`}
+              aria-pressed={question.multiple ? on : undefined}
+              data-testid={`question-option-${o.label}`}
+              onClick={() => (question.multiple ? setPicked((p) => (on ? p.filter((x) => x !== o.label) : [...p, o.label])) : void answer([o.label]))}
+            >
+              <span>{o.label}</span>
+              {note && <span className="question-option-note">{note}</span>}
+            </button>
+          );
+        })}
       </div>
+      {question.multiple && (
+        <button type="button" className="question-card-send" disabled={busy || picked.length === 0} onClick={() => void answer(picked)}>
+          Send {picked.length > 0 ? `(${picked.length})` : ''}
+        </button>
+      )}
       {error && <div className="question-card-error">{error}</div>}
     </div>
   );

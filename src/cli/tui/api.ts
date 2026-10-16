@@ -462,10 +462,10 @@ export class Api {
   }
 
   /** Answer the session's open question with an option label. */
-  async answerSessionQuestion(agent: string, session: string, questionId: string, label: string): Promise<void> {
+  async answerSessionQuestion(agent: string, session: string, questionId: string, labels: string[]): Promise<void> {
     const res = await loopbackFetch(
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/questions/${encodeURIComponent(questionId)}/answer`,
-      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ answers: [label] }) },
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ answers: labels }) },
     );
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };

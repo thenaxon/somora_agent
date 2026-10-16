@@ -319,6 +319,7 @@ export function openStream(
             options: (data.options as Array<{ label?: unknown; description?: unknown }>)
               .filter((o) => typeof o?.label === 'string')
               .map((o) => ({ label: o.label as string, ...(typeof o.description === 'string' ? { description: o.description } : {}) })),
+            ...(data.multiple === true ? { multiple: true } : {}),
             expiresAt: typeof data.expiresAt === 'number' ? data.expiresAt : Date.now() + 600_000,
           },
         };

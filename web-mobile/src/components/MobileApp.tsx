@@ -293,7 +293,10 @@ export function MobileApp() {
     : fallback
       ? labelForRef(fallback.actual, [])
       : modelLabel(sessionModel.info);
-  const question = useSessionQuestion(activeExternal ? activeAgent : null, session.id, chat.streaming);
+  // Agents that can ask the person: external agents (permission
+  // requests) and builders (ask_user).
+  const asks = activeExternal !== null || agents.find((a) => a.name === activeAgent)?.kind === 'builder';
+  const question = useSessionQuestion(asks ? activeAgent : null, session.id, chat.streaming);
 
   // Keep the screen awake while the app is open. Sticky per browser;
   // the hook re-acquires the lock every time the app comes back to the

@@ -51,8 +51,10 @@ const HISTORY_MAX = 100;
  *  permission: exec: rm -rf /tmp/x — 1 Allow once · 2 Reject (type the
  *  number)". */
 export function questionNotice(agent: string, q: SessionQuestion): string {
-  const options = q.options.map((o, i) => `${i + 1} ${o.label}`).join(' · ');
-  return `❓ ${q.question}\n   ${options}   — type the number (${agent} waits)`;
+  const kinds = new Set(['allow_once', 'allow_always', 'reject_once', 'reject_always']);
+  const lines = q.options.map((o, i) => `   ${i + 1} ${o.label}${o.description && !kinds.has(o.description) ? ` — ${o.description}` : ''}`);
+  const how = q.multiple ? 'type the numbers, e.g. 1,3' : 'type the number';
+  return `❓ ${q.question}\n${lines.join('\n')}\n   ${how} (${agent} waits)`;
 }
 
 function fallbackNotice(fb: {
@@ -1049,15 +1051,16 @@ export function App({
     if (!trimmed) return;
     setInput('');
     // An open question takes its option's number ("1", "2", …).
-    if (openQuestion && /^\d+$/.test(trimmed)) {
-      const option = openQuestion.options[Number(trimmed) - 1];
-      if (option) {
+    if (openQuestion && (openQuestion.multiple ? /^\d+(\s*[, ]\s*\d+)*$/ : /^\d+$/).test(trimmed)) {
+      const picks = [...new Set(trimmed.split(/[\s,]+/).map(Number))].map((n) => openQuestion.options[n - 1]);
+      if (picks.every(Boolean)) {
         const q = openQuestion;
+        const labels = picks.map((o) => o!.label);
         try {
-          await apiRef.current.answerSessionQuestion(agent, session, q.id, option.label);
+          await apiRef.current.answerSessionQuestion(agent, session, q.id, labels);
           if (openQuestionRef.current?.id === q.id) {
             setOpenQuestion(null);
-            appendTurn({ kind: 'system', id: nextId(), text: `→ ${option.label}`, tone: 'info' });
+            appendTurn({ kind: 'system', id: nextId(), text: `→ ${labels.join(', ')}`, tone: 'info' });
           }
         } catch (err) {
           appendTurn({ kind: 'system', id: nextId(), text: `could not answer: ${(err as Error).message}`, tone: 'error' });
