@@ -198,7 +198,7 @@ The thinking row only exists when the server captures reasoning.
 | Dot | Meaning |
 |---|---|
 | **Pulsing** | A turn is running in one of that agent's sessions. |
-| **Unread** | Something arrived since you last looked: a reply, a message from another agent, or a sentinel message. Your own messages do not count. |
+| **Unread**, top left | Something arrived since you last looked: a reply, a message from another agent, or a sentinel message. Your own messages and sub-agent sessions do not count. |
 | **REM / DEEP / LUCID pulse** | The agent is in a dream phase. |
 | **Number badge** | REM findings waiting for review. |
 | **Violet wiki chip** | Lucid runs waiting for review. |

@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { SessionMeta, SessionMetaStore } from '../engine/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
+import { isSubagentSession } from '../tools/gating.ts';
 
 const EXACT_ID_PATTERN = /^\d{8}-\d{6}_[A-Za-z0-9_-]+$/;
 const VALID_SLUG = /^[A-Za-z0-9_-]+$/;
@@ -548,7 +549,10 @@ export async function listSessions(
       archiveReason: typeof meta.archiveReason === 'string' ? meta.archiveReason : undefined,
       archivedAt: typeof meta.archivedAt === 'string' ? meta.archivedAt : undefined,
       projectSlug: typeof meta.projectSlug === 'string' ? meta.projectSlug : undefined,
-      unreadAt: typeof meta.unreadAt === 'string' ? meta.unreadAt : null,
+      // A sub-agent's session is never unread for the person: its answer
+      // goes back to the agent that asked, and that conversation is
+      // marked. Older marks of such sessions are ignored here too.
+      unreadAt: typeof meta.unreadAt === 'string' && !isSubagentSession(meta) ? meta.unreadAt : null,
       seenAt: typeof meta.seenAt === 'string' ? meta.seenAt : null,
     });
   }

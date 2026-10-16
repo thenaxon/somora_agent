@@ -196,10 +196,12 @@ button { cursor: pointer; }
  * NOW" first; unread (passive) only shows when the agent is idle but
  * has new movement since the user last looked. Distinct color from
  * the streaming dot so it doesn't look like a paused stream. */
+/* Top-left, where the web tile has it: bottom-right is the streaming
+   dot, bottom-left an external agent's sign, top-right the REM count. */
 .avatar-unread-dot {
   position: absolute;
-  right: -2px;
-  bottom: -2px;
+  left: -2px;
+  top: -2px;
   width: 10px;
   height: 10px;
   border-radius: 50%;

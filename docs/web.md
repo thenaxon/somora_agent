@@ -81,7 +81,7 @@ again.
 | Signal | Meaning |
 |---|---|
 | Status dot | Green: idle. Amber: a turn is running in one of its sessions, open or not. Violet: holds the dream review loop. Grey: server unreachable. |
-| Unread dot | Something arrived in a session since you last looked: a reply, a message from another agent or a sentinel message. Your own messages do not count. |
+| Unread dot | Something arrived in a session since you last looked: a reply, a message from another agent or a sentinel message. Your own messages do not count, nor do the sessions of sub-agents: their answers reach you through the agent that asked. |
 | Pulse glow | A dream phase is running. Green: REM for this agent. Indigo: Deep, on every agent. Violet: Lucid, on the agent holding the review loop. |
 | Number badge | REM findings waiting for review, `9+` at most. It shrinks as an agent works through them with `dream_apply` and `dream_dismiss`. |
 | Grey outline and `builder` label | The agent is a builder. |
