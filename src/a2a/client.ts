@@ -419,7 +419,7 @@ async function streamTask(
       const state = normalizeState(status.status.state);
       const said = partsText(status.status.message?.parts);
       if (TERMINAL_STATES.has(state) || PAUSED_STATES.has(state)) {
-        const answer = state === 'completed' ? text || said : said || text;
+        const answer = (state === 'completed' ? text || said : said || text).trim();
         return { state, text: answer, ...(taskId ? { taskId } : {}), ...(contextId ? { contextId } : {}) };
       }
       input.onStatus?.(state, said, taskId);

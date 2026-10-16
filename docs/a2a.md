@@ -368,7 +368,7 @@ curl https://<host>.<tailnet>.ts.net:18737/a2a/agents/<agent>/.well-known/agent-
 | `a2a.replyTimeoutSeconds` | `300` | How long a waiting request waits for the answer before it returns the task as still working. |
 | `a2a.maxMessageChars` | `64000` | Longest task text. |
 | `a2a.archiveAfterDays` | `7` | A conversation with a peer is archived after this many days without activity. `0` keeps them. |
-| `a2a.tools.deny` | `agent_ask`, `agent_ask_result`, `agent_ask_cancel` | Tools a task from outside may not use, as in `subagents.tools.deny`. |
+| `a2a.tools.deny` | `agent_ask`, `agent_ask_result`, `agent_ask_cancel`, `spawn_subagent`, `spawn_subagents`, `builder_dispatch`, `session_model` | Tools a task from outside may not use, as in `subagents.tools.deny`. |
 
 The address of an agent is `<publicUrl>/a2a/agents/<agent>`. somora
 needs no extra port: the A2A endpoint is part of its server, reachable
@@ -450,9 +450,10 @@ curl -X POST https://<host>.<tailnet>.ts.net:18737/a2a/agents/<agent> \
    and says it is an outside agent, not you. The session keeps the text
    as sent.
 3. The turn runs like any other, with the tools of the agent minus
-   `a2a.tools.deny`. By default it cannot ask other agents, so a task
-   from outside never sets off more agent work, and two systems cannot
-   bounce work between them.
+   `a2a.tools.deny`. By default it cannot ask colleagues, start
+   sub-agents, hand a builder an order or switch another session's
+   model, so a task from outside never sets off more agent work, and two
+   systems cannot bounce work between them.
 4. The answer goes back: word by word to a client that streams, or in
    one piece when the turn ends. A client that does not wait gets the
    task as still working and asks for it later.

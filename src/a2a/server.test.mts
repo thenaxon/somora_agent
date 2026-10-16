@@ -72,11 +72,14 @@ configureStartTurn({
 const streamWords: Script = async (args) => {
   await args.publishSse?.({ event: 'agent', data: { phase: 'start' } } as never);
   let text = '';
-  for (const w of ['one ', 'two ', 'three']) {
+  for (const w of ['\n\none ', 'two ', 'three']) {
     text += w;
     await args.publishSse?.({ event: 'chat', data: { state: 'delta', text } } as never);
     await new Promise((r) => setTimeout(r, 30));
   }
+  // As the engines do: the final text is the streamed one, trimmed.
+  text = text.trim();
+  await args.publishSse?.({ event: 'chat', data: { state: 'final', text } } as never);
   await args.publishSse?.({ event: 'tool', data: { phase: 'call', tool: 'web_search', summary: '' } } as never);
   return ok(text);
 };
@@ -162,6 +165,7 @@ test("somora's own client as the peer: the card, a streamed answer word by word"
   assert.equal(out.state, 'completed');
   assert.equal(out.text, 'one two three');
   assert.ok(seen.length >= 2, `pieces: ${JSON.stringify(seen)}`);
+  assert.equal(seen.filter((s) => s.trim() === 'one two three').length <= 2, true, 'the trimmed final text is not sent again as a replacement');
   assert.ok(notes.includes('using web_search'), JSON.stringify(notes));
 });
 
@@ -297,4 +301,13 @@ test('wrong tokens slow down their own address only, not the peers with the righ
   script = async () => ok('still here');
   const right = await rpc('ada', 'SendMessage', msg('hello'));
   assert.equal(right.status, 200, 'the right token still passes from the same address');
+});
+
+test('by default a task from outside sets off no further agent work', () => {
+  const meta = { a2aPeer: { peer: 'hermes', contextId: 'c' } };
+  const deny = sessionToolDeny(ConfigSchema.parse({ providers: {} }), meta);
+  for (const t of ['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'spawn_subagent', 'spawn_subagents', 'builder_dispatch', 'session_model']) {
+    assert.ok(deny.includes(t), t);
+  }
+  assert.equal(deny.includes('ask_user'), false, 'its question goes back to the sender');
 });

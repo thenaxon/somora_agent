@@ -276,8 +276,17 @@ async function runInbound(t: InboundTask, text: string): Promise<void> {
       case 'chat': {
         const full = typeof d.text === 'string' ? d.text : '';
         if (!full) break;
-        const replace = !full.startsWith(lastText);
-        const piece = replace ? full : full.slice(lastText.length);
+        // The final text is often the streamed one trimmed: no change then.
+        // Otherwise append what is new, and replace only when it differs.
+        let replace = false;
+        let piece = '';
+        if (full.trim() === lastText.trim()) piece = '';
+        else if (full.startsWith(lastText)) piece = full.slice(lastText.length);
+        else if (lastText.trimStart() && full.startsWith(lastText.trimStart())) piece = full.slice(lastText.trimStart().length);
+        else {
+          replace = true;
+          piece = full;
+        }
         lastText = full;
         t.answer = full;
         t.updatedAt = Date.now();
