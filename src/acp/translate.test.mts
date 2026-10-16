@@ -218,3 +218,12 @@ test('live stream → ACP: tools pair by name in order, a trivial success closes
   assert.deepEqual(end.map((u) => [u.sessionUpdate, u.toolCallId ?? u.used]), [['tool_call_update', 'x2'], ['usage_update', 900]]);
   assert.equal(tr.lastToolCall?.id, 'x3');
 });
+
+test('a stopped turn ends with the text so far and the marker every engine uses', () => {
+  const tr = new AcpTurnTranslator('t', 'acp', () => 1);
+  tr.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Counting: 1 2' } });
+  const msg = tr.finish('cancelled').find((e) => e.kind === 'assistant_message') as { text: string };
+  assert.equal(msg.text, 'Counting: 1 2\n\n[somora] aborted by user');
+  const empty = new AcpTurnTranslator('t', 'acp', () => 1).finish('cancelled').find((e) => e.kind === 'assistant_message') as { text: string };
+  assert.equal(empty.text, '[somora] aborted by user');
+});

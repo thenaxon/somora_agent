@@ -219,7 +219,14 @@ export class AcpTurnTranslator {
     }
     if (this.thinking) out.push({ kind: 'thinking_message', ts, engine, text: this.thinking });
     const note = stopNote(stopReason);
-    const text = this.text.trimEnd() || (note ?? '');
+    // A stopped turn ends like on every other engine: what came so far,
+    // then the marker (clients and history rebuilds know it).
+    const text =
+      stopReason === 'cancelled'
+        ? this.text.trimEnd()
+          ? `${this.text.trimEnd()}\n\n[somora] aborted by user`
+          : '[somora] aborted by user'
+        : this.text.trimEnd() || (note ?? '');
     if (stopReason === 'error') {
       out.push({ kind: 'error', ts, engine, message: errorMessage ?? 'the external agent failed', providerError: true });
     }
