@@ -872,6 +872,12 @@ export const SshResourceSchema = z.object({
    * this (host-policy is enforced on the resource side).
    */
   allowBlocked: z.array(z.string().min(1)).default([]),
+  /**
+   * Only for external systems (`external.systems.<name>.transport.resource`):
+   * hidden from somora's own agents — not in resource_list, not a target
+   * for exec or the file tools. Default false: the resource is for both.
+   */
+  externalOnly: z.boolean().default(false),
 });
 export type SshResource = z.infer<typeof SshResourceSchema>;
 
@@ -885,6 +891,71 @@ export const ResourcesConfigSchema = z
   )
   .default({});
 export type ResourcesConfig = z.infer<typeof ResourcesConfigSchema>;
+
+// External agents (docs/external-agents.md): agents of other agent
+// systems (OpenClaw, Hermes, …) that somora chats with over ACP — the
+// Agent Client Protocol. somora starts each agent's ACP command locally
+// or over an SSH resource and talks to it on stdin/stdout. They bring
+// their own model, tools and memory; somora carries and shows the
+// conversation.
+const EXTERNAL_NAME = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/;
+
+export const ExternalAgentSchema = z.object({
+  /** The command that starts the agent's ACP side, e.g. `openclaw acp
+   *  --session agent:main:somora` or `hermes acp`. On a resource it runs
+   *  in a login shell (`bash -lc`), so the user's PATH applies. */
+  command: z.string().min(1),
+  /** Working folder on the agent's machine, sent with `session/new`.
+   *  Absolute. Default: the user's home there. */
+  cwd: z.string().min(1).optional(),
+  description: z.string().max(300).optional(),
+  /** Tile icon (an emoji). The badge in the tile corner names the system. */
+  icon: z.string().min(1).max(16).optional(),
+});
+export type ExternalAgentConfig = z.infer<typeof ExternalAgentSchema>;
+
+export const ExternalSystemSchema = z.object({
+  protocol: z.literal('acp').default('acp'),
+  /** Where the command runs: on this machine, or on an SSH resource. */
+  transport: z.union([
+    z.object({ local: z.literal(true) }).strict(),
+    z.object({ resource: z.string().min(1) }).strict(),
+  ]),
+  /** Badge in the tile corner: an emoji or a short sign, or a path to a
+   *  small image (png/svg/webp, ~ expands). Default: the sign of a known
+   *  system (OpenClaw 🦞, Hermes ☤), else its initials. */
+  badge: z.string().min(1).max(512).optional(),
+  /** The system's quirks profile. Default: picked from its own
+   *  introduction (`initialize` → agentInfo). */
+  profile: z.enum(['openclaw', 'hermes', 'generic']).optional(),
+  agents: z.record(z.string().regex(EXTERNAL_NAME, 'agent name: letters, digits, _ - .'), ExternalAgentSchema),
+});
+export type ExternalSystemConfig = z.infer<typeof ExternalSystemSchema>;
+
+export const ExternalConfigSchema = z
+  .object({
+    /** Minutes without a prompt after which an agent's ACP connection is
+     *  closed; the next prompt opens it again and resumes the session. */
+    idleMinutes: z.number().positive().default(10),
+    /** Minutes an external agent's question (e.g. "may I run this?") waits
+     *  for an answer before it counts as rejected. */
+    questionTimeoutMinutes: z.number().positive().default(10),
+    systems: z.record(z.string().regex(/^[A-Za-z0-9_-]+$/, 'system name must match [A-Za-z0-9_-]+'), ExternalSystemSchema).default({}),
+  })
+  .superRefine((ext, ctx) => {
+    const seen = new Map<string, string>();
+    for (const [system, sys] of Object.entries(ext.systems)) {
+      for (const agent of Object.keys(sys.agents)) {
+        const prior = seen.get(agent);
+        if (prior) {
+          ctx.addIssue({ code: 'custom', path: ['systems', system, 'agents', agent], message: `external agent '${agent}' is also defined under system '${prior}' — names must be unique` });
+        }
+        seen.set(agent, system);
+      }
+    }
+  })
+  .default({ idleMinutes: 10, questionTimeoutMinutes: 10, systems: {} });
+export type ExternalConfig = z.infer<typeof ExternalConfigSchema>;
 
 // Web tools — provider credentials. Each tool reads its own slice; if a
 // provider block isn't configured the corresponding tool's `available()`
@@ -2549,6 +2620,7 @@ export const ConfigSchema = z.object({
   web: WebConfigSchema,
   workspace: WorkspaceConfigSchema,
   resources: ResourcesConfigSchema,
+  external: ExternalConfigSchema,
   skills: SkillsConfigSchema,
   vision: VisionConfigSchema,
   stt: SttConfigSchema,

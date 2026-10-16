@@ -50,7 +50,8 @@
     "README.md",
     "LICENSE",
     "!src/**/*.test.mts",
-    "!src/**/*.test.ts"
+    "!src/**/*.test.ts",
+    "!src/**/__fixtures__/**"
   ],
   "scripts": {
     "preinstall": "node bin/preinstall-check.mjs",
@@ -66,6 +67,7 @@
     "prepack": "npm run build:all"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^1.9.0",
     "@anthropic-ai/claude-agent-sdk": "^0.3.293",
     "@anthropic-ai/sdk": "^0.132.1",
     "@hono/node-server": "2.1.4",

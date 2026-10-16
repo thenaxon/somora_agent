@@ -6,7 +6,7 @@
 import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
 import { listAllModels, resolveAnyRef } from '../../config/types.ts';
-import { loadPersona } from '../../persona/loader.ts';
+import { agentKnown } from '../../external/registry.ts';
 import { createSession, getHistory, listSessions, resolveSessionId, sessionMetaStore } from '../../storage/sessions.ts';
 import { markSeen, subscribeActivity } from '../activity-stream.ts';
 import { completeAskCall, failAskCall, getAskCall, markAskCallPending, markAskCallRunning, registerAskCall, waitForAskCall } from '../ask-calls.ts';
@@ -38,7 +38,7 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
   app.get('/agents/:agent/sessions/:session/work', async (c) => {
     const agent = c.req.param('agent');
     const ref = c.req.param('session');
-    if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+    if (!(await agentKnown(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
     const session = await resolveSessionId(agent, ref);
     if (!session) return c.json({ error: `session '${ref}' not found for agent '${agent}'` }, 404);
     const view = (it: ReturnType<typeof getWork>) =>
@@ -89,7 +89,7 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
     if (!agent || !sessionRef) {
       return c.json({ error: 'query params "agent" and "session" required' }, 400);
     }
-    if (!(await loadPersona(agent))) {
+    if (!(await agentKnown(agent))) {
       return c.json({ error: `agent '${agent}' not found` }, 404);
     }
     const id = await resolveSessionId(agent, sessionRef);
@@ -142,7 +142,7 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
     if (!agent) {
       return c.json({ error: 'no agents configured — create one in ~/.somora/agents/' }, 400);
     }
-    if (!(await loadPersona(agent))) {
+    if (!(await agentKnown(agent))) {
       return c.json({ error: `agent '${agent}' not found` }, 404);
     }
     const session = await resolveSessionId(agent, sessionRef);
@@ -287,7 +287,7 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
   app.post('/sessions/:agent/:session/seen', async (c) => {
     const agent = c.req.param('agent');
     const sessionRef = c.req.param('session');
-    if (!(await loadPersona(agent))) {
+    if (!(await agentKnown(agent))) {
       return c.json({ error: `agent '${agent}' not found` }, 404);
     }
     const session = await resolveSessionId(agent, sessionRef);
@@ -458,7 +458,7 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
     const subagentDepth =
       typeof body.subagent_depth === 'number' && body.subagent_depth > 0 ? body.subagent_depth : 0;
 
-    if (!(await loadPersona(agent))) {
+    if (!(await agentKnown(agent))) {
       logger.warn({ msg: 'chat.send.unknown_agent', agent });
       return c.json({ error: `agent '${agent}' not found — create ~/.somora/agents/${agent}/AGENTS.md` }, 404);
     }
@@ -877,7 +877,7 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
     const maxRoundsOverride =
       typeof body.max_rounds === 'number' && body.max_rounds > 0 ? body.max_rounds : undefined;
 
-    if (!(await loadPersona(agent))) {
+    if (!(await agentKnown(agent))) {
       return c.json({ error: `agent '${agent}' not found` }, 404);
     }
     let session = await resolveSessionId(agent, sessionRef);

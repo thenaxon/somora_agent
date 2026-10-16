@@ -66,6 +66,8 @@ import { logger } from './logger.ts';
 import { loadPersona, type Persona } from '../persona/loader.ts';
 import { isToolAllowed, sessionToolDeny, withSessionDeny } from '../tools/gating.ts';
 import { createTurnSerializer } from './sse-serializer.ts';
+import { getExternalAgent } from '../external/registry.ts';
+import { runExternalChatTurn } from './run-external-turn.ts';
 import { sanitizeAssistantText } from './sanitize-assistant-text.ts';
 import { synthesize } from '../tts/service.ts';
 import { prepareForTts } from '../tts/prepare-for-tts.ts';
@@ -483,6 +485,11 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     textLen: text.length,
     attachmentCount: attachments?.length ?? 0,
   });
+
+  // External agents (docs/external-agents.md) take their own, slim path:
+  // nothing below — persona, memory, tools, fallback models — applies.
+  const external = getExternalAgent(agent, deps.config);
+  if (external) return runExternalChatTurn(args, external, turnId);
 
   const persona = await loadPersona(agent);
   if (!persona) {

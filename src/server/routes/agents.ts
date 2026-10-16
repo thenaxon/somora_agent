@@ -7,6 +7,7 @@ import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
 import { readPersonaFiles, writePersonaFile } from '../../persona/files.ts';
 import { remSettingsFor } from '../../dream/dreams.ts';
+import { externalAgentEntries } from './external.ts';
 import { writeAgentDreams } from '../../persona/dreams-store.ts';
 import { listAgents, loadPersona } from '../../persona/loader.ts';
 import { resolveSessionId, sessionMetaStore } from '../../storage/sessions.ts';
@@ -30,7 +31,8 @@ export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void
     return c.json({ agent, systemPrompt: persona.systemPrompt });
   });
 
-  app.get('/agents', async (c) => c.json(await listAgents()));
+  // somora's own agents, then the external ones (docs/external-agents.md).
+  app.get('/agents', async (c) => c.json([...(await listAgents()), ...externalAgentEntries()]));
 
   /** The `dreams` switch as a client shows it: on/off, and what REM
    *  runs on (the agent's own model, the central one, or none). */

@@ -42,6 +42,9 @@ interface PooledConnection {
   home?: string;
   /** In-flight home-resolution promise, dedupe concurrent callers. */
   homeP?: Promise<string>;
+  /** Long-lived users (an external agent's ACP channel): while any hold
+   *  is out, the idle timer does not close the connection. */
+  holds: number;
 }
 
 const pool = new Map<string, PooledConnection>();
@@ -120,6 +123,7 @@ export async function getConnection(
     idleTimer: null,
     readyP,
     closed: false,
+    holds: 0,
   };
   pool.set(resourceName, entry);
 
@@ -212,6 +216,8 @@ export async function getConnection(
 function bumpIdle(entry: PooledConnection): void {
   entry.lastUsedAt = Date.now();
   if (entry.idleTimer) clearTimeout(entry.idleTimer);
+  entry.idleTimer = null;
+  if (entry.holds > 0) return;
   entry.idleTimer = setTimeout(() => {
     if (entry.closed) return;
     logger.info({ msg: 'ssh.idle_close', resource: entry.resourceName });
@@ -221,6 +227,33 @@ function bumpIdle(entry: PooledConnection): void {
       /* best-effort */
     }
   }, IDLE_TIMEOUT_MS);
+}
+
+/**
+ * A ready connection that stays open until `release()` — for a channel
+ * that lives longer than one command (an external agent's ACP session,
+ * which may sit quiet for minutes between prompts). The idle timer
+ * starts again when the last hold is released.
+ */
+export async function holdConnection(
+  resourceName: string,
+  resource: SshResource,
+): Promise<{ client: Client; release: () => void }> {
+  const client = await getConnection(resourceName, resource);
+  const entry = pool.get(resourceName);
+  if (!entry || entry.client !== client) return { client, release: () => {} };
+  entry.holds += 1;
+  bumpIdle(entry);
+  let released = false;
+  return {
+    client,
+    release: () => {
+      if (released) return;
+      released = true;
+      entry.holds = Math.max(0, entry.holds - 1);
+      if (!entry.closed) bumpIdle(entry);
+    },
+  };
 }
 
 /**

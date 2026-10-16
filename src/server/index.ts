@@ -152,6 +152,8 @@ import { registerBrowserRoutes } from './routes/browser.ts';
 import { registerVideoRoutes } from './routes/video.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
 import { registerThemeRoutes } from './routes/themes.ts';
+import { registerExternalRoutes } from './routes/external.ts';
+import { closeAllExternal } from '../external/connection.ts';
 
 type Subscriber = (e: SseEvent) => Promise<void>;
 interface StreamSub {
@@ -774,6 +776,7 @@ registerSessionRoutes(app, { nextTurnPrompt, publish, resolveEffectiveModel, str
 registerProjectRoutes(app, { publish });
 
 registerBuilderRoutes(app, { publish });
+registerExternalRoutes(app, { publish });
 
 registerChatRoutes(app, { defaultAgentFallback, publish, subscribe, get remWorker() { return remWorker as typeof remWorker; } });
 
@@ -1580,6 +1583,7 @@ async function shutdown(signal: string): Promise<void> {
   await shutdownMemoryRegistry();
   await screencasts.shutdown().catch(() => {});
   await browserService.shutdown().catch(() => {});
+  closeAllExternal();
   await shutdownSshPool();
   process.exit(0);
 }

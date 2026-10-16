@@ -93,7 +93,7 @@ export function buildSelfPointer(persona: Persona, config: Config, somoraHome: s
   const ws = effectiveWorkspace(persona, config);
   const agentDir = join(somoraHome, 'agents', persona.name);
   const visibleResources = Object.entries(config.resources)
-    .filter(([name]) => !persona.resourceDeny.includes(name))
+    .filter(([name, r]) => !persona.resourceDeny.includes(name) && !(r as { externalOnly?: boolean }).externalOnly)
     .map(([name, r]) => `${name} (${r.type}, ${r.host})`);
   const resourceLine =
     visibleResources.length > 0

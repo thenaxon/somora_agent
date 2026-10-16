@@ -473,6 +473,8 @@ export type SseEvent =
         thinking?: { level: 'off' | 'low' | 'medium' | 'high'; active: boolean };
         /** Set on phase:'end' when the turn was answered by the fallback model. */
         fallback?: ModelFallbackInfo;
+        /** An external agent's turn (docs/external-agents.md): its system. */
+        external?: { system: string };
       };
     }
   | { event: 'model_fallback'; data: ModelFallbackInfo }
@@ -595,10 +597,14 @@ export type SseEvent =
         options: Array<{ label: string; description?: string }>;
         multiple: boolean;
         expiresAt: number;
+        /** `permission`: an external agent asks to run something
+         *  (docs/external-agents.md). Missing: a builder's ask_user. */
+        kind?: 'permission';
+        from?: 'external';
       };
     }
-  /** Builder: the open question was answered or withdrawn. */
-  | { event: 'question_answered'; data: { questionId: string; answered: boolean } }
+  /** The open question was answered or withdrawn. */
+  | { event: 'question_answered'; data: { questionId?: string; answered: boolean; choice?: string | null } }
   /** Builder: mode / phase / plan path changed. */
   | { event: 'builder_state'; data: { mode: 'attended' | 'unattended'; phase: 'plan' | 'build'; planPath: string | null } }
   | {

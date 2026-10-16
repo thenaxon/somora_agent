@@ -20,6 +20,8 @@ export async function visibleResourcesForAgent(
   const out: VisibleResource[] = [];
   for (const [name, resource] of Object.entries(config.resources)) {
     if (denied.has(name)) continue;
+    // Marked for external systems only (docs/external-agents.md).
+    if ((resource as { externalOnly?: boolean }).externalOnly) continue;
     out.push({ name, resource });
   }
   return out;

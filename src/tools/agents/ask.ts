@@ -36,6 +36,8 @@
 // caller's own session lock. We refuse early with a clear error
 // pointing at spawn_subagent (sealed self-clone) as the right tool.
 
+import { getFreshConfig } from '../../config/loader.ts';
+import { isExternalAgent } from '../../external/registry.ts';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { logger } from '../../server/logger.ts';
@@ -329,6 +331,13 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
   maxTimeoutMs: 7_200_000 + TIMEOUT_BUFFER_MS,
   async handler(input, ctx): Promise<AskResult> {
     const targetAgent = input.agent;
+
+    if (isExternalAgent(targetAgent, await getFreshConfig())) {
+      throw new Error(
+        `agent_ask: '${targetAgent}' is an external agent (another system's agent, docs/external-agents.md); ` +
+          'somora agents cannot ask it yet. The person can chat with it in its own window.',
+      );
+    }
 
     if (targetAgent === ctx.agent) {
       throw new Error(

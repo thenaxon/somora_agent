@@ -2,6 +2,8 @@
 // where these routes stood, so the registration order is the same.
 // Names index.ts shares come in through `routeDeps`.
 
+import { agentKnown, getExternalAgent, isExternalAgent, listExternalAgents } from '../../external/registry.ts';
+import { closeExternal } from '../../external/connection.ts';
 import { remSettingsFor } from '../../dream/dreams.ts';
 import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
@@ -33,7 +35,7 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
   const { nextTurnPrompt, publish, resolveEffectiveModel, streamKey, streams } = routeDeps;
   app.get('/agents/:agent/sessions', async (c) => {
     const agent = c.req.param('agent');
-    if (!(await loadPersona(agent))) {
+    if (!(await agentKnown(agent))) {
       return c.json({ error: `agent '${agent}' not found` }, 404);
     }
     const includeArchived = c.req.query('include_archived') === 'true';
@@ -48,7 +50,11 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
   // served from the per-meta cache when its jsonlMtime still matches.
   app.get('/sessions', async (c) => {
     const includeArchived = c.req.query('include_archived') === 'true';
-    const agents = await listAgents();
+    // External agents' conversations are somora sessions too.
+    const agents: Array<{ name: string; color?: string | undefined; icon?: string | undefined; external?: string }> = [
+      ...(await listAgents()),
+      ...listExternalAgents().map((e) => ({ name: e.name, color: undefined, icon: e.agent.icon, external: e.system })),
+    ];
     const rows: Array<Record<string, unknown>> = [];
     let liveByKey: Map<string, number> | null = null;
     for (const agentInfo of agents) {
@@ -76,6 +82,7 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
           agent: agentInfo.name,
           agentColor: agentInfo.color,
           agentIcon: agentInfo.icon,
+          ...(agentInfo.external ? { external: { system: agentInfo.external } } : {}),
           sessionId: s.id,
           slug: s.slug,
           isMain: s.isMain,
@@ -113,7 +120,7 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
   app.post('/agents/:agent/sessions/:session/archive', async (c) => {
     const agent = c.req.param('agent');
     const sessionRef = c.req.param('session');
-    if (!(await loadPersona(agent))) {
+    if (!(await agentKnown(agent))) {
       return c.json({ error: `agent '${agent}' not found` }, 404);
     }
     const session = await resolveSessionId(agent, sessionRef);
@@ -121,6 +128,7 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
     const body = (await c.req.json().catch(() => ({}))) as { reason?: string };
     try {
       await archiveSession(agent, session, body.reason);
+      closeExternal(agent, session);
       logger.info({ msg: 'session.archive', agent, session, reason: body.reason });
       return c.json({ archived: true, agent, session });
     } catch (err) {
@@ -138,7 +146,7 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
   app.get('/agents/:agent/sessions/:session/export', async (c) => {
     const agent = c.req.param('agent');
     const sessionRef = c.req.param('session');
-    if (!(await loadPersona(agent))) {
+    if (!(await agentKnown(agent))) {
       return c.json({ error: `agent '${agent}' not found` }, 404);
     }
     const session = await resolveSessionId(agent, sessionRef);
@@ -171,7 +179,7 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
   app.post('/agents/:agent/sessions/:session/unarchive', async (c) => {
     const agent = c.req.param('agent');
     const sessionRef = c.req.param('session');
-    if (!(await loadPersona(agent))) {
+    if (!(await agentKnown(agent))) {
       return c.json({ error: `agent '${agent}' not found` }, 404);
     }
     // Resolve against the include_archived view, otherwise an archived
@@ -193,7 +201,7 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
 
   app.post('/agents/:agent/sessions', async (c) => {
     const agent = c.req.param('agent');
-    if (!(await loadPersona(agent))) {
+    if (!(await agentKnown(agent))) {
       return c.json({ error: `agent '${agent}' not found` }, 404);
     }
     const body = (await c.req.json().catch(() => ({}))) as { slug?: string };
@@ -218,6 +226,14 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
   app.get('/agents/:agent/sessions/:session/model', async (c) => {
     const agent = c.req.param('agent');
     const sessionRef = c.req.param('session');
+    const ext = getExternalAgent(agent);
+    if (ext) {
+      // An external agent runs on its own system's model; somora only
+      // names the system (docs/external-agents.md).
+      const session = await resolveSessionId(agent, sessionRef);
+      if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
+      return c.json({ agent, session, provider: 'external', modelId: `${ext.system}/${agent}`, alias: null, engine: 'acp', contextWindow: 0, source: 'external', override: null, personaDefault: null, external: { system: ext.system } });
+    }
     const persona = await loadPersona(agent);
     if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
     const session = await resolveSessionId(agent, sessionRef);
@@ -270,8 +286,9 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
 
   app.put('/agents/:agent/sessions/:session/model', async (c) => {
     const agent = c.req.param('agent');
+    if (isExternalAgent(agent)) return c.json({ error: `${agent} is an external agent — its model is set on its own system` }, 409);
     const sessionRef = c.req.param('session');
-    if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+    if (!(await agentKnown(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
     const session = await resolveSessionId(agent, sessionRef);
     if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
     const body = (await c.req.json().catch(() => ({}))) as { model?: string; by_agent?: string; by_session?: string };
@@ -302,6 +319,7 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
   // meanwhile waits behind it like behind any turn.
   app.post('/agents/:agent/sessions/:session/compact', async (c) => {
     const agent = c.req.param('agent');
+    if (isExternalAgent(agent)) return c.json({ error: `${agent} is an external agent — its own system manages its context` }, 409);
     const persona = await loadPersona(agent);
     if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
     const sessionRef = c.req.param('session');
@@ -368,6 +386,26 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
   app.post('/agents/:agent/sessions/:session/reset', async (c) => {
     const agent = c.req.param('agent');
     const sessionRef = c.req.param('session');
+    if (isExternalAgent(agent)) {
+      // Archive and start fresh; the next turn opens a new session on the
+      // agent's side too. No REM: external agents do not dream here.
+      const session = await resolveSessionId(agent, sessionRef);
+      if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
+      const release = await acquireSessionLock(agent, session, { priority: 'user' });
+      let result: Awaited<ReturnType<typeof resetSession>>;
+      try {
+        result = await resetSession(agent, session);
+        closeExternal(agent, session);
+        await sessionMetaStore.update(agent, session, (m) => {
+          const { externalSessionId: _gone, ...rest } = m as Record<string, unknown>;
+          return rest as typeof m;
+        });
+      } finally {
+        release();
+      }
+      logger.info({ msg: 'session.reset', agent, session, external: true, archivedId: result?.archivedId ?? null });
+      return c.json({ agent, session, archivedId: result?.archivedId ?? null, dreamSpawned: false });
+    }
     const persona = await loadPersona(agent);
     if (!persona) {
       return c.json({ error: `agent '${agent}' not found` }, 404);
@@ -429,8 +467,9 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
 
   app.delete('/agents/:agent/sessions/:session/model', async (c) => {
     const agent = c.req.param('agent');
+    if (isExternalAgent(agent)) return c.json({ error: `${agent} is an external agent — its model is set on its own system` }, 409);
     const sessionRef = c.req.param('session');
-    if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+    if (!(await agentKnown(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
     const session = await resolveSessionId(agent, sessionRef);
     if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
     const clearBody = (await c.req.json().catch(() => ({}))) as { by_agent?: string; by_session?: string };
@@ -454,6 +493,11 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
   app.get('/agents/:agent/sessions/:session/thinking', async (c) => {
     const agent = c.req.param('agent');
     const sessionRef = c.req.param('session');
+    if (isExternalAgent(agent)) {
+      const session = await resolveSessionId(agent, sessionRef);
+      if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
+      return c.json({ agent, session, effective: null, override: null, personaDefault: null, modelDefault: null, source: 'external', modelSupportsReasoning: false, wire: null });
+    }
     const persona = await loadPersona(agent);
     if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
     const session = await resolveSessionId(agent, sessionRef);
@@ -501,8 +545,9 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
 
   app.put('/agents/:agent/sessions/:session/thinking', async (c) => {
     const agent = c.req.param('agent');
+    if (isExternalAgent(agent)) return c.json({ error: `${agent} is an external agent — its thinking is set on its own system` }, 409);
     const sessionRef = c.req.param('session');
-    if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+    if (!(await agentKnown(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
     const session = await resolveSessionId(agent, sessionRef);
     if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
     const body = (await c.req.json().catch(() => ({}))) as { level?: string };
@@ -516,8 +561,9 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
 
   app.delete('/agents/:agent/sessions/:session/thinking', async (c) => {
     const agent = c.req.param('agent');
+    if (isExternalAgent(agent)) return c.json({ error: `${agent} is an external agent — its thinking is set on its own system` }, 409);
     const sessionRef = c.req.param('session');
-    if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+    if (!(await agentKnown(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
     const session = await resolveSessionId(agent, sessionRef);
     if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
     await sessionMetaStore.update(agent, session, (current) => {
@@ -534,6 +580,11 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
   app.get('/agents/:agent/sessions/:session/sampling', async (c) => {
     const agent = c.req.param('agent');
     const sessionRef = c.req.param('session');
+    if (isExternalAgent(agent)) {
+      const session = await resolveSessionId(agent, sessionRef);
+      if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
+      return c.json({ agent, session, effective: null, override: null, personaDefault: null, modelDefault: null, source: 'external', engineSupportsSampling: false });
+    }
     const persona = await loadPersona(agent);
     if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
     const session = await resolveSessionId(agent, sessionRef);
@@ -567,8 +618,9 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
 
   app.put('/agents/:agent/sessions/:session/sampling', async (c) => {
     const agent = c.req.param('agent');
+    if (isExternalAgent(agent)) return c.json({ error: `${agent} is an external agent — its sampling is set on its own system` }, 409);
     const sessionRef = c.req.param('session');
-    if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+    if (!(await agentKnown(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
     const session = await resolveSessionId(agent, sessionRef);
     if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
@@ -609,8 +661,9 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
 
   app.delete('/agents/:agent/sessions/:session/sampling', async (c) => {
     const agent = c.req.param('agent');
+    if (isExternalAgent(agent)) return c.json({ error: `${agent} is an external agent — its sampling is set on its own system` }, 409);
     const sessionRef = c.req.param('session');
-    if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+    if (!(await agentKnown(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
     const session = await resolveSessionId(agent, sessionRef);
     if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
     await sessionMetaStore.update(agent, session, (current) => {
