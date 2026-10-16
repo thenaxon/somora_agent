@@ -183,7 +183,7 @@ The file is downloaded first, up to 64 MB.
 |---|---|---|
 | Text | any | Numbered text. |
 | PNG, JPEG, WebP, GIF | yes | The image itself. The model sees it. |
-| PDF | yes | The first 20 pages as images, rendered at 1.5 times page size. |
+| PDF | yes | The first 20 pages as JPEG images, rendered at 1.5 times page size. |
 | Image or PDF | no | An error that points to `analyze_file`. |
 | Video or audio | any | An error with the hint to extract a frame with `ffmpeg`. |
 | Unknown binary | any | An error with the hint to inspect the file with `exec`. |
@@ -214,8 +214,13 @@ so a bigger image costs more without showing more. Set
 of yours needs finer detail.
 
 With scaling on, a source image may be up to 50 MB.
-`attachments.maxImageBytes` then applies to the scaled image. PDF pages
-cost tokens: roughly 1300 per page on Anthropic models. A PDF with more
+`attachments.maxImageBytes` then applies to the scaled image.
+
+PDF pages go out as JPEG, which keeps text sharp at a third to a fifth
+of the bytes of a PNG: usually 40 to 90 KB per page. That matters on
+Codex, where every page of a conversation goes along with each later
+request. Pages also cost tokens: roughly 1300 per page on Anthropic
+models. A PDF with more
 than 20 pages comes with a note that only the first 20 were rendered.
 
 A model declares what it can see with `capabilities` in its provider

@@ -87,20 +87,20 @@ async function readPdfAsContentBlocks(
     throw new Error(
       `file_read: '${shown.label}' is a PDF but the active model ` +
         `${ctx.activeModel ? `'${ctx.activeModel.providerName}/${ctx.activeModel.modelId}'` : '(unknown)'} ` +
-        `lacks 'image' capability (PDFs are rendered to PNG-pages and ` +
+        `lacks 'image' capability (PDFs are rendered to page images and ` +
         `delivered as images). Use analyze_file({path:"${absolutePath}"}) ` +
         `to dispatch to the configured vision worker, or switch to a ` +
         `vision-capable model.`,
     );
   }
-  const { renderPdfToPngs } = await import('../../multimodal/pdf-render.ts');
-  const result = await renderPdfToPngs(absolutePath, { maxPages: 20, scale: 1.5 });
+  const { renderPdfPages } = await import('../../multimodal/pdf-render.ts');
+  const result = await renderPdfPages(absolutePath, { maxPages: 20, scale: 1.5 });
   if (result.pages.length === 0) {
     throw new Error(`file_read: PDF '${absolutePath}' produced no renderable pages.`);
   }
   const blocks: ContentBlock[] = result.pages.map((data) => ({
     type: 'image',
-    source: { kind: 'base64', mediaType: 'image/png', data },
+    source: { kind: 'base64', mediaType: result.mediaType, data },
   }));
   if (result.truncated) {
     blocks.unshift({
@@ -195,7 +195,7 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
     '  - PNG / JPEG / WebP / GIF → returned as image content block, scaled down when its ' +
     'longer side exceeds the configured limit (text stays readable). Active model must ' +
     'have `image` capability; if not, you get an error pointing at `analyze_file`.\n' +
-    '  - PDF → each page rendered to PNG (max 20 pages by default), returned as ' +
+    '  - PDF → each page rendered to an image (JPEG, max 20 pages by default), returned as ' +
     'image-array. Same `image`-capability gate. Token cost: ~1300 tokens per page on ' +
     'Anthropic models.\n' +
     '  - Video / audio → error; extract a frame with ffmpeg via exec and read that.\n' +
@@ -233,7 +233,7 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
       //   - image → return MultimodalToolResult with image content
       //     block (active model needs `image` capability — error with
       //     pointer to analyze_file otherwise)
-      //   - pdf → render pages to PNG, return image-array
+      //   - pdf → render pages to images (JPEG), return image-array
       //     (MultimodalToolResult). Same capability gate.
       //   - unknown → clear error explaining the situation
       // Remote reads do the same after downloading (below).

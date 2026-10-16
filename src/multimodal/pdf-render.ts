@@ -1,4 +1,4 @@
-// PDF → PNG-pages rendering. Used by file_read polymorph for PDF
+// PDF → page images. Used by file_read polymorph for PDF
 // inputs because the MCP tool-result content union (text/image/audio/
 // resource) has no `document` type — claude-agent-sdk and codex-cli
 // can only forward `image` content blocks from MCP to the model. So
@@ -19,6 +19,24 @@
 import { pdf } from 'pdf-to-img';
 import { logger } from '../server/logger.ts';
 
+/** Pages go out as JPEG: a rendered page is text on a plain ground,
+ *  which JPEG at this quality keeps sharp at a third to a fifth of the
+ *  PNG's bytes (measured 2026-10-16: 120–400 KB PNG → 40–90 KB JPEG per
+ *  page). Every page rides along in every later request of a Codex
+ *  thread, so the bytes count — a 20-page scan as PNG made the Codex
+ *  backend drop its websocket on each turn (feedback 2026-09-14). */
+const PAGE_JPEG_QUALITY = 85;
+export const PDF_PAGE_MEDIA_TYPE = 'image/jpeg';
+
+async function toJpeg(png: Buffer): Promise<Buffer> {
+  try {
+    const { default: sharp } = await import('sharp');
+    return await sharp(png).flatten({ background: '#ffffff' }).jpeg({ quality: PAGE_JPEG_QUALITY, mozjpeg: true }).toBuffer();
+  } catch {
+    return png;
+  }
+}
+
 export interface RenderOptions {
   /** Hard cap on pages rendered. Default 20. PDFs longer than this
    *  get the first N pages plus a marker note in the caller. */
@@ -29,8 +47,10 @@ export interface RenderOptions {
 }
 
 export interface RenderResult {
-  /** Base64-encoded PNG buffers, one per page, in document order. */
+  /** Base64-encoded page images, one per page, in document order. */
   pages: string[];
+  /** Their type: `image/jpeg`, or `image/png` if converting failed. */
+  mediaType: string;
   /** Total pages in the source PDF. */
   totalPages: number;
   /** Whether the render hit the maxPages cap. */
@@ -42,7 +62,7 @@ export interface RenderResult {
 const DEFAULT_MAX_PAGES = 20;
 const DEFAULT_SCALE = 1.5;
 
-export async function renderPdfToPngs(
+export async function renderPdfPages(
   pdfPath: string,
   options: RenderOptions = {},
 ): Promise<RenderResult> {
@@ -60,10 +80,13 @@ export async function renderPdfToPngs(
   }
   const totalPages = document.length;
   const pages: string[] = [];
+  let mediaType = PDF_PAGE_MEDIA_TYPE;
   let pageIdx = 0;
   for await (const buf of document) {
     if (pageIdx >= maxPages) break;
-    pages.push(buf.toString('base64'));
+    const jpeg = await toJpeg(buf);
+    if (jpeg === buf) mediaType = 'image/png';
+    pages.push((mediaType === 'image/png' ? buf : jpeg).toString('base64'));
     pageIdx++;
   }
   const truncated = totalPages > maxPages;
@@ -76,5 +99,5 @@ export async function renderPdfToPngs(
     truncated,
     ms,
   });
-  return { pages, totalPages, truncated, ms };
+  return { pages, mediaType, totalPages, truncated, ms };
 }

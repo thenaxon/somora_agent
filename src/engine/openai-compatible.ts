@@ -1376,6 +1376,13 @@ export const openAiCompatibleEngine: AgentEngine = {
         // Inline-think text already surfaced as thinking_delta this round
         // (dedupes the cumulative re-split on every content delta).
         let roundInlineThinkingSeen = '';
+        // Reasoning that arrived after the answer had started. A healthy
+        // backend sends all reasoning first; this is the sign of a model
+        // or reasoning parser that slid the rest of the answer into the
+        // thinking (2026-09-24: "1" as answer, "…11:06:59…" in the
+        // thinking, 35 of 650 turns on one test backend). Logged so a
+        // recurrence is found at once.
+        let roundReasoningAfterContent = '';
         const roundToolCalls = new Map<number, StreamingToolCall>();
         let finishReason: string | null = null;
 
@@ -1443,6 +1450,7 @@ export const openAiCompatibleEngine: AgentEngine = {
             if (rtext) {
               roundReasoningChars += rtext.length;
               roundThinking += rtext;
+              if (roundContent.trim()) roundReasoningAfterContent += rtext;
               yield {
                 kind: 'thinking_delta',
                 ts: ts(),
@@ -1597,6 +1605,20 @@ export const openAiCompatibleEngine: AgentEngine = {
         // run past the idle threshold). The next round re-arms at
         // round-top before the next create() call (Juni-Audit 2026-06).
         disarmIdleTimer();
+
+        if (roundReasoningAfterContent) {
+          logger.warn({
+            msg: 'engine.reasoning_after_content',
+            engine: ENGINE,
+            agent,
+            session,
+            model: resolvedModel.modelId,
+            contentStart: roundContent.slice(0, 40),
+            contentChars: roundContent.length,
+            reasoningAfter: roundReasoningAfterContent.slice(0, 120),
+            hint: 'the backend sent reasoning after the answer began — the answer may be cut short and its rest sit in the thinking (model or reasoning-parser issue)',
+          });
+        }
 
         // Inline think block (see the delta handler): move it out of the
         // content for good so neither the persisted assistant_message nor

@@ -162,7 +162,7 @@ export const OpenAiCompatibleProviderSchema = z.object({
   models: z.array(ModelSchema).min(1),
   /**
    * How PDFs ride along on user-attachments via this provider.
-   *   - `rasterize` (default): render PDF pages to PNG via pdf-to-img
+   *   - `rasterize` (default): render PDF pages to images (JPEG) via pdf-to-img
    *     and pass them as image_url blocks. Works against every backend
    *     that supports vision (omlx, ollama, gemma, anything OpenAI-
    *     style image-capable). Pages × image-tokens cost-wise, but

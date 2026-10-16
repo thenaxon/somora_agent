@@ -13,7 +13,7 @@
 // like today — Phase Y.B is purely additive on top of that.
 
 import { readFileSync } from 'node:fs';
-import { renderPdfToPngs } from './pdf-render.ts';
+import { renderPdfPages } from './pdf-render.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
 import type { ModelCapability } from '../config/types.ts';
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages/messages.js';
@@ -161,12 +161,12 @@ export async function buildOpenAiUserContent(
           },
         });
       } else {
-        const result = await renderPdfToPngs(a.path);
+        const result = await renderPdfPages(a.path);
         for (const pageBase64 of result.pages) {
           parts.push({
             type: 'image_url',
             image_url: {
-              url: `data:image/png;base64,${pageBase64}`,
+              url: `data:${result.mediaType};base64,${pageBase64}`,
             },
           });
         }
@@ -213,11 +213,11 @@ export async function buildCodexAttachments(
       imagePaths.push(a.path);
     } else if (a.mime.kind === 'pdf') {
       // codex's --image accepts only images, so we render the PDF
-      // pages out to PNGs first. The temp PNGs live next to the PDF
+      // pages out to images first. The page files live next to the PDF
       // under a content-addressed cache so repeat sends of the same
       // PDF (same hash) reuse the rendered pages.
       try {
-        const pages = await renderPdfToPngsToDisk(a);
+        const pages = await renderPdfPagesToDisk(a);
         for (const p of pages) imagePaths.push(p);
       } catch (err) {
         logger.warn({
@@ -238,27 +238,29 @@ export async function buildCodexAttachments(
 }
 
 /**
- * Render a PDF attachment's pages into PNG files on disk under a
+ * Render a PDF attachment's pages into image files on disk under a
  * content-addressed cache, returning the page paths in order. Used
  * for codex-cli where `--image` needs file paths (not bytes). The
  * cache shares the attachment hash, so repeat turns referencing the
  * same PDF re-use the existing pages without re-rendering.
  */
-async function renderPdfToPngsToDisk(a: ResolvedAttachment): Promise<string[]> {
+async function renderPdfPagesToDisk(a: ResolvedAttachment): Promise<string[]> {
   const { join, dirname } = await import('node:path');
   const { existsSync, mkdirSync, writeFileSync, readdirSync } = await import('node:fs');
   const cacheDir = join(dirname(a.path), `${a.hash}.pdf-pages`);
   if (existsSync(cacheDir)) {
+    // Pages from before 2026-10-16 are PNG files: rendered again as JPEG.
     const files = readdirSync(cacheDir)
-      .filter((f) => f.endsWith('.png'))
+      .filter((f) => f.endsWith('.jpg'))
       .sort();
     if (files.length > 0) return files.map((f) => join(cacheDir, f));
   }
   mkdirSync(cacheDir, { recursive: true });
-  const result = await renderPdfToPngs(a.path);
+  const result = await renderPdfPages(a.path);
+  const ext = result.mediaType === 'image/png' ? 'png' : 'jpg';
   const out: string[] = [];
   result.pages.forEach((b64, i) => {
-    const p = join(cacheDir, `page-${String(i + 1).padStart(4, '0')}.png`);
+    const p = join(cacheDir, `page-${String(i + 1).padStart(4, '0')}.${ext}`);
     writeFileSync(p, Buffer.from(b64, 'base64'));
     out.push(p);
   });

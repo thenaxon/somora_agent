@@ -23,7 +23,7 @@ import { logger } from '../../server/logger.ts';
 import { loadAttachment, type LoadedAttachment } from '../../multimodal/load.ts';
 import { samplingBody } from '../../engine/sampling.ts';
 import { pdfPagesToOpenAiContent, toOpenAiContent } from '../../multimodal/blocks.ts';
-import { renderPdfToPngs } from '../../multimodal/pdf-render.ts';
+import { renderPdfPages } from '../../multimodal/pdf-render.ts';
 import { checkReadAllowed, realpathSafeAncestor, resolveLocalPath } from './policy.ts';
 import type { ToolDefinition } from '../types.ts';
 
@@ -248,10 +248,10 @@ export async function describeMedia(args: {
   const pageContent = async () => {
     if (pages) return pages;
     try {
-      const r = await renderPdfToPngs(att.path, { maxPages: PDF_PAGE_LIMIT, scale: 1.5 });
+      const r = await renderPdfPages(att.path, { maxPages: PDF_PAGE_LIMIT, scale: 1.5 });
       if (r.pages.length === 0) throw new Error('no renderable pages');
       const note = r.truncated ? `[The PDF has ${r.totalPages} pages; only the first ${r.pages.length} are included.]` : undefined;
-      pages = { content: pdfPagesToOpenAiContent(r.pages, args.prompt, note), count: r.pages.length };
+      pages = { content: pdfPagesToOpenAiContent(r.pages, args.prompt, note, r.mediaType), count: r.pages.length };
     } catch (err) {
       pages = { error: `could not render the PDF to pages: ${(err as Error).message}` };
     }
