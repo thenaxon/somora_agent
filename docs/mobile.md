@@ -202,6 +202,7 @@ The thinking row only exists when the server captures reasoning.
 | **REM / DEEP / LUCID pulse** | The agent is in a dream phase. |
 | **Number badge** | REM findings waiting for review. |
 | **Violet wiki chip** | Lucid runs waiting for review. |
+| **Sign in the bottom-left corner** | An [external agent](external-agents.md). The header shows its system instead of a model, the session sheet has no model list, and a question it asks appears as a card with buttons above the input. |
 
 The unread dot covers every session of an agent except the one on
 screen. The session sheet shows which session it is. Opening the session

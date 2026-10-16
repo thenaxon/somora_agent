@@ -253,6 +253,7 @@ resources:
     workspace: /home/karl/work
     hostKey: 'sha256:<base64>'
     allowBlocked: []
+    externalOnly: false
 ```
 
 | Setting | Default | Meaning |
@@ -266,6 +267,7 @@ resources:
 | `workspace` | none | Folder on the remote where relative paths of the `file_*` tools start. Without it they start in the home. |
 | `hostKey` | none | Fingerprint for strict mode. Without it the first connection is trusted. |
 | `allowBlocked` | `[]` | Blocked commands this resource may run anyway. |
+| `externalOnly` | `false` | The machine is there for an [external agent system](external-agents.md) only: somora's own agents do not see it and cannot use it. |
 
 In an agent's `agent.yaml`:
 

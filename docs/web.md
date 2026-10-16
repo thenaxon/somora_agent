@@ -85,6 +85,7 @@ again.
 | Pulse glow | A dream phase is running. Green: REM for this agent. Indigo: Deep, on every agent. Violet: Lucid, on the agent holding the review loop. |
 | Number badge | REM findings waiting for review, `9+` at most. It shrinks as an agent works through them with `dream_apply` and `dream_dismiss`. |
 | Grey outline and `builder` label | The agent is a builder. |
+| Sign in the bottom-left corner and `external · <system>` label | An [external agent](external-agents.md): 🦞 OpenClaw, ☤ Hermes, initials for other systems. Its chat header shows the system and its version instead of a model, and a question it asks appears as a card with buttons above the input. |
 
 A session counts as seen when its chat window is open and focused. That
 clears the unread dot on all your clients. The state lives in the

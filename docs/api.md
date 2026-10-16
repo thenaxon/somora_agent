@@ -869,7 +869,7 @@ All events:
 | `turn_dequeued` | A waiting entry was removed with `DELETE /chat/queue/:id` | `{turnId, workId}` |
 | `steer_queued` | A steered message was accepted for the running turn | `{steerId, text, ts, turnId, origin}` |
 | `turn_started` | The engine opened the turn | `{turnId}` |
-| `agent` | The model call starts and ends | `{phase: "start"\|"end", usage?, contextWindow?, provider?, model?, thinking?, fallback?}` |
+| `agent` | The model call starts and ends | `{phase: "start"\|"end", usage?, contextWindow?, provider?, model?, thinking?, fallback?, external?}`. `external: {system}` marks an external agent's turn. |
 | `memory` | After `agent` start: what recall put into the turn | `{count, topScore?, refs, fullText}` |
 | `thinking` | The model's reasoning text | `{state: "delta"\|"final", text, truncated?}` |
 | `chat` | The reply text | `{state: "delta"\|"final", text}` |
@@ -883,8 +883,8 @@ All events:
 | `project` | The session's project changed | `{from, to, via}` |
 | `builder_state` | A builder session's mode, phase or plan file changed | `{mode, phase, planPath}` |
 | `todo_updated` | A builder replaced its task list | `{todos: [{content, status, priority?}], by?}` |
-| `question_asked` | A builder waits for the person | `{questionId, question, header?, options, multiple, expiresAt}` |
-| `question_answered` | The open question was answered | `{questionId, answered}` |
+| `question_asked` | A builder or an external agent waits for the person | `{questionId, question, header?, options, multiple, expiresAt, kind?, from?}`. `kind: "permission"` and `from: "external"` mark an external agent asking to run something; each option's `description` is then its kind (`allow_once`, `reject_once`, …). |
+| `question_answered` | The open question was answered or ran out of time | `{questionId?, answered, choice?}` |
 
 Details where the table is not enough:
 
@@ -1395,7 +1395,8 @@ The configured agents.
 |---|---|
 | `icon`, `color`, `role` | Optional display values from the agent's `AGENTS.md`. |
 | `steering` | The agent's default for a message typed while a turn runs: `true` steers, `false` queues. |
-| `kind` | `chat` or `builder`. |
+| `kind` | `chat`, `builder` or `external`. |
+| `external` | Only for an [external agent](#external-agents): `{system, label, badge, badgeImage, version}`. `label` names the agent system ("OpenClaw"), `badge` is the sign for the tile corner, `badgeImage` the URL of a badge image when one is configured, `version` what the agent reported once connected. |
 
 ### `GET /agents/:agent/system-prompt`
 
@@ -3199,6 +3200,64 @@ curl -H "Authorization: Bearer $KEY" -X POST $BASE/agents/<your-agent>/tools/sen
 
 The tool's actions are `create`, `dry_run`, `update`, `list`, `get`,
 `pause`, `resume`, `delete`, `test`, `history` and `purge_completed`.
+
+## External agents
+
+Agents of other agent systems, reached over ACP (see
+[External agents](external-agents.md)). They appear in `GET /agents`
+with `kind: "external"`, and chat, history, streams, sessions, reset and
+archive work for them as for any agent. The routes that change a
+model, thinking level or sampling, and compaction, answer `409` for
+them. Their `GET …/model`, `…/thinking` and `…/sampling` return
+`source: "external"`.
+
+### `GET /external`
+
+The configured systems, their agents and open connections.
+
+```json
+{ "idleMinutes": 10, "questionTimeoutMinutes": 10,
+  "systems": [ { "name": "openclaw", "protocol": "acp",
+    "transport": { "resource": "agents-vm" },
+    "agents": [ { "name": "claw",
+      "badge": { "label": "OpenClaw", "badge": "🦞", "badgeImage": null, "version": "2026.10.3" },
+      "agentInfo": { "name": "openclaw-acp", "title": "OpenClaw ACP Gateway", "version": "2026.10.3" },
+      "profile": "openclaw", "capabilities": { "loadSession": true },
+      "connections": [ { "sessionId": "…", "where": "agents-vm", "idleMs": 48000 } ] } ] } ],
+  "ignored": [] }
+```
+
+| Field | Meaning |
+|---|---|
+| `agentInfo`, `capabilities` | What the agent said about itself when somora last connected. `null` before the first connection. |
+| `profile` | The quirks profile in use: `openclaw`, `hermes` or `generic`. |
+| `connections` | Open ACP connections, one per somora session, with the remote session id and how long each has been idle. |
+| `ignored` | External agent names a somora agent already has. Those entries are not used. |
+
+### `GET /external/:system/badge`
+
+The badge image configured for a system (`badge:` with a png, svg or
+webp path, at most 256 KB). `404` when the system has no badge image.
+
+### `GET /agents/:agent/sessions/:session/question`
+
+The session's open question, or `{ "question": null }`. Used for
+external agents' permission requests; a builder's `ask_user` question
+shows here as well.
+
+```json
+{ "question": { "id": "…", "question": "claw asks for permission: exec: rm -rf /tmp/x",
+  "header": "Permission", "multiple": false, "expiresAt": 1792157891000,
+  "options": [ { "label": "Allow once", "description": "allow_once" },
+               { "label": "Reject", "description": "reject_once" } ] } }
+```
+
+### `POST /agents/:agent/sessions/:session/questions/:id/answer`
+
+Answers the open question with `{ "answers": ["Allow once"] }`, the
+labels of the chosen options. Every client of the session gets
+`question_answered`. `404` when no question with that id is open
+(answered already, or timed out).
 
 ## External MCP servers
 

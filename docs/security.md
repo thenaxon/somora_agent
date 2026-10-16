@@ -475,6 +475,10 @@ seconds and does not follow redirects. The last answer is stored in
   sandbox option.
 - **Several users.** somora assumes you are its only user. There are no
   accounts and no permissions between people.
+- **What an external agent does on its own machine.** An
+  [external agent](external-agents.md) runs with the rights of the SSH
+  user somora logs in as. Its own system decides what it does there.
+  somora gives it no access to somora's files or terminal.
 - **A leaked key.** Anyone who has the key and reaches the port has the
   same access as you, including a shell. `somora key rotate` locks them
   out. With `server.auth: off`, reaching the port is enough.

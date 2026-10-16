@@ -899,6 +899,35 @@ providers:
 #       - sudo ~/bin/fix-mount.sh
 #       - systemctl reboot
 #       - sudo                          # broad: any "sudo ..." command
+#   agents-vm:
+#     type: ssh
+#     host: 192.0.2.50
+#     user: agents
+#     keyPath: ~/.ssh/id_ed25519
+#     externalOnly: true                # only for external agents (below);
+#                                       # somora's own agents don't see it
+
+# External agents — agents of other agent systems (OpenClaw, Hermes, any
+# ACP agent) you chat with from somora. They keep their own model, tools
+# and memory. somora starts the system's ACP command on a resource (over
+# ssh, login shell) or locally. {session} = the somora session id (gains
+# -r1, -r2 after resets), {agent} = the name in somora. See
+# docs/external-agents.md.
+# external:
+#   idleMinutes: 10                     # close an idle connection
+#   questionTimeoutMinutes: 10          # unanswered question = rejected
+#   systems:
+#     openclaw:
+#       transport: { resource: agents-vm }
+#       agents:
+#         claw:
+#           command: openclaw acp --session agent:main:somora-{session}
+#     hermes:
+#       transport: { resource: agents-vm }
+#       # badge: ☤                       # tile-corner sign or image path
+#       agents:
+#         herm:
+#           command: hermes acp
 
 # Web-tools credentials. Per-provider keys — tools whose provider isn't
 # configured are hidden from the agent (the `available()` probe on the

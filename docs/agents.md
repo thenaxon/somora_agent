@@ -62,7 +62,9 @@ Rename or replace it.
 Every agent has a kind, set as `kind` in `agent.yaml` when it is created
 and not changed afterwards. This page describes chat agents, the
 default. A builder (`kind: builder`) is a coding harness and has
-[its own page](builder.md).
+[its own page](builder.md). A third kind, the
+[external agent](external-agents.md), belongs to another agent system
+and is set up in `config.yaml`, not in an agent folder.
 
 | | Chat agent | Builder |
 |---|---|---|

@@ -48,7 +48,7 @@ list while you type a `/`, the input, and a line of hints.
 
 | Part | Meaning |
 |---|---|
-| `🐨 somora · <agent>:<session> · <model>` | Where you are, and the model that answered the last turn. Before the first turn: the model the session will use. |
+| `🐨 somora · <agent>:<session> · <model>` | Where you are, and the model that answered the last turn. Before the first turn: the model the session will use. For an [external agent](external-agents.md): `external · <system> <version>`. |
 | `→ <model> (next turn)` | The session's model was switched since the last turn, here, in another client or by an agent. The next turn uses it. |
 | `Σ↑ 12k+80k¢` | Input tokens the last turn spent, summed over all its requests. The green part with `¢` was read from the cache. |
 | `▣ 45k/200k` | How full the context is. Yellow above 75 %, red above 90 %, magenta when it is over the window. |
@@ -110,6 +110,11 @@ locale is not UTF-8.
 | Up, Down | Steps through what you sent before, up to 100 entries. Your unsent draft comes back at the end. |
 | Esc | During a turn: stops the running turn and keeps your input. Otherwise: clears the input. |
 | Ctrl+C | Clears the input. With an empty input it quits. |
+
+When an [external agent](external-agents.md) asks before it acts, the
+question appears with numbered options. Type the number and press
+Enter. Another number is refused while the question is open; `/model`,
+`/thinking` and `/sampling` say that its own system sets them.
 
 You can keep typing while the agent works. A message sent during a
 running turn waits its turn and shows `· queued`, or `· queued · N
