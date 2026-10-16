@@ -106,6 +106,31 @@ async function* sseFrames(body: ReadableStream<Uint8Array>): AsyncGenerator<SseF
 export class SomoraAcpAgent implements Agent {
   /** Running prompts by session: cancel aborts them. */
   private readonly running = new Map<string, { cancelled: boolean }>();
+  /** New sessions are only noted until their first prompt: a client
+   *  that opens a session and never writes (OpenClaw's health check, an
+   *  editor opening a panel) leaves no empty somora session behind.
+   *  Client id → the slug to create. */
+  private readonly unborn = new Set<string>();
+  /** Client id → somora session id, once created. */
+  private readonly born = new Map<string, string>();
+
+  /** The somora session behind a client's session id, created now when it
+   *  was only noted so far. */
+  private async materialize(sessionId: string): Promise<string> {
+    const known = this.born.get(sessionId);
+    if (known) return known;
+    if (!this.unborn.has(sessionId)) return sessionId;
+    const res = await this.opts.fetch(this.url(`${this.agentPath()}/sessions`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: sessionId }),
+    });
+    const body = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
+    if (!((res.ok || res.status === 409) && body.id)) throw new Error(body.error ?? `could not create a session (HTTP ${res.status})`);
+    this.unborn.delete(sessionId);
+    this.born.set(sessionId, body.id);
+    return body.id;
+  }
 
   constructor(
     private readonly conn: AgentSideConnection,
@@ -175,16 +200,13 @@ export class SomoraAcpAgent implements Agent {
       const row = await this.requireSession(this.opts.session);
       return { sessionId: row.id };
     }
+    // Noted, not created: the session appears in somora with the first
+    // prompt (materialize). The slug carries a random tail so two
+    // sessions opened in the same second stay apart.
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
-    const res = await this.opts.fetch(this.url(`${this.agentPath()}/sessions`), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug: `acp-${stamp}` }),
-    });
-    const body = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
-    // 409 = the name exists (two sessions in one second): use it.
-    if ((res.ok || res.status === 409) && body.id) return { sessionId: body.id };
-    throw new Error(body.error ?? `could not create a session (HTTP ${res.status})`);
+    const slug = `acp-${stamp}-${Math.random().toString(36).slice(2, 6)}`;
+    this.unborn.add(slug);
+    return { sessionId: slug };
   }
 
   async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
@@ -200,7 +222,9 @@ export class SomoraAcpAgent implements Agent {
   }
 
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
-    const row = await this.requireSession(params.sessionId);
+    // A session that never got a prompt has no history to replay.
+    if (this.unborn.has(params.sessionId)) return {};
+    const row = await this.requireSession(this.born.get(params.sessionId) ?? params.sessionId);
     const { events } = await this.json<{ events: NormalizedEvent[] }>(
       `/chat/history?agent=${encodeURIComponent(this.opts.agent)}&session=${encodeURIComponent(row.id)}`,
     );
@@ -211,7 +235,7 @@ export class SomoraAcpAgent implements Agent {
   }
 
   async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
-    await this.requireSession(params.sessionId);
+    if (!this.unborn.has(params.sessionId)) await this.requireSession(this.born.get(params.sessionId) ?? params.sessionId);
     return {};
   }
 
@@ -225,7 +249,7 @@ export class SomoraAcpAgent implements Agent {
     if (!run) return;
     run.cancelled = true;
     await this.opts
-      .fetch(this.url(`/chat/abort?agent=${encodeURIComponent(this.opts.agent)}&session=${encodeURIComponent(params.sessionId)}`), { method: 'POST' })
+      .fetch(this.url(`/chat/abort?agent=${encodeURIComponent(this.opts.agent)}&session=${encodeURIComponent(this.born.get(params.sessionId) ?? params.sessionId)}`), { method: 'POST' })
       .catch(() => undefined);
   }
 
@@ -267,11 +291,16 @@ export class SomoraAcpAgent implements Agent {
     this.running.set(sessionId, run);
     const abort = new AbortController();
     const send = (update: SessionUpdate) => this.conn.sessionUpdate({ sessionId, update });
+    // The somora session behind the client's id (created now if new).
+    const target = await this.materialize(sessionId).catch((err: Error) => {
+      this.running.delete(sessionId);
+      throw err;
+    });
     try {
       // Stream first, then send: the turn's first frames must not pass
       // before we listen.
       const res = await this.opts.fetch(
-        this.url(`/chat/stream?agent=${encodeURIComponent(this.opts.agent)}&session=${encodeURIComponent(sessionId)}`),
+        this.url(`/chat/stream?agent=${encodeURIComponent(this.opts.agent)}&session=${encodeURIComponent(target)}`),
         { headers: { Accept: 'text/event-stream' }, signal: abort.signal },
       );
       if (!res.ok || !res.body) throw new Error(`chat stream: HTTP ${res.status} ${await res.text().catch(() => '')}`);
@@ -282,7 +311,7 @@ export class SomoraAcpAgent implements Agent {
       const { turnId } = await this.json<{ turnId: string }>('/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent: this.opts.agent, session: sessionId, text, ...(attachments.length ? { attachments } : {}) }),
+        body: JSON.stringify({ agent: this.opts.agent, session: target, text, ...(attachments.length ? { attachments } : {}) }),
       });
 
       const tr = new SseToAcp(`${turnId.slice(0, 8)}-`);
@@ -304,7 +333,7 @@ export class SomoraAcpAgent implements Agent {
           break;
         }
         if (f.event === 'question_asked') {
-          await this.ask(sessionId, f.data, tr);
+          await this.ask(sessionId, target, f.data, tr);
           continue;
         }
         for (const u of tr.update(f)) await send(u);
@@ -328,7 +357,7 @@ export class SomoraAcpAgent implements Agent {
    *  editor's permission dialog; the choice goes back as the answer. No
    *  choice (the editor cancelled) leaves it open for other windows, and
    *  the server's timeout takes the safest option. */
-  private async ask(sessionId: string, q: Record<string, unknown>, tr: SseToAcp): Promise<void> {
+  private async ask(sessionId: string, target: string, q: Record<string, unknown>, tr: SseToAcp): Promise<void> {
     const id = typeof q.questionId === 'string' ? q.questionId : null;
     const options = Array.isArray(q.options) ? (q.options as Array<{ label: string; description?: string }>) : [];
     if (!id || options.length === 0) return;
@@ -345,7 +374,7 @@ export class SomoraAcpAgent implements Agent {
       return;
     }
     if (r.outcome.outcome !== 'selected') return;
-    await this.json(`${this.agentPath()}/sessions/${encodeURIComponent(sessionId)}/questions/${encodeURIComponent(id)}/answer`, {
+    await this.json(`${this.agentPath()}/sessions/${encodeURIComponent(target)}/questions/${encodeURIComponent(id)}/answer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ answers: [r.outcome.optionId] }),

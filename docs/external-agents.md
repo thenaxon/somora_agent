@@ -189,6 +189,7 @@ Nothing changes on the other system: its sessions there go on as before.
 | A note that the earlier session was gone | The other side no longer had the conversation, for example after its own restart. The chat continues in a new one there. |
 | The tile shows initials instead of 🦞 or ☤ | somora did not recognise the system from the command. It does after the first message, or set `profile` or `badge`. |
 | The model menu is missing | Expected: the agent's model is set on its own system. |
+| A result the agent finishes later, after its turn, is missing | somora hears the agent during a turn. Something it sends afterwards on its own (an OpenClaw sub-task's completion) shows up with your next message, when it answers from its own history. |
 
 The server log names every turn with `external.turn`, including the
 time it took, the tool calls and the stop reason.

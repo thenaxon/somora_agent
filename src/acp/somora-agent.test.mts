@@ -160,7 +160,10 @@ test('a turn: only our turn counts, text arrives in pieces, tools pair up, the f
       assert.equal(init.agentInfo?.name, 'somora');
       assert.equal(init.agentCapabilities?.loadSession, true);
       const { sessionId } = await client.newSession({ cwd: '/w', mcpServers: [] });
-      assert.match(sessionId, /^id-acp-\d{8}-\d{6}$/);
+      assert.match(sessionId, /^acp-\d{8}-\d{6}-[a-z0-9]{4}$/);
+      // Noted, not created: a client that opens a session and never writes
+      // (a health check) leaves no empty somora session behind.
+      assert.equal(fake.sessions.length, 1);
       const r = await client.prompt({ sessionId, prompt: [{ type: 'text', text: 'hi' }, { type: 'resource_link', uri: 'file:///w/a.ts', name: 'a.ts' }] });
       assert.equal(r.stopReason, 'end_turn');
       assert.equal(textOf(updates), 'Hello');
@@ -170,6 +173,12 @@ test('a turn: only our turn counts, text arrives in pieces, tools pair up, the f
       );
       assert.deepEqual(updates.find((u) => u.sessionUpdate === 'usage_update'), { sessionUpdate: 'usage_update', used: 900, size: 8000 });
       assert.equal(fake.sent[0]!.text, 'hi\n[a.ts](file:///w/a.ts)');
+      assert.deepEqual(fake.sessions.map((s) => s.slug), ['main', sessionId], 'created with the first prompt');
+      assert.equal(fake.sent[0]!.session, `id-${sessionId}`, 'the turn goes to the created session');
+      // A load of a session that never got a prompt has nothing to replay.
+      const { sessionId: quiet } = await client.newSession({ cwd: '/w', mcpServers: [] });
+      await client.loadSession({ sessionId: quiet, cwd: '/w', mcpServers: [] });
+      assert.equal(fake.sessions.length, 2);
     },
   );
 });
