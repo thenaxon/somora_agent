@@ -39,6 +39,8 @@ import { ChatMenuPopover } from './ChatMenuPopover';
 import { ProjectChip } from './ProjectChip';
 import { WorkBadge, WorkQueuePopover } from './WorkQueuePopover';
 import { BuilderPanel } from './BuilderPanel';
+import { QuestionCard } from './QuestionCard';
+import { useSessionQuestion } from '../hooks/useSessionQuestion';
 import { useSessionWork } from '../hooks/useSessionWork';
 import type { WorkItemDto } from '../lib/api';
 
@@ -92,6 +94,7 @@ export function ChatWindow({
     sessionId,
   );
   const chat = useChatSessionFromContext(agent.name, sessionId);
+  const { question: pendingQuestion, refresh: refreshQuestion } = useSessionQuestion(agent.name, sessionId, agent.kind !== 'builder', chat.streaming);
   // Keep the header's model/thinking honest: re-read on a model switch
   // made elsewhere, and around every turn (a turn is where the model is
   // actually resolved — fallback, override, persona default).
@@ -936,7 +939,10 @@ export function ChatWindow({
     return unsub;
   }, [ttsAvailable, autoPlay, chat]);
 
-  const modelLabel = model?.alias ?? model?.modelId ?? '—';
+  // An external agent runs on its own system's model: name the system.
+  const modelLabel = agent.external
+    ? `external · ${agent.external.label}${agent.external.version ? ` ${agent.external.version}` : ''}`
+    : (model?.alias ?? model?.modelId ?? '—');
   // A switch during a running turn applies from the next turn: the
   // running one keeps the model it started with. Say so, instead of a
   // header that reads as if the turn had changed model mid-answer.
@@ -1393,6 +1399,7 @@ export function ChatWindow({
         showThinking={showThinking}
         onToggleShowThinking={() => setShowThinking((v) => !v)}
         onSlash={dispatchSlash}
+        external={agent.external ?? null}
       />
       <WorkQueuePopover
         open={workOpen}
@@ -1542,6 +1549,9 @@ export function ChatWindow({
         <div ref={bottomSentinelRef} aria-hidden="true" />
       </div>
 
+      {pendingQuestion && !isBuilder && (
+        <QuestionCard agent={agent.name} session={sessionId} question={pendingQuestion} onAnswered={refreshQuestion} />
+      )}
       <AttachmentTray items={pendingAttachments} onRemove={removePendingAttachment} />
 
       <form

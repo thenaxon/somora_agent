@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, AlertTriangle, CheckSquare, Square } from 'lucide-react';
-import { api, type ModelOption, type SessionModelInfo, type SessionThinkingInfo } from '../lib/api';
+import { api, type ExternalAgentMark, type ModelOption, type SessionModelInfo, type SessionThinkingInfo } from '../lib/api';
 import type { SlashCommand } from './SlashCommandPopup';
 
 interface Props {
@@ -33,6 +33,9 @@ interface Props {
   showThinking: boolean;
   onToggleShowThinking: () => void;
   onSlash: (cmd: SlashCommand) => Promise<void> | void;
+  /** An external agent: its model, thinking and context are its own
+   *  system's business — the menu shows what it is, not switches. */
+  external?: ExternalAgentMark | null;
 }
 
 type ResetState = 'idle' | 'confirming' | 'pending';
@@ -48,6 +51,7 @@ export function ChatMenuPopover({
   thinking,
   showThinking,
   onToggleShowThinking,
+  external,
   onSlash,
 }: Props) {
   const [resetState, setResetState] = useState<ResetState>('idle');
@@ -178,6 +182,21 @@ export function ChatMenuPopover({
         color: 'var(--text-1)',
       }}
     >
+      {external && (
+        <Section title="EXTERNAL AGENT">
+          <CurrentLine label="system" value={`${external.label}${external.version ? ` ${external.version}` : ''}`} />
+          <Hint>runs on {external.system} with its own model, tools and memory; somora carries the conversation</Hint>
+          <CheckRow
+            className="thinking-visibility-row"
+            label="Show thinking in replies"
+            checked={showThinking}
+            onClick={onToggleShowThinking}
+            title="Display only, this session — when the external agent sends its thinking"
+          />
+        </Section>
+      )}
+      {external && <Divider />}
+      {!external && (<>
       {/* MODEL */}
       <Section title="MODEL">
         <CurrentLine label="current" value={currentModelLabel} />
@@ -304,8 +323,10 @@ export function ChatMenuPopover({
 
       <Divider />
 
+      </>)}
       {/* CONVERSATION */}
       <Section title="CONVERSATION">
+        {!external && (<>
         <div
           role="button"
           aria-disabled={streaming || compacting}
@@ -328,6 +349,7 @@ export function ChatMenuPopover({
             ? 'a turn is running: compact after it has ended'
             : 'summarises the earlier conversation; the session goes on. /compact <what to keep> sets a focus'}
         </Hint>
+        </>)}
       </Section>
 
       <Divider />

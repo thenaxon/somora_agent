@@ -170,7 +170,8 @@ export function TeamWindow() {
     try {
       const [t, a] = await Promise.all([api.teamGet(), api.agents()]);
       setServer(t);
-      setAgents(a);
+      // The team is somora's own agents; external agents are not on the chart.
+      setAgents(a.filter((x) => x.kind !== 'external'));
       if (t.file) {
         const f = clone(t.file);
         setDraft(f);

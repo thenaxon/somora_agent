@@ -26,6 +26,7 @@ import { WikiWindow } from './WikiWindow';
 import { ToolsWindow } from './ToolsWindow';
 import { TeamWindow } from './TeamWindow';
 import { AgentConfigWindow } from './AgentConfigWindow';
+import { ExternalAgentPanel } from './ExternalAgentPanel';
 import { MediaWindow } from './MediaWindow';
 import { PinNoteWindow } from './PinNoteWindow';
 import { FileViewWindow } from './FileViewWindow';
@@ -637,7 +638,10 @@ export function Desktop() {
                 onMove={wm.move}
                 onResize={wm.resize}
               >
-                <AgentConfigWindow agentName={win.agentName} />
+                {(() => {
+                  const ext = agents.find((a) => a.name === win.agentName)?.external;
+                  return ext ? <ExternalAgentPanel agentName={win.agentName} mark={ext} /> : <AgentConfigWindow agentName={win.agentName} />;
+                })()}
               </Window>
             );
           }

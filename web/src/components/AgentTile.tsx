@@ -95,7 +95,7 @@ export function AgentTile({
     <div
       role="button"
       tabIndex={0}
-      className={`agent-icon ${active ? 'active' : ''}${agent.kind === 'builder' ? ' is-builder' : ''}`}
+      className={`agent-icon ${active ? 'active' : ''}${agent.kind === 'builder' ? ' is-builder' : ''}${agent.external ? ' is-external' : ''}`}
       onClick={() => onClick(agent)}
       {...(onContextMenu ? { onContextMenu: (e: React.MouseEvent) => onContextMenu(agent, e) } : {})}
       onKeyDown={(e) => {
@@ -131,6 +131,16 @@ export function AgentTile({
             title="New activity in a session — open the chat to read"
           />
         )}
+        {agent.external && (
+          <span
+            className="external-badge"
+            data-testid="external-badge"
+            aria-label={`external agent · ${agent.external.label}`}
+            title={`External · ${agent.external.label}${agent.external.version ? ` ${agent.external.version}` : ''} (${agent.external.system})`}
+          >
+            {agent.external.badgeImage ? <img src={agent.external.badgeImage} alt="" draggable={false} /> : agent.external.badge}
+          </span>
+        )}
         {pendingCount > 0 && (
           <span
             className="rem-badge"
@@ -142,11 +152,13 @@ export function AgentTile({
       </div>
       <div className="agent-icon-label">{agent.name}</div>
       <div className="agent-icon-sub">
-        {(agent.kind === 'builder'
-          ? agent.role && agent.role.trim().toLowerCase() !== 'builder'
-            ? `builder · ${agent.role}`
-            : 'builder'
-          : (agent.role ?? 'agent')
+        {(agent.external
+          ? `external · ${agent.external.label}`
+          : agent.kind === 'builder'
+            ? agent.role && agent.role.trim().toLowerCase() !== 'builder'
+              ? `builder · ${agent.role}`
+              : 'builder'
+            : (agent.role ?? 'agent')
         ).toLowerCase()}
       </div>
     </div>

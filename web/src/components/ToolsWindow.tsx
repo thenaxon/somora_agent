@@ -185,7 +185,9 @@ export function ToolsWindow() {
   useEffect(() => {
     void api
       .agents()
-      .then((list) => {
+      .then((all) => {
+        // External agents' tools belong to their own system.
+        const list = all.filter((a) => a.kind !== 'external');
         setAgents(list);
         setAgent((a) => a ?? list[0]?.name ?? null);
       })

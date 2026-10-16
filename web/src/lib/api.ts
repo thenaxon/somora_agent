@@ -28,8 +28,35 @@ export interface AgentInfo {
    *  runs: true = hand it into the running turn, false = queue. */
   steering?: boolean;
   /** agent.yaml `kind:` — `chat` (default) or `builder` (a coding
-   *  harness: no persona prose, short tool set, long turns). */
-  kind?: 'chat' | 'builder';
+   *  harness: no persona prose, short tool set, long turns). `external`:
+   *  an agent of another system, chatted with over ACP
+   *  (docs/external-agents.md). */
+  kind?: 'chat' | 'builder' | 'external';
+  /** Set on external agents: where they come from. */
+  external?: ExternalAgentMark;
+}
+
+/** What a client shows about an external agent's system. */
+export interface ExternalAgentMark {
+  system: string;
+  /** "OpenClaw", "Hermes", or the system's own name. */
+  label: string;
+  /** The tile-corner sign: an emoji or a short text ("🦞", "☤", "OA"). */
+  badge: string;
+  /** Set when config.yaml names an image for the badge. */
+  badgeImage: string | null;
+  /** The agent's version, once somora has talked to it. */
+  version: string | null;
+}
+
+/** An open question of a session (GET …/question). */
+export interface SessionQuestion {
+  id: string;
+  question: string;
+  header?: string;
+  options: Array<{ label: string; description?: string }>;
+  multiple: boolean;
+  expiresAt: number;
 }
 
 export interface SessionSummary {
@@ -765,6 +792,22 @@ export const api = {
       mem: { totalBytes: number; availableBytes: number; usedBytes: number; percent: number };
     }>('/host-stats'),
   agents: () => getJson<AgentInfo[]>('/agents'),
+  /** The open question of a session, or null. */
+  sessionQuestion: async (agent: string, session: string): Promise<SessionQuestion | null> => {
+    const r = await getJson<{ question: SessionQuestion | null }>(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/question`);
+    return r.question;
+  },
+  /** Answer a session's open question (any agent kind) with the chosen option label(s). */
+  answerSessionQuestion: async (agent: string, session: string, questionId: string, answers: string[]): Promise<void> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/questions/${encodeURIComponent(questionId)}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers }),
+    });
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `answer ${res.status}`);
+  },
+  /** External systems and their agents (GET /external). */
+  external: () => getJson<ExternalStatus>('/external'),
   tmuxSessions: () =>
     getJson<{ sessions: TmuxSessionInfo[] }>('/tmux/sessions').then((r) => r.sessions),
   sessions: (agent: string) =>
@@ -1752,4 +1795,24 @@ export interface GlobalSessionRow {
   unreadAt?: string | null;
   /** ISO timestamp when any client last opened this session. */
   seenAt?: string | null;
+}
+
+/** GET /external. */
+export interface ExternalStatus {
+  idleMinutes: number;
+  questionTimeoutMinutes: number;
+  systems: Array<{
+    name: string;
+    protocol: string;
+    transport: { local: true } | { resource: string };
+    agents: Array<{
+      name: string;
+      badge?: { label: string; badge: string; badgeImage: string | null; version: string | null };
+      agentInfo: { name?: string; title?: string | null; version?: string } | null;
+      profile: string | null;
+      capabilities: Record<string, unknown> | null;
+      connections: Array<{ sessionId: string | null; where: string; idleMs: number }>;
+    }>;
+  }>;
+  ignored: Array<{ name: string; system: string }>;
 }

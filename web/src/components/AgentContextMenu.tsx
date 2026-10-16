@@ -283,8 +283,8 @@ export function AgentContextMenu({ agent, x, y, onClose, onOpenSession, onOpenSe
 
       <MenuItem
         icon={<Settings size={13} />}
-        label="Configure…"
-        hint="persona · prompt"
+        label={agent.external ? 'About…' : 'Configure…'}
+        hint={agent.external ? `external · ${agent.external.label}` : 'persona · prompt'}
         testId="agent-menu-configure"
         onClick={() => {
           onOpenConfig(agent);

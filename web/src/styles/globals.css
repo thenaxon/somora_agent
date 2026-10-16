@@ -445,6 +445,36 @@ body {
   box-shadow: 0 0 8px var(--dream-rem-glow);
 }
 
+/* External agent (docs/external-agents.md): the system's sign in the
+ * bottom-left corner — the one corner the status dot, the REM counter and
+ * the unread dot leave free. An emoji, a short text, or a small image. */
+.agent-icon-glyph .external-badge {
+  position: absolute;
+  bottom: -4px;
+  left: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 3px;
+  border-radius: 10px;
+  background: var(--bg-1);
+  color: var(--text-0);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  z-index: 2;
+}
+.agent-icon-glyph .external-badge img {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+}
+
 /* Lucid variant — same badge slot, but on the AppDock wiki tile
  * (lucid is platform-wide, not agent-bound) and in the lucid accent
  * so REM-vs-lucid review backlogs are distinguishable at a glance. */

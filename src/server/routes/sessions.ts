@@ -4,6 +4,7 @@
 
 import { agentKnown, getExternalAgent, isExternalAgent, listExternalAgents } from '../../external/registry.ts';
 import { closeExternal } from '../../external/connection.ts';
+import { externalBadge } from './external.ts';
 import { remSettingsFor } from '../../dream/dreams.ts';
 import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
@@ -53,7 +54,7 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
     // External agents' conversations are somora sessions too.
     const agents: Array<{ name: string; color?: string | undefined; icon?: string | undefined; external?: string }> = [
       ...(await listAgents()),
-      ...listExternalAgents().map((e) => ({ name: e.name, color: undefined, icon: e.agent.icon, external: e.system })),
+      ...listExternalAgents().map((e) => ({ name: e.name, color: undefined, icon: e.agent.icon ?? externalBadge(e).badge, external: e.system })),
     ];
     const rows: Array<Record<string, unknown>> = [];
     let liveByKey: Map<string, number> | null = null;
