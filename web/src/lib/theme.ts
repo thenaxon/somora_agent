@@ -29,6 +29,9 @@ export interface WebThemeVersion {
 export interface WebTheme {
   id: string;
   name: string;
+  /** `bundled`: comes with somora (Ocean); `own`: from ~/.somora/themes/.
+   *  Missing from servers before bundled themes. */
+  source?: 'bundled' | 'own';
   versions: Partial<Record<'dark' | 'light', WebThemeVersion>>;
 }
 

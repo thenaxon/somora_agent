@@ -246,6 +246,8 @@ export class RemWorker {
    */
   private async rearmIfWorkRemains(state: AgentState): Promise<void> {
     if (this.shuttingDown || state.idleTimer) return;
+    // The agent stopped dreaming while this run was finishing.
+    if (this.agents.get(state.agent) !== state) return;
     const factor = selfHealFactor(state.selfHealAttempts + 1);
     if (factor === null) {
       logger.info({

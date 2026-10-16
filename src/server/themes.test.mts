@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { derivedTokens, listThemes, loadTheme, parseColor, readWallpaper, validateThemeJson, WALLPAPER_MAX_BYTES } from './themes.ts';
+import { bundledThemesDir, derivedTokens, listAllThemes, listThemes, loadTheme, parseColor, readWallpaper, THEME_COLOR_TOKENS, themeRootFor, validateThemeJson, WALLPAPER_MAX_BYTES } from './themes.ts';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 const JPG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
@@ -243,4 +243,52 @@ test('wallpaper per version: each version serves its own file, a missing version
   // A wallpaper missing in one version makes the whole theme invalid.
   theme(dir, 'halfbroken', { dark: {}, light: { wallpaper: 'gone.png' } });
   assert.match(((await loadTheme('halfbroken', dir)) as { error: string }).error, /"gone.png" not found/);
+});
+
+// ── the bundled theme ───────────────────────────────────────────────
+
+test('Ocean comes with somora: valid, both versions, and every colour token set — it is the template to copy', async () => {
+  const t = await loadTheme('ocean', bundledThemesDir());
+  assert.ok(!('error' in t), 'error' in t ? t.error : '');
+  const ocean = t as Exclude<typeof t, { error: string }>;
+  for (const base of ['dark', 'light'] as const) {
+    const v = ocean.versions[base];
+    assert.ok(v, `${base} version`);
+    // A new token in THEME_COLOR_TOKENS fails here until Ocean sets it too.
+    const missing = THEME_COLOR_TOKENS.filter((tok) => !(tok in v.tokens));
+    assert.deepEqual(missing, [], `Ocean ${base} lacks ${missing.join(', ')}`);
+  }
+});
+
+test('bundled and own themes in one list; a folder of yours replaces the bundled one of the same name', async () => {
+  const own = root();
+  const shipped = root();
+  theme(shipped, 'ocean', { name: 'Ocean', dark: { colors: { '--accent': '#4fb3e6' } } });
+  theme(shipped, 'mist', { name: 'Mist', light: {} });
+  theme(own, 'mine', { name: 'Mine', dark: {} });
+  let all = await listAllThemes(own, shipped);
+  assert.deepEqual(all.themes.map((t) => [t.id, t.source]), [['mine', 'own'], ['mist', 'bundled'], ['ocean', 'bundled']]);
+
+  theme(own, 'ocean', { name: 'My Ocean', dark: { colors: { '--accent': '#ff8800' } } });
+  all = await listAllThemes(own, shipped);
+  const ocean = all.themes.filter((t) => t.id === 'ocean');
+  assert.equal(ocean.length, 1, 'listed once');
+  assert.equal(ocean[0]!.source, 'own');
+  assert.equal(ocean[0]!.name, 'My Ocean');
+  assert.equal(await themeRootFor('ocean', own, shipped), own);
+  assert.equal(await themeRootFor('mist', own, shipped), shipped);
+
+  // A broken copy of yours still hides the bundled one: you are editing it.
+  theme(own, 'mist', '{ not json');
+  all = await listAllThemes(own, shipped);
+  assert.ok(!all.themes.some((t) => t.id === 'mist'));
+  assert.equal(all.invalid.find((t) => t.id === 'mist')!.source, 'own');
+});
+
+test('a bundled theme\'s wallpaper is served from the bundled folder', async () => {
+  const own = root();
+  const shipped = root();
+  theme(shipped, 'pic', { dark: { wallpaper: 'w.png' } }, { 'w.png': PNG });
+  const res = await readWallpaper('pic', 'dark', await themeRootFor('pic', own, shipped));
+  assert.ok('bytes' in res);
 });

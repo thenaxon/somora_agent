@@ -439,7 +439,7 @@ export function Taskbar({
                         type="button"
                         role="option"
                         aria-selected={customTheme?.id === t.id}
-                        title={`${t.versions.dark && t.versions.light ? 'Dark and light' : t.versions.dark ? 'Dark' : 'Light'}, from ~/.somora/themes/${t.id}`}
+                        title={`${t.versions.dark && t.versions.light ? 'Dark and light' : t.versions.dark ? 'Dark' : 'Light'}, ${t.source === 'bundled' ? 'comes with somora — copy it to derive your own' : `from ~/.somora/themes/${t.id}`}`}
                         onClick={() => pickTheme(t)}
                       >
                         <span>{t.name}</span>

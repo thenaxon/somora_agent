@@ -2,7 +2,7 @@
 // Both routes sit behind the login key like every other route.
 
 import type { Hono } from 'hono';
-import { listThemes, readWallpaper, type Theme, type ThemeBase, type ThemeVersion } from '../themes.ts';
+import { listAllThemes, readWallpaper, themeRootFor, type Theme, type ThemeBase, type ThemeSource, type ThemeVersion } from '../themes.ts';
 
 function versionForClient(id: string, base: ThemeBase, v: ThemeVersion) {
   return {
@@ -13,19 +13,19 @@ function versionForClient(id: string, base: ThemeBase, v: ThemeVersion) {
   };
 }
 
-function forClient(t: Theme) {
+function forClient(t: Theme & { source: ThemeSource }) {
   const versions: Partial<Record<ThemeBase, ReturnType<typeof versionForClient>>> = {};
   for (const base of ['dark', 'light'] as const) {
     const v = t.versions[base];
     if (v) versions[base] = versionForClient(t.id, base, v);
   }
-  return { id: t.id, name: t.name, versions };
+  return { id: t.id, name: t.name, source: t.source, versions };
 }
 
 export function registerThemeRoutes(app: Hono): void {
   // GET /themes — the valid themes, and the invalid ones with the reason.
   app.get('/themes', async (c) => {
-    const { themes, invalid } = await listThemes();
+    const { themes, invalid } = await listAllThemes();
     return c.json({ themes: themes.map(forClient), invalid });
   });
 
@@ -33,7 +33,8 @@ export function registerThemeRoutes(app: Hono): void {
   app.get('/themes/:id/:base/wallpaper', async (c) => {
     const base = c.req.param('base');
     if (base !== 'dark' && base !== 'light') return c.json({ error: 'the version is dark or light' }, 404);
-    const res = await readWallpaper(c.req.param('id'), base);
+    const id = c.req.param('id');
+    const res = await readWallpaper(id, base, await themeRootFor(id));
     if ('error' in res) return c.json({ error: res.error }, res.status);
     return new Response(new Uint8Array(res.bytes), {
       headers: {

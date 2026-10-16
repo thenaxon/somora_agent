@@ -18,6 +18,8 @@ three show the same conversations.
   agents work, where something unread waits and what is dreaming.
 - **Server controls.** Reload the config or restart somora from the
   taskbar, and see when an update is available.
+- **A desktop that looks the way you like.** Dark, Light, the bundled
+  Ocean theme, or a theme of your own with your colours and wallpaper.
 
 ## Open it
 
@@ -194,7 +196,7 @@ restart cannot loop.
 ### Theme
 
 The theme sits at the bottom of the screen menu. It shows the theme
-in use, **somora** unless you picked one of your own, see
+in use: **somora**, **Ocean**, or one of your own, see
 [Themes](#themes). A click on the name folds out the list of themes.
 
 Below it you switch between **Dark**, **Light** and **Auto**. **Dark**
@@ -210,20 +212,63 @@ the agent has.
 
 ### Themes
 
+somora comes with two looks:
+- **somora:** the built-in one, in Dark and Light.
+- **Ocean:** deep blue at night, sky blue by day. It is the theme to
+  copy: it sets every colour a theme can set, in both versions, so a
+  copy shows you every knob. We keep it up to date with somora.
+
+Both are in the screen menu from the start. Ocean lies in
+`docs/themes/ocean/` of the somora install.
+
+Beyond those two, the desktop is yours to design: your colours, a
+wallpaper you like, a calm dark or a bright light version, or both. A
+theme takes a few minutes, needs no code and cannot break anything: a
+mistake shows up in the menu with its reason, and somora stays as it
+was. Start from Ocean, as described below.
+
 A theme of your own sets the colours of the desktop and, if you like,
 a wallpaper. It can have a dark version, a light version or both. Each
 theme is a folder in `~/.somora/themes/` with a `theme.json`:
 
 ```
 ~/.somora/themes/
-  ocean/
+  harbour/
     theme.json
     night.jpg
 ```
 
+### Make your own from Ocean
+
+1. Copy Ocean under a new folder name. The name may use letters,
+   digits, `-` and `_`:
+
+   ```bash
+   mkdir -p ~/.somora/themes
+   cp -r "$(npm root -g)/somora/docs/themes/ocean" ~/.somora/themes/harbour
+   ```
+
+2. Open `~/.somora/themes/harbour/theme.json`, give it its own `name`
+   and change the colours you want different. A colour you delete comes
+   from somora's Dark or Light instead.
+3. Open the screen menu: Harbour is listed next to somora and Ocean.
+
+A copy under the folder name `ocean` replaces the bundled Ocean in the
+list. It then stays as you made it: an update of somora changes the
+bundled Ocean, not your copy.
+
+> **Tip:** Keep the menu open while you edit. Save the file, close the
+> menu and open it again: the theme is read fresh each time, so you see
+> a change without reloading the page.
+
+
+### The theme file
+
+An example, shortened:
+
 ```json
 {
-  "name": "Ocean",
+  "name": "Harbour",
   "dark": {
     "colors": { "--bg-0": "#040c17", "--bg-1": "#0a1a2e", "--accent": "#4fb3e6" },
     "wallpaper": "night.jpg",
@@ -288,14 +333,6 @@ Window shapes, blur, shadows, fonts and icons are not part of a theme.
 Terminal and tmux windows stay dark. Themes are for the web client
 only.
 
-An example theme to copy lies in `docs/themes/ocean/` of the somora
-checkout or install: deep blue at night, sky blue by day, with both
-versions, recoloured glows and no grid. Copy it into
-`~/.somora/themes/` and pick it in the screen menu:
-
-```bash
-cp -r "$(npm root -g)/somora/docs/themes/ocean" ~/.somora/themes/
-```
 
 ### Inbox
 

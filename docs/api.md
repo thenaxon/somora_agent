@@ -230,12 +230,12 @@ Both answer `{ ok, unread }`, or `404` for an unknown key.
 
 ### `GET /themes`
 
-The themes in `~/.somora/themes/` for the web client. Each folder is
-read and checked on every request, see
-[Themes](web.md#themes) for the format.
+The themes for the web client: the ones that come with somora and the
+ones in `~/.somora/themes/`. Each folder is read and checked on every
+request, see [Themes](web.md#themes) for the format.
 
 ```json
-{ "themes": [ { "id": "ocean", "name": "Ocean", "versions": {
+{ "themes": [ { "id": "ocean", "name": "Ocean", "source": "bundled", "versions": {
       "dark": { "tokens": { "--accent": "#4fb3e6", "--accent-rgb": "79, 179, 230", "--on-accent": "#0a1010" },
                 "grid": false, "wallpaperUrl": "/themes/ocean/dark/wallpaper?v=1791821926940" },
       "light": { "tokens": { "--accent": "#1c74b8", "--accent-rgb": "28, 116, 184", "--on-accent": "#ffffff" },
@@ -246,10 +246,11 @@ read and checked on every request, see
 | Field | Meaning |
 |---|---|
 | `id` | The folder name. |
+| `source` | `bundled` for a theme that comes with somora, `own` for one in `~/.somora/themes/`. A folder of yours with the same name replaces the bundled theme. |
 | `versions` | `dark`, `light` or both, as the theme's `theme.json` has them. |
 | `tokens` | The version's colours plus the ones derived from them (`--accent-rgb`, `--bg-0-rgb`, `--bg-1-rgb`, `--on-accent`). |
 | `wallpaperUrl` | `null` without a wallpaper. `v` changes when the file does. |
-| `invalid` | Folders that are not a valid theme, with the reason. |
+| `invalid` | Folders that are not a valid theme, with the reason and `source`. |
 
 No themes folder answers two empty lists.
 

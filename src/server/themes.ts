@@ -10,7 +10,8 @@
 // readWallpaper(), which checks the path and the image type again.
 
 import { homedir } from 'node:os';
-import { join, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { lstat, open, readdir, readFile, realpath, stat } from 'node:fs/promises';
 
 /** Colour tokens a theme may set (web/src/styles/tokens.css). */
@@ -75,6 +76,16 @@ export interface InvalidTheme {
 export function themesDir(home = process.env.SOMORA_HOME ?? join(homedir(), '.somora')): string {
   return join(home, 'themes');
 }
+
+/** The themes that come with somora (docs/themes/ in the package): Ocean,
+ *  which we maintain and which is the one to copy and derive your own
+ *  from. Listed next to your own; a folder of yours with the same name
+ *  takes its place. */
+export function bundledThemesDir(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'themes');
+}
+
+export type ThemeSource = 'bundled' | 'own';
 
 // ── Colour values ───────────────────────────────────────────────────
 
@@ -276,6 +287,33 @@ function extension(file: string): string {
 }
 
 // ── Files ───────────────────────────────────────────────────────────
+
+/** Your themes and the bundled ones in one list, each with where it
+ *  comes from. A folder of yours replaces a bundled one of the same name. */
+export async function listAllThemes(
+  own = themesDir(),
+  bundled = bundledThemesDir(),
+): Promise<{ themes: Array<Theme & { source: ThemeSource }>; invalid: Array<InvalidTheme & { source: ThemeSource }> }> {
+  const mine = await listThemes(own);
+  const shipped = await listThemes(bundled);
+  const taken = new Set([...mine.themes, ...mine.invalid].map((t) => t.id));
+  const themes = [
+    ...shipped.themes.filter((t) => !taken.has(t.id)).map((t) => ({ ...t, source: 'bundled' as const })),
+    ...mine.themes.map((t) => ({ ...t, source: 'own' as const })),
+  ].sort((a, b) => a.name.localeCompare(b.name));
+  const invalid = [
+    ...shipped.invalid.filter((t) => !taken.has(t.id)).map((t) => ({ ...t, source: 'bundled' as const })),
+    ...mine.invalid.map((t) => ({ ...t, source: 'own' as const })),
+  ];
+  return { themes, invalid };
+}
+
+/** The folder a theme id is read from: yours when you have one by that
+ *  name, else the bundled one. */
+export async function themeRootFor(id: string, own = themesDir(), bundled = bundledThemesDir()): Promise<string> {
+  if (!ID_RE.test(id)) return own;
+  return (await lstat(join(own, id)).catch(() => null)) ? own : bundled;
+}
 
 /** A file path inside dir that stays inside it once symlinks are resolved, or an error. */
 async function insideFolder(dir: string, file: string): Promise<{ path: string } | { error: string }> {

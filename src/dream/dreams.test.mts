@@ -69,6 +69,10 @@ test('the REM worker follows the switch: registered, settings refreshed, unregis
     assert.equal(worker.isRegistered('dreamer'), false);
     syncRemRegistration(worker, 'sleeper', (await loadPersona('sleeper'))!, config);
     assert.equal(worker.isRegistered('sleeper'), false);
+    // A run that ends after the agent stopped dreaming schedules nothing.
+    const gone = { agent: 'dreamer', idleTimer: null } as never;
+    await (worker as unknown as { rearmIfWorkRemains(s: unknown): Promise<void> }).rearmIfWorkRemains(gone);
+    assert.equal((gone as { idleTimer: unknown }).idleTimer, null);
   } finally {
     await worker.shutdown();
   }
