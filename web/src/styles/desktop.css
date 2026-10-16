@@ -24,8 +24,8 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(1200px 800px at 20% 10%, rgba(var(--accent-rgb), 0.06), transparent 60%),
-    radial-gradient(1000px 700px at 85% 90%, rgba(92,140,242,0.05), transparent 60%),
+    radial-gradient(1200px 800px at 20% 10%, var(--glow-1), transparent 60%),
+    radial-gradient(1000px 700px at 85% 90%, var(--glow-2), transparent 60%),
     linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
   /* `clip`, not `hidden`: hidden still makes this a scroll container,
    * and any scrollIntoView()/focus() inside a window that hangs off
@@ -58,6 +58,33 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   background-size: 240px 240px;
   pointer-events: none;
   mask-image: radial-gradient(ellipse at center, rgba(0,0,0,0.9), rgba(0,0,0,0.2));
+}
+/* A custom theme (web/src/lib/theme.ts, docs/web.md "Themes"): its
+ * wallpaper takes the place of the gradient under the glows, and
+ * "grid": false hides both grids. */
+:root[data-wallpaper] .desktop {
+  background:
+    radial-gradient(1200px 800px at 20% 10%, var(--glow-1), transparent 60%),
+    radial-gradient(1000px 700px at 85% 90%, var(--glow-2), transparent 60%),
+    var(--desktop-wallpaper) center / cover no-repeat,
+    var(--bg-0);
+}
+/* On a wallpaper the labels under the icons are white with a shadow,
+ * as on a desktop OS: the theme's grey text can sit at the same
+ * brightness as the picture, white with a shadow reads on any part of
+ * it. (The app label's colour is set inline, hence !important.) */
+:root[data-wallpaper] .app-icon-label,
+:root[data-wallpaper] .agent-icon-label {
+  color: #fff !important;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+:root[data-wallpaper] .agent-icon-sub {
+  color: rgba(255,255,255,0.75);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+:root[data-grid='off'] .desktop::before,
+:root[data-grid='off'] .desktop::after {
+  display: none;
 }
 
 .desktop-area {
@@ -2253,8 +2280,24 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .inbox-muted-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-2); padding: 0 4px; }
 
 /* Theme switch in the screen menu (Dark / Light / Auto). */
-.theme-switch { display: flex; gap: 4px; padding: 6px 4px 2px; border-top: 1px solid var(--line); margin-top: 4px; }
-.theme-switch-label { font-size: 11px; color: var(--text-2); padding: 0 4px 2px; }
+.theme-section { padding: 6px 4px 2px; border-top: 1px solid var(--line); margin-top: 4px; display: flex; flex-direction: column; gap: 4px; }
+.theme-switch { display: flex; gap: 4px; }
+.theme-switch-label { font-size: 11px; color: var(--text-2); padding: 0 0 2px; }
+.theme-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line-2);
+  background: rgba(var(--tint-rgb), 0.03);
+  color: var(--text-0);
+  font-size: 12px;
+  cursor: pointer;
+}
+.theme-picker span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.theme-picker:hover { border-color: var(--accent-dim); }
 .theme-switch button {
   flex: 1;
   padding: 5px 0;
@@ -2266,6 +2309,28 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   cursor: pointer;
 }
 .theme-switch button[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.theme-switch button[aria-disabled='true'] { opacity: 0.35; cursor: not-allowed; }
+.theme-switch-note { font-size: 11px; color: var(--text-2); padding: 0 2px; }
+.theme-list { display: flex; flex-direction: column; gap: 1px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-1); max-height: 220px; overflow-y: auto; }
+.theme-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-1);
+  font-size: 12px;
+  cursor: pointer;
+}
+.theme-list button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.theme-list button:hover:not([aria-disabled='true']) { background: rgba(var(--tint-rgb), 0.06); color: var(--text-0); }
+.theme-list button[aria-selected='true'] { color: var(--text-0); font-weight: 600; }
+.theme-list button[aria-selected='true'] svg { color: var(--accent); }
+.theme-list button.theme-invalid { color: var(--text-3); cursor: help; }
 
 /* Agent colours as text: as chosen on the dark theme, darkened to a
  * readable contrast on the light one (colors.ts inkOnLight). */

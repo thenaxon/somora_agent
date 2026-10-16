@@ -228,6 +228,40 @@ Body `{ "key": "…", "mode": "until-resolved" | "forever" }` for mute,
 `{ "key": "…" }` for unmute. `mode` defaults to `until-resolved`.
 Both answer `{ ok, unread }`, or `404` for an unknown key.
 
+### `GET /themes`
+
+The themes in `~/.somora/themes/` for the web client. Each folder is
+read and checked on every request, see
+[Themes](web.md#themes) for the format.
+
+```json
+{ "themes": [ { "id": "ocean", "name": "Ocean", "versions": {
+      "dark": { "tokens": { "--accent": "#4fb3e6", "--accent-rgb": "79, 179, 230", "--on-accent": "#0a1010" },
+                "grid": false, "wallpaperUrl": "/themes/ocean/dark/wallpaper?v=1791821926940" },
+      "light": { "tokens": { "--accent": "#1c74b8", "--accent-rgb": "28, 116, 184", "--on-accent": "#ffffff" },
+                 "grid": true, "wallpaperUrl": null } } } ],
+  "invalid": [ { "id": "draft", "error": "unknown colour token \"--font\"" } ] }
+```
+
+| Field | Meaning |
+|---|---|
+| `id` | The folder name. |
+| `versions` | `dark`, `light` or both, as the theme's `theme.json` has them. |
+| `tokens` | The version's colours plus the ones derived from them (`--accent-rgb`, `--bg-0-rgb`, `--bg-1-rgb`, `--on-accent`). |
+| `wallpaperUrl` | `null` without a wallpaper. `v` changes when the file does. |
+| `invalid` | Folders that are not a valid theme, with the reason. |
+
+No themes folder answers two empty lists.
+
+### `GET /themes/:id/:version/wallpaper`
+
+The wallpaper of a valid theme's `dark` or `light` version, as
+`image/png`, `image/jpeg` or `image/webp`. The file has to lie in the
+theme's own folder, also after following links, and has to be the
+image type its name says. A theme folder that is itself a link is not
+read. `404` for an unknown theme, version or wallpaper, `422` with the
+reason for an invalid theme.
+
 ### `GET /healthz`
 
 Liveness probe. Answers the plain text `ok` with status 200. Use it to

@@ -1,0 +1,41 @@
+{
+  "name": "Ocean",
+  "dark": {
+    "colors": {
+      "--bg-0": "#040c17",
+      "--bg-1": "#0a1a2e",
+      "--bg-2": "#0f2339",
+      "--bg-3": "#153049",
+      "--line": "#17314c",
+      "--line-2": "#234869",
+      "--text-0": "#e3eef9",
+      "--text-1": "#a6bdd2",
+      "--text-2": "#6c87a2",
+      "--text-3": "#4a617a",
+      "--accent": "#4fb3e6",
+      "--accent-dim": "#2a6d93",
+      "--glow-1": "rgba(38, 168, 232, 0.16)",
+      "--glow-2": "rgba(70, 92, 230, 0.14)"
+    },
+    "grid": false
+  },
+  "light": {
+    "colors": {
+      "--bg-0": "#9ec8ec",
+      "--bg-1": "#c6dff4",
+      "--bg-2": "#b8d5ef",
+      "--bg-3": "#a9cbea",
+      "--line": "#9bbedf",
+      "--line-2": "#7aa6d0",
+      "--text-0": "#0e2136",
+      "--text-1": "#26425d",
+      "--text-2": "#415d78",
+      "--text-3": "#5c7792",
+      "--accent": "#1567a8",
+      "--accent-dim": "#7bb2de",
+      "--glow-1": "rgba(52, 160, 242, 0.30)",
+      "--glow-2": "rgba(88, 110, 236, 0.22)"
+    },
+    "grid": false
+  }
+}

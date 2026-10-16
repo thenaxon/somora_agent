@@ -22,7 +22,7 @@
   /* Accent — cyan-teal. Used for primary actions, focus, links. */
   --accent: #5cf2d6;
   --accent-dim: #2c8d7b;
-  --accent-glow: rgba(92, 242, 214, 0.18);
+  --accent-glow: rgba(var(--accent-rgb), 0.18);
 
   /* Status. */
   --warn: #f5b942;
@@ -30,8 +30,11 @@
   --ok: #5cf2d6;
 
   /* Effects. */
-  --grid: rgba(92, 242, 214, 0.05);
-  --grid-strong: rgba(92, 242, 214, 0.1);
+  --grid: rgba(var(--accent-rgb), 0.05);
+  --grid-strong: rgba(var(--accent-rgb), 0.1);
+  /* The two soft glows on the desktop, top left and bottom right. */
+  --glow-1: rgba(var(--accent-rgb), 0.06);
+  --glow-2: rgba(92, 140, 242, 0.05);
   --shadow-window:
     0 30px 80px -10px rgba(0, 0, 0, 0.7),
     0 10px 30px -10px rgba(0, 0, 0, 0.5);
@@ -68,14 +71,14 @@
 
   --accent: #0b8f78;
   --accent-dim: #6cc3b3;
-  --accent-glow: rgba(11, 143, 120, 0.16);
+  --accent-glow: rgba(var(--accent-rgb), 0.16);
 
   --warn: #b26b00;
   --danger: #d33f3f;
   --ok: #0b8f78;
 
-  --grid: rgba(11, 143, 120, 0.06);
-  --grid-strong: rgba(11, 143, 120, 0.11);
+  --grid: rgba(var(--accent-rgb), 0.06);
+  --grid-strong: rgba(var(--accent-rgb), 0.11);
   --shadow-window:
     0 24px 60px -14px rgba(15, 23, 42, 0.28),
     0 8px 22px -10px rgba(15, 23, 42, 0.18);

@@ -47,6 +47,7 @@ export function AppTile({ label, icon, active, onClick, badge }: Props) {
         {badge}
       </div>
       <div
+        className="app-icon-label"
         style={{
           fontFamily: '"JetBrains Mono", monospace',
           fontSize: 11,

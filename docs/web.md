@@ -148,7 +148,7 @@ The bar at the bottom always stays on top. From left to right:
 | Koala, name and version | The somora mascot and the server version. |
 | Inbox | Updates, messages from somora.ai and things that need you, with a count of what is new. See "Inbox". |
 | Gear | Server menu: reload config, restart, sign out. |
-| Screen | **Arrange windows**, **Save layout** and **Restore layout** (a snapshot of the layout, brought back later), **Full screen** where the browser can do it, and the theme: **Dark**, **Light** or **Auto**. |
+| Screen | **Arrange windows**, **Save layout** and **Restore layout** (a snapshot of the layout, brought back later), **Full screen** where the browser can do it, and the theme: **somora** or one of your own, and **Dark**, **Light** or **Auto**. |
 | `Browser · N waiting for you` | Appears when an agent handed the shared browser to you. Opens the browser list. |
 | Window buttons | One per open window, in the agent's colour. Click to focus or bring back a minimized window. |
 | `cpu` and `mem` | Load and memory of the host, refreshed every 5 seconds. |
@@ -193,15 +193,116 @@ restart cannot loop.
 
 ### Theme
 
-**Dark** is the default. **Light** gives the whole desktop light
-surfaces with a darker accent so text stays readable. **Auto** follows
-the system setting and switches along when it changes. The choice sits
-at the bottom of the screen menu and is kept per browser.
+The theme sits at the bottom of the screen menu. It shows the theme
+in use, **somora** unless you picked one of your own, see
+[Themes](#themes). A click on the name folds out the list of themes.
+
+Below it you switch between **Dark**, **Light** and **Auto**. **Dark**
+is the default. **Light** gives the whole desktop light surfaces with a
+darker accent so text stays readable. **Auto** follows the system
+setting and switches along when it changes. Both choices are kept per
+browser.
 
 Terminal and tmux windows stay dark in every theme. Agent colours stay as chosen;
 on Light, text in an agent's colour (its role, the tools and memory
 switches) is darkened just enough to stay readable, whatever colour
 the agent has.
+
+### Themes
+
+A theme of your own sets the colours of the desktop and, if you like,
+a wallpaper. It can have a dark version, a light version or both. Each
+theme is a folder in `~/.somora/themes/` with a `theme.json`:
+
+```
+~/.somora/themes/
+  ocean/
+    theme.json
+    night.jpg
+```
+
+```json
+{
+  "name": "Ocean",
+  "dark": {
+    "colors": { "--bg-0": "#040c17", "--bg-1": "#0a1a2e", "--accent": "#4fb3e6" },
+    "wallpaper": "night.jpg",
+    "grid": false
+  },
+  "light": {
+    "colors": { "--bg-0": "#d6e9f8", "--bg-1": "#f3f9fe", "--accent": "#1c74b8" }
+  }
+}
+```
+
+The list in the screen menu shows the themes by their `name`, after
+somora. A folder added or changed while the page is open shows up the
+next time the menu opens. A theme that is gone or no longer valid falls
+back to somora, in the mode chosen there. A theme with a mistake is
+listed greyed out, with the reason when you point at it.
+
+With both versions, Dark, Light and Auto switch between them as they do
+for somora. With one version, the switch stays on it and a line below
+says so. Dark, Light or Auto stays saved for when you switch back.
+
+| Key | Meaning |
+|---|---|
+| `name` | Shown in the menu. Optional, the folder name otherwise. |
+| `dark`, `light` | The two versions. At least one of them. |
+
+Each version takes these keys:
+
+| Key | Meaning |
+|---|---|
+| `colors` | Colour tokens from the table below. Optional. Every colour a version does not set comes from somora's Dark or Light. |
+| `wallpaper` | A `.png`, `.jpg` or `.webp` file in the theme folder, up to 20 MB. Optional. It takes the place of the background gradient. |
+| `grid` | `false` hides the grid lines on the desktop. Optional, default `true`. |
+
+Colour values are `#rgb`, `#rrggbb`, `rgb()` or `hsl()`, with or
+without transparency. Nothing else is accepted: no names such as
+`red`, no `url()`, no other keys. The folder name may use letters,
+digits, `-` and `_`.
+
+| Token | Colours |
+|---|---|
+| `--bg-0` … `--bg-3` | Surfaces, from the desktop edge (`0`) to fields and hover areas (`3`). |
+| `--line`, `--line-2` | Borders and dividers. `--line-2` is the stronger one, e.g. the focused window. |
+| `--text-0` … `--text-3` | Text, from the main text (`0`) to faint hints (`3`). |
+| `--accent` | Buttons, focus, links. |
+| `--accent-dim`, `--accent-glow` | A muted accent, and the glow around the focused window. |
+| `--warn`, `--danger`, `--ok` | Warnings, errors, success. |
+| `--grid`, `--grid-strong` | The fine and the coarse grid on the desktop. |
+| `--glow-1`, `--glow-2` | The soft glows on the desktop, top left and bottom right. These two also take `transparent`, which switches the glow off. |
+
+From bottom to top the desktop is: the gradient from `--bg-0` at the
+top to `--bg-1` at the bottom, or the wallpaper; the two glows; the
+grid. On a wallpaper the labels under the icons are white with a
+shadow, so they stay readable on any picture. `--accent-glow`,
+`--grid`, `--grid-strong` and `--glow-1` follow `--accent` unless the
+theme sets them.
+
+somora works out the rest from the colours given. The text on accent
+buttons is dark or white, whichever reads better on `--accent`.
+
+Window shapes, blur, shadows, fonts and icons are not part of a theme.
+Terminal and tmux windows stay dark. Themes are for the web client
+only.
+
+Example themes to copy lie in `docs/themes/` of the somora checkout or
+install:
+
+| Folder | Theme |
+|---|---|
+| `ocean` | Deep blue at night, sky blue by day. Both versions, no grid. |
+| `sepia-paper` | Warm paper tones. Light only. |
+| `luzudemca` | Near black with a vivid purple accent and grid. Dark only. |
+| `loops` | A dark wallpaper with purple arcs. Dark only. |
+
+Copy a folder into `~/.somora/themes/` and pick it in the screen menu:
+
+```bash
+cp -r "$(npm root -g)/somora/docs/themes/ocean" ~/.somora/themes/
+```
 
 ### Inbox
 
@@ -605,7 +706,8 @@ the server.
 | `somora.web.showTools.<agent>::<session>` | The **tools** toggle. The same pattern with `showMemory` and `showThinking`. |
 | `somora.voice.autoPlay.<agent>::<session>` | The **voice** toggle. |
 | `somora.web.builderPanel.collapsed.<agent>` | Whether the builder panel is folded. |
-| `somora.web.theme` | The theme: Dark, Light or Auto. |
+| `somora.web.theme` | Dark, Light or Auto. |
+| `somora.web.theme.custom` | The theme of your own in use, with its colours, so it is there before the page has loaded. Not set for somora. |
 | `somora.chat.externalImages` | **Always show** for pictures from other websites. Shared with the mobile app. |
 
 ## Routes the client uses
@@ -634,6 +736,7 @@ controls on this page:
 | `GET /config/status`, `POST /config/reload`, `POST /server/restart` | Gear menu |
 | `GET /version` | Version under the logo |
 | `GET /inbox`, `POST /inbox/read`, `POST /inbox/mute`, `POST /inbox/unmute` | Inbox |
+| `GET /themes`, `GET /themes/:id/:version/wallpaper` | Your own themes in the screen menu |
 | `GET /host-stats` | `cpu` and `mem` |
 | `GET /logs`, `GET /logs/since` | Log window |
 | `GET /health` | Waiting for the server after a restart |

@@ -9,6 +9,7 @@ import type { FromSystem, TurnOrigin } from '../types/origin';
 import type { SamplingParams, SamplingPatch } from './sampling';
 export type { SamplingParams, SamplingPatch } from './sampling';
 import type { WorkRequester } from './origin';
+import type { WebTheme } from './theme';
 export type { WorkRequester } from './origin';
 
 export interface AgentInfo {
@@ -1300,6 +1301,8 @@ export const api = {
   },
 
   // ─── Media (images + video, one gallery) ───────────────────────────
+  // Custom themes from ~/.somora/themes/ (docs/web.md "Themes").
+  themes: () => getJson<{ themes: WebTheme[]; invalid: Array<{ id: string; error: string }> }>('/themes'),
   inbox: () => getJson<{ entries: InboxEntryDto[]; unread: number; muted: InboxEntryDto[] }>('/inbox'),
   inboxRead: async (keys?: string[]) => {
     await fetch('/inbox/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(keys ? { keys } : {}) });

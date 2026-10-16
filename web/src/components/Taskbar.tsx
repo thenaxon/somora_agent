@@ -5,7 +5,7 @@ import { useBrowsers } from './BrowserProvider';
 // tinted per agent) + live host CPU/mem from `/host-stats` + clock.
 
 import { useEffect, useRef, useState } from 'react';
-import { Grid3x3, LogOut, Maximize, Minimize, Monitor, Pin, Power, RefreshCw, Settings, Sparkles } from 'lucide-react';
+import { Check, ChevronDown, Grid3x3, LogOut, Maximize, Minimize, Monitor, Pin, Power, RefreshCw, Settings, Sparkles } from 'lucide-react';
 import { Koala } from './Koala';
 import type { WindowState } from '../types/window';
 import { api, type AgentInfo } from '../lib/api';
@@ -13,7 +13,7 @@ import { resolveAgentColor } from '../lib/colors';
 import { sessionSlug } from '../lib/session-label';
 import { signOut } from './KeyGate';
 import { InboxMenu } from './InboxMenu';
-import { readTheme, setTheme, type ThemeChoice } from '../lib/theme';
+import { BUILT_IN_THEME_NAME, modesFor, readCustomTheme, readMode, selectTheme, setMode, syncThemes, type ThemeMode, type WebTheme } from '../lib/theme';
 
 interface Props {
   onOpenBrowsers?: () => void;
@@ -56,7 +56,42 @@ export function Taskbar({
   const gearRef = useRef<HTMLDivElement | null>(null);
   // Screen menu: arrange, save, restore, full screen.
   const [screenOpen, setScreenOpen] = useState(false);
-  const [theme, setThemeState] = useState<ThemeChoice>(() => readTheme());
+  // Theme: somora or one of your own, picked from a list that folds out
+  // under the theme's name; the mode switch below it.
+  const [mode, setModeState] = useState<ThemeMode>(() => readMode());
+  const [customTheme, setCustomTheme] = useState<WebTheme | null>(() => readCustomTheme());
+  const [themePickerOpen, setThemePickerOpen] = useState(false);
+  // Themes of your own (GET /themes): fetched once and again each time
+  // the menu opens, so a theme dropped into ~/.somora/themes/ shows up
+  // without a reload and an edited one is applied as it now is.
+  const [customThemes, setCustomThemes] = useState<WebTheme[]>([]);
+  const [invalidThemes, setInvalidThemes] = useState<Array<{ id: string; error: string }>>([]);
+  const themesFetched = useRef(false);
+  useEffect(() => {
+    if (!screenOpen) setThemePickerOpen(false);
+    if (!screenOpen && themesFetched.current) return;
+    let cancelled = false;
+    api
+      .themes()
+      .then((r) => {
+        if (cancelled) return;
+        themesFetched.current = true;
+        setCustomThemes(r.themes);
+        setInvalidThemes(r.invalid);
+        setCustomTheme(syncThemes(r.themes));
+      })
+      .catch(() => {
+        /* an older server without /themes: somora only */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [screenOpen]);
+  const pickTheme = (t: WebTheme | null) => {
+    selectTheme(t);
+    setCustomTheme(t);
+    setThemePickerOpen(false);
+  };
   const screenRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!screenOpen) return;
@@ -380,22 +415,70 @@ export function Taskbar({
                   <span>{isFullscreen ? 'Leave full screen' : 'Full screen'}</span>
                 </button>
               )}
-              <div className="theme-switch-label" style={{ marginTop: 6 }}>Theme</div>
-              <div className="theme-switch" role="group" aria-label="Theme">
-                {(['dark', 'light', 'auto'] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    aria-pressed={theme === t}
-                    title={t === 'auto' ? 'Follow the system setting' : undefined}
-                    onClick={() => {
-                      setTheme(t);
-                      setThemeState(t);
-                    }}
-                  >
-                    {t === 'dark' ? 'Dark' : t === 'light' ? 'Light' : 'Auto'}
-                  </button>
-                ))}
+              <div className="theme-section">
+                <div className="theme-switch-label">Theme</div>
+                <button
+                  type="button"
+                  className="theme-picker"
+                  aria-haspopup="listbox"
+                  aria-expanded={themePickerOpen}
+                  onClick={() => setThemePickerOpen((v) => !v)}
+                >
+                  <span>{customTheme ? customTheme.name : BUILT_IN_THEME_NAME}</span>
+                  <ChevronDown size={13} />
+                </button>
+                {themePickerOpen && (
+                  <div className="theme-list" role="listbox" aria-label="Theme">
+                    <button type="button" role="option" aria-selected={!customTheme} onClick={() => pickTheme(null)}>
+                      <span>{BUILT_IN_THEME_NAME}</span>
+                      {!customTheme && <Check size={12} />}
+                    </button>
+                    {customThemes.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        role="option"
+                        aria-selected={customTheme?.id === t.id}
+                        title={`${t.versions.dark && t.versions.light ? 'Dark and light' : t.versions.dark ? 'Dark' : 'Light'}, from ~/.somora/themes/${t.id}`}
+                        onClick={() => pickTheme(t)}
+                      >
+                        <span>{t.name}</span>
+                        {customTheme?.id === t.id && <Check size={12} />}
+                      </button>
+                    ))}
+                    {invalidThemes.map((t) => (
+                      <button key={t.id} type="button" role="option" aria-selected={false} aria-disabled="true" className="theme-invalid" title={t.error}>
+                        <span>{t.id} · invalid</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="theme-switch" role="group" aria-label="Mode">
+                  {(['dark', 'light', 'auto'] as const).map((m) => {
+                    const offered = modesFor(customTheme).includes(m);
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        aria-pressed={modesFor(customTheme).length === 1 ? modesFor(customTheme)[0] === m : mode === m}
+                        aria-disabled={!offered}
+                        title={!offered ? `${customTheme?.name} has only a ${modesFor(customTheme)[0]} version` : m === 'auto' ? 'Follow the system setting' : undefined}
+                        onClick={() => {
+                          if (!offered) return;
+                          setMode(m);
+                          setModeState(m);
+                        }}
+                      >
+                        {m === 'dark' ? 'Dark' : m === 'light' ? 'Light' : 'Auto'}
+                      </button>
+                    );
+                  })}
+                </div>
+                {modesFor(customTheme).length === 1 && (
+                  <div className="theme-switch-note">
+                    {customTheme?.name} has only a {modesFor(customTheme)[0]} version.
+                  </div>
+                )}
               </div>
             </div>
           )}
