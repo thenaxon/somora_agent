@@ -3,6 +3,7 @@
 // runs, open connections, what it offers. Persona files, abilities and
 // dreaming belong to its own system, so there is nothing to edit here.
 
+import { RenameAgent } from './RenameAgent';
 import { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { api, type ExternalAgentMark, type ExternalStatus } from '../lib/api';
@@ -55,6 +56,7 @@ export function ExternalAgentPanel({ agentName, mark }: { agentName: string; mar
           <RefreshCw size={13} />
         </button>
       </div>
+      <RenameAgent agentName={agentName} />
       <div style={{ fontSize: 12.5, color: 'var(--text-1)', lineHeight: 1.5, maxWidth: 560 }}>
         This agent lives in another agent system. It brings its own model, tools and memory; somora carries the
         conversation (ACP, the Agent Client Protocol) and keeps it as a somora session. Its persona, abilities and

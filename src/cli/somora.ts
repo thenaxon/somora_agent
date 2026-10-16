@@ -84,6 +84,8 @@ Usage:
                                      \`somora codex debug models\`); somora mirrors the login
   somora grok [args...]              run the bundled Grok CLI (e.g. \`somora grok login\`); somora
                                      keeps the login in step with ~/.grok
+  somora agent rename <old> <new>    rename an agent everywhere its name lives (--dry-run
+                                     shows what would change); the agent must be idle
   somora team init|check|show <a>    team.yaml: bootstrap from the agents on disk, validate,
                                      print the "# Your team" block an agent sees
   somora lsp status|install [id…]    language servers for builder agents (docs/lsp.md):
@@ -746,6 +748,10 @@ async function main(): Promise<number> {
     case 'grok': {
       const { runGrokCli } = await import('./grok.ts');
       return await runGrokCli(rest);
+    }
+    case 'agent': {
+      const { runAgentCli } = await import('./agent.ts');
+      return await runAgentCli(rest);
     }
     case 'team': {
       const { runTeamCli } = await import('./team.ts');

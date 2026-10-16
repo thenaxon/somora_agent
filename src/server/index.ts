@@ -718,7 +718,15 @@ registerThemeRoutes(app);
 
 registerServerRoutes(app, { configFileMtime, refreshSubagentDenyCheck, syncDreamers, updateChecker });
 
-registerAgentRoutes(app, { get nextTurnPrompt() { return nextTurnPrompt as typeof nextTurnPrompt; }, syncDreamers });
+registerAgentRoutes(app, {
+  get nextTurnPrompt() { return nextTurnPrompt as typeof nextTurnPrompt; },
+  syncDreamers,
+  remUnregister: (agent) => remWorker.unregister(agent),
+  // The rename edits config.yaml; reload it the way the route does.
+  reloadConfig: async () => {
+    await app.request('/config/reload', { method: 'POST', headers: { authorization: `Bearer ${keyStore.current()}` } });
+  },
+});
 
 // The system prompt and tool list the NEXT turn of a session would send.
 // Read-only: the wiki snapshot is not persisted. Shared by the prompt

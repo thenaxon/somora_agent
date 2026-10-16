@@ -210,6 +210,7 @@ In the web client (`/web`), right-click the agent tile and choose
   session would send it, split into its parts.
 - **Voice prompt.** What the voice is told in a call. Only for agents
   with a `voice` block.
+- **Rename…** See [Renaming an agent](#renaming-an-agent).
 
 Tools and skills are switched per agent in the Abilities window. It
 writes `tools:` and `skills:` in `agent.yaml`: a name per switched
@@ -540,6 +541,56 @@ A spawn that finds a limit reached is refused with the numbers. A sub's
 turn is a turn like any other: it waits in its session's queue and
 shows up in `GET /health` and in the queue view.
 
+## Renaming an agent
+
+An agent's name is its folder, and the name lives on in more places than
+the folder: the team chart, Sentinel triggers, its browser profile,
+config.yaml. Rename it with one command, which carries all of them:
+
+```bash
+somora agent rename <old> <new> --dry-run   # what would change
+somora agent rename <old> <new>
+```
+
+Or in the web client: the agent's window (**Configure…**, or **About…**
+for an external agent), **Rename…**, then **Check** and **Rename**. The
+agent's windows close and the desktop reloads with the new name.
+
+It works the same for [external agents](external-agents.md#renaming-an-external-agent).
+The new name follows the rule for team.yaml and browser profiles:
+lower-case letters, digits, `-` and `_`, at most 64 characters.
+
+| What | Changes to the new name |
+|---|---|
+| The folder `agents/<old>/` | With sessions, memory, notes, `agent.yaml` and tool files. Your conversations stay. |
+| `AGENTS.md` | Its `name:` line. |
+| The memory index | Its stored paths, so nothing is indexed again. |
+| Dream files | The agent they belong to. |
+| The browser profile | Folder and saved state; logins come along. |
+| Sentinel triggers | The agent they wake and their owner. |
+| tmux records | Sessions the agent started. |
+| `team.yaml` | Its entry and every `reports_to` naming it. Comments stay. |
+| `config.yaml` | An external agent's entry, `a2a.defaultAgent`, `a2a.peers.*.agents`, `browser.profiles.*.agents`, `tts.agentVoices`. Comments stay. |
+
+What it does not change, and lists afterwards:
+
+- **Texts.** Personas of any agent and rules in `team.yaml` that still
+  say the old name. They are your words or the agents' own, so the
+  command shows where they are instead of rewriting them.
+- **Others' records.** Old messages and other agents' notes keep the
+  name they were written with.
+- **Outside callers.** Systems that reach the agent over
+  [A2A](a2a.md#taking-work-in) use a new address, `/a2a/agents/<new>`,
+  and editors that run `somora acp --agent <old>` need the new name.
+- **Conversations with external agents.** The agent's standing
+  conversations with external agents start afresh under its new name.
+
+The command refuses while the agent is busy: a turn running or waiting,
+open work from or for it, a background command, its browser open, or
+the Lucid review loop. Try again when it is idle. It also refuses a name
+that an agent or folder already has. Settings files are checked before
+anything moves, and the folder is moved back when a later step fails.
+
 ## What a restart does to running turns
 
 A server restart cuts every running turn. At the next start somora
@@ -760,6 +811,7 @@ warn. They do not cut anything.
 |---|---|
 | `somora setup agent` | Creates an agent with guidance, and checks that every agent's model exists. |
 | `somora setup memory` | Switches REM on per agent, among other things. |
+| `somora agent rename <old> <new> [--dry-run]` | Renames an agent everywhere its name lives, see [Renaming an agent](#renaming-an-agent). |
 | `somora team init`, `check`, `show <agent>` | Creates and validates `team.yaml`, and prints the team block an agent sees. |
 | `somora tui` | Opens the TUI, where the commands under [Sessions](#sessions) work. |
 
@@ -781,6 +833,7 @@ agent is there on the next `GET /agents`.
 | `GET /agents/:agent/skills` | The skills with a `visible` flag each. |
 | `PUT /agents/:agent/skills` | Writes `skills` into `agent.yaml`. Body `{deny, allow}`. |
 | `POST /agents/:agent/tools/:name` | Runs a tool directly, for debugging. |
+| `POST /agents/:agent/rename` | Renames the agent. Body `{to, dryRun?}`. Answers the list of changes and warnings; 409 while it is busy or the name is taken. |
 | `GET /agents/:agent/sessions` | Lists sessions. |
 | `POST /agents/:agent/sessions` | Creates a session. Body `{slug}`. 409 when the name is taken. |
 | `POST /agents/:agent/sessions/:session/reset` | Archives the session and starts it fresh. |

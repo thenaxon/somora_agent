@@ -767,6 +767,7 @@ in the agents guide.
 | `somora codex <args>` | Runs the bundled Codex: `login`, `logout`, `debug models`, `features list`, `--version`. Without arguments it shows where Codex and its login are and how long the login is valid. |
 | `somora grok <args>` | Runs the bundled Grok CLI: `login`, `login --device-auth`, `logout`, `models`, `--version`. Without arguments it shows where the Grok CLI and its login are and how long the login is valid. |
 | `somora skill list`, `check`, `add`, `update`, `remove` | Manages skills. Run `somora skill` for the details. |
+| `somora agent rename <old> <new> [--dry-run]` | Renames an agent, somora's own or external, everywhere its name lives ([Agents](agents.md#renaming-an-agent)). |
 | `somora team init [--principal <name>]` | Writes `team.yaml` from the agents on disk. Never overwrites. |
 | `somora team check` | Validates `team.yaml`. |
 | `somora team show <agent>` | Prints the team block that agent sees. |

@@ -5,6 +5,7 @@
 // taskbar (bottom). Window manager state is owned here so dock
 // clicks + taskbar focus + per-window drag/resize all coordinate.
 
+import { AGENT_RENAMED_EVENT } from './RenameAgent';
 import { useEffect, useMemo, useState } from 'react';
 import { Bell, BookOpen, Globe, ImagePlus, MessagesSquare, Mic, ScrollText, Square, Terminal, Users, Wrench } from 'lucide-react';
 import { DesktopIcons, type DesktopIcon } from './DesktopIcons';
@@ -51,6 +52,17 @@ export function Desktop() {
   const loopState = useLoopState();
   const dreamStates = useDreamStates();
   const wm = useWindowManager();
+  // An agent was renamed (RenameAgent): close its windows, then reload so
+  // the agent list, tiles and saved layout use the new name.
+  useEffect(() => {
+    const onRenamed = (e: Event) => {
+      const { from } = (e as CustomEvent<{ from: string; to: string }>).detail;
+      for (const w of wm.windows) if (w.agentName === from) wm.close(w.id);
+      setTimeout(() => window.location.reload(), 300);
+    };
+    window.addEventListener(AGENT_RENAMED_EVENT, onRenamed);
+    return () => window.removeEventListener(AGENT_RENAMED_EVENT, onRenamed);
+  }, [wm]);
   const streamingKeys = useStreamingKeys();
   const wikiEnabled = useWikiEnabled();
   const media = useMediaEnabled();

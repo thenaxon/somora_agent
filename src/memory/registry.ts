@@ -147,6 +147,24 @@ export async function ensureMemoryDirs(agent: string): Promise<string> {
   return memoryRoot;
 }
 
+/** Close one agent's memory (its index and file watcher) and forget it,
+ *  so the next use opens it fresh — after the agent was renamed or its
+ *  folder moved (docs/agents.md#renaming-an-agent). */
+export async function evictMemoryManager(agent: string): Promise<void> {
+  const pending = initPromises.get(agent);
+  if (pending) await pending.catch(() => {});
+  const mgr = cache.get(agent);
+  cache.delete(agent);
+  initPromises.delete(agent);
+  if (mgr) {
+    try {
+      await mgr.close();
+    } catch (err) {
+      logger.warn({ msg: 'memory.evict_close_failed', agent, err: String(err) });
+    }
+  }
+}
+
 export async function shutdownMemoryRegistry(): Promise<void> {
   const all = [...cache.values()];
   cache.clear();

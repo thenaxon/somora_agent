@@ -3252,6 +3252,22 @@ uses the naming of the request.
 A turn for such a task carries `origin: { kind: "peer", peer, contextId,
 taskId }` in its `user_message` events, and `from_system: "peer"`.
 
+### `POST /agents/:agent/rename`
+
+Renames an agent, somora's own or external
+([Renaming an agent](agents.md#renaming-an-agent)). Body
+`{ "to": "<new>", "dryRun": true }`; without `dryRun` it renames.
+
+```json
+{ "ok": true, "from": "claw", "to": "lobo", "kind": "external", "dryRun": false,
+  "changes": ["folder agents/claw → agents/lobo", "team.yaml: agents.claw → lobo",
+              "config.yaml: external.systems.openclaw.agents.claw → lobo"],
+  "warnings": [] }
+```
+
+`400` for an invalid name, `404` for an unknown agent, `409` while the
+agent is busy or when the name is taken, with `error` saying why.
+
 ### `GET /agents/:agent/a2a` · `PUT /agents/:agent/a2a`
 
 The agent's A2A switch: `{ on, available, peers, url?, problem? }`.

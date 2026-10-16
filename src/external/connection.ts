@@ -312,6 +312,19 @@ export function closeExternal(agent: string, session: string): void {
   }
 }
 
+/** Close every connection of one agent and carry what it said about
+ *  itself over to `renamedTo` (agent rename, docs/agents.md). */
+export function closeAgentConnections(agent: string, renamedTo?: string): void {
+  for (const [k, c] of [...connections]) {
+    if (c.ext.name !== agent) continue;
+    connections.delete(k);
+    c.close();
+  }
+  const info = lastInfo.get(agent);
+  if (info && renamedTo) lastInfo.set(renamedTo, info);
+  if (renamedTo) lastInfo.delete(agent);
+}
+
 /** For GET /external: open connections per agent. */
 export function connectionSnapshot(): Array<{ agent: string; system: string; sessionId: string | null; where: string; idleMs: number }> {
   return [...connections.values()].map((c) => ({ agent: c.ext.name, system: c.ext.system, sessionId: c.sessionId, where: c.info.where, idleMs: Date.now() - c.lastUsed }));

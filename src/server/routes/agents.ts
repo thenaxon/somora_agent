@@ -3,6 +3,7 @@
 // Names index.ts shares come in through `routeDeps`; nextTurnPrompt are read from it
 // per request (index.ts sets them up later or changes them).
 
+import { renameAgent } from '../../persona/rename.ts';
 import { writeAgentA2A } from '../../persona/a2a-store.ts';
 import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
@@ -18,6 +19,9 @@ import { config } from '../server-state.ts';
 export interface AgentRoutesDeps {
   readonly nextTurnPrompt: typeof Server.nextTurnPrompt;
   readonly syncDreamers: typeof Server.syncDreamers;
+  /** Agent rename: take a name out of the REM worker, reload config.yaml. */
+  readonly remUnregister?: (agent: string) => void;
+  readonly reloadConfig?: () => Promise<void>;
 }
 
 export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void {
@@ -115,6 +119,26 @@ export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void
     }
     logger.info({ msg: 'agent.a2a_switched', agent, on: body.on });
     return c.json({ ok: true, agent, ...a2aInfo(await loadPersona(agent))! });
+  });
+
+  // Rename an agent, somora's own or external (docs/agents.md#renaming-an-agent).
+  // `dryRun` lists what would change. 409 while the agent is busy or the
+  // name is taken, 404 for an unknown agent.
+  app.post('/agents/:agent/rename', async (c) => {
+    const agent = c.req.param('agent');
+    const body = (await c.req.json().catch(() => null)) as { to?: unknown; dryRun?: unknown } | null;
+    if (!body || typeof body.to !== 'string') return c.json({ error: 'body must be { to: string, dryRun?: boolean }' }, 400);
+    const report = await renameAgent(agent, body.to.trim(), {
+      config,
+      syncDreamers: routeDeps.syncDreamers,
+      ...(routeDeps.remUnregister ? { remUnregister: routeDeps.remUnregister } : {}),
+      ...(routeDeps.reloadConfig ? { reloadConfig: routeDeps.reloadConfig } : {}),
+    }, { dryRun: body.dryRun === true });
+    if (!report.ok) {
+      const status = /^no agent/.test(report.error ?? '') ? 404 : /busy|already exists/.test(report.error ?? '') ? 409 : /not a valid|the new name is the old/.test(report.error ?? '') ? 400 : 500;
+      return c.json(report, status);
+    }
+    return c.json(report);
   });
 
   // ── Persona files + prompt preview (web Agent window) ───────────────

@@ -148,7 +148,8 @@ export function configuredAliases(file: YamlFile): Array<{ alias: string; provid
   return out;
 }
 
-function validateConfigText(text: string): string | null {
+/** Why `text` would not load as config.yaml, or null. */
+export function validateConfigText(text: string): string | null {
   let parsed: unknown;
   try {
     parsed = parseYamlStrict(text);

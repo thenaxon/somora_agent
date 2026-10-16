@@ -648,6 +648,7 @@ what its prompt costs.
 | Budget strip | Persona files, team block, full prompt and tool schemas, in characters and estimated tokens against `promptBudgets`. |
 | **Dreams** | The agent's dreams switch and the model REM runs on. It applies at once, see [Who dreams](dream-phases.md#who-dreams). |
 | **A2A** | Whether other agent systems may send the agent tasks, which peers may, and its address. Not shown for a builder. See [A2A](a2a.md#taking-work-in). |
+| **Rename…** | Renames the agent everywhere its name lives, after showing what would change. See [Renaming an agent](agents.md#renaming-an-agent). |
 | `AGENTS.md`, `SOUL.md`, `USER.md` | Editors with a counter per file, Save and Discard. |
 | `agent.yaml` | Read-only. |
 | **Full prompt** | The system prompt as the next turn on a chosen session would send it, split into its parts with sizes. |

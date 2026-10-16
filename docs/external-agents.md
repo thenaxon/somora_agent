@@ -171,6 +171,16 @@ to switch it on in OpenClaw and Hermes, what each can do, and the
 brakes. The same page shows the other direction: OpenClaw and Hermes
 sending tasks to your somora agents.
 
+## Renaming an external agent
+
+The name in somora is yours to choose; the agent may call itself
+something else on its own system. Rename it with
+`somora agent rename <old> <new>` or **About… → Rename…** in its window.
+That renames its entry in `config.yaml` in place, moves its
+conversations, and updates `team.yaml`.
+[Renaming an agent](agents.md#renaming-an-agent) lists every place.
+Nothing changes on the other system: its sessions there go on as before.
+
 ## Troubleshooting
 
 | You see | Meaning |

@@ -10,6 +10,7 @@
 // was loaded: the agents self-edit these files, so a stale save is
 // refused (409) instead of overwriting what the agent wrote.
 
+import { RenameAgent } from './RenameAgent';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ArrowLeftRight, Check, Eye, FileText, Lock, Moon, PhoneCall, RefreshCw, Save, Undo2 } from 'lucide-react';
 import { api, type PersonaResponse, type PromptPreviewResponse, type SessionSummary, type VoiceInstructionsResponse } from '../lib/api';
@@ -234,6 +235,11 @@ export function AgentConfigWindow({ agentName }: { agentName: string }) {
           </span>
         </div>
       )}
+
+      {/* Rename (docs/agents.md#renaming-an-agent) */}
+      <div style={{ padding: '7px 14px', borderBottom: '1px solid var(--bg-3)' }}>
+        <RenameAgent agentName={agentName} />
+      </div>
 
       {/* Tabs */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 10px', borderBottom: '1px solid var(--bg-3)' }}>

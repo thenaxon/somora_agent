@@ -586,6 +586,17 @@ export interface A2AInfo {
   /** What keeps it from working. */
   problem?: string;
 }
+/** POST /agents/:agent/rename (docs/agents.md#renaming-an-agent). */
+export interface RenameReport {
+  ok: boolean;
+  from: string;
+  to: string;
+  kind: 'somora' | 'external';
+  dryRun: boolean;
+  changes: string[];
+  warnings: string[];
+  error?: string;
+}
 export interface PersonaResponse {
   agent: string;
   kind?: 'chat' | 'builder';
@@ -720,7 +731,17 @@ export const api = {
     const body = (await res.json().catch(() => ({}))) as DreamsInfo & { error?: string };
     if (!res.ok) throw new Error(body.error ?? `PUT dreams ${res.status}`);
     return body;
-  },  setA2A: async (agent: string, on: boolean): Promise<A2AInfo> => {
+  },  renameAgent: async (agent: string, to: string, dryRun: boolean): Promise<RenameReport> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, dryRun }),
+    });
+    const body = (await res.json().catch(() => ({}))) as RenameReport;
+    if (!res.ok || !body.ok) throw new Error(body.error ?? `rename ${res.status}`);
+    return body;
+  },
+  setA2A: async (agent: string, on: boolean): Promise<A2AInfo> => {
     const res = await fetch(`/agents/${encodeURIComponent(agent)}/a2a`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
