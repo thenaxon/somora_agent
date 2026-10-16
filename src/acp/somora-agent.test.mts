@@ -11,6 +11,13 @@ import { AgentSideConnection, ClientSideConnection, ndJsonStream, type SessionUp
 import { SomoraAcpAgent, type HttpFetch } from './somora-agent.ts';
 
 type Frame = { event: string; data: Record<string, unknown> };
+interface Fake {
+  emit(f: Frame): void;
+  answers: Array<{ id: string; answers: string[] }>;
+  sent: Array<Record<string, unknown>>;
+  readonly aborts: number;
+  onAbort: () => void;
+}
 
 /** A somora stand-in. `script(text, turnId)` gives the frames a turn sends. */
 function fakeSomora(script: (text: string, turnId: string, s: Fake) => Promise<void> | void) {
@@ -20,7 +27,7 @@ function fakeSomora(script: (text: string, turnId: string, s: Fake) => Promise<v
   let aborts = 0;
   let n = 0;
   const sessions = [{ id: 'main', slug: 'main', lastActivity: '2026-10-16T10:00:00Z' }];
-  const fake = {
+  const fake: Fake & { sessions: typeof sessions } = {
     emit(f: Frame) {
       for (const r of subs) r.write(`event: ${f.event}\ndata: ${JSON.stringify(f.data)}\n\n`);
     },
@@ -32,7 +39,6 @@ function fakeSomora(script: (text: string, turnId: string, s: Fake) => Promise<v
     onAbort: () => {},
     sessions,
   };
-  type Fake = typeof fake;
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));

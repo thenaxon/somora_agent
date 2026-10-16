@@ -400,7 +400,12 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
         const gen = typeof before.externalGeneration === 'number' ? before.externalGeneration : 0;
         result = await resetSession(agent, session);
         closeExternal(agent, session);
-        await sessionMetaStore.update(agent, session, (m) => ({ ...m, externalGeneration: gen + 1 }));
+        // The old conversation on the other side is gone with the reset:
+        // drop its id (or the next turn would resume it) and its title.
+        await sessionMetaStore.update(agent, session, (m) => {
+          const { externalSessionId: _id, externalTitle: _title, ...rest } = m as Record<string, unknown>;
+          return { ...rest, externalGeneration: gen + 1 };
+        });
       } finally {
         release();
       }
