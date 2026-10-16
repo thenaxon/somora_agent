@@ -25,11 +25,12 @@ import { cpus as osCpus, freemem as osFreemem, loadavg as osLoadavg, totalmem as
 export interface ServerRoutesDeps {
   configFileMtime: typeof Server.configFileMtime;
   refreshSubagentDenyCheck: typeof Server.refreshSubagentDenyCheck;
+  syncDreamers: typeof Server.syncDreamers;
   updateChecker: typeof Server.updateChecker;
 }
 
 export function registerServerRoutes(app: Hono, routeDeps: ServerRoutesDeps): void {
-  const { configFileMtime, refreshSubagentDenyCheck, updateChecker } = routeDeps;
+  const { configFileMtime, refreshSubagentDenyCheck, syncDreamers, updateChecker } = routeDeps;
   /** Version plus, when known, what somora.ai says is current. */
   app.get('/version', (c) => {
     const u = updateChecker.status();
@@ -87,6 +88,8 @@ export function registerServerRoutes(app: Hono, routeDeps: ServerRoutesDeps): vo
     clearCatalogCache();
     logger.info({ msg: 'config.reloaded', changed, restartRequired });
     await refreshSubagentDenyCheck();
+    // The central rem.model may have changed: REM follows at once.
+    await syncDreamers();
     return c.json({ ok: true, changed, restartRequired, loadedAt: configLoadedAt });
   });
 

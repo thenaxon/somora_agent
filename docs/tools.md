@@ -340,6 +340,12 @@ A tool is decided in this order:
 
 No `tools:` block means no restriction.
 
+The dream tools (toolset `dream`) and the wiki writing tools (toolset
+`wiki`) are the exception: they follow the agent's `dreams` switch, on
+when it dreams and off when it does not, whatever the rules say. The
+Abilities window shows them with a note instead of a working eye. See
+[Who dreams](dream-phases.md#who-dreams).
+
 The rules hold wherever a tool runs as the agent: in its chat turns on
 every engine, and on `POST /agents/<name>/tools/<tool>`, which runs one
 tool as the agent without a turn. A tool that is off there answers

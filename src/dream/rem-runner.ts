@@ -5,6 +5,7 @@
 // passed (auto = signal cancels on user activity; manual = no signal,
 // runs to completion regardless).
 
+import type { ResolvedRem } from './dreams.ts';
 import { readFile, unlink } from 'node:fs/promises';
 import type { Config, ResolvedModel } from '../config/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
@@ -43,7 +44,7 @@ export interface RunDreamArgs {
   /** Upper bound (inclusive). Date.now() for "all events up to now". */
   rangeThroughTs: number;
   /** Resolved per-agent dream config (model, chunk sizes, timeouts). */
-  rem: RemConfig;
+  rem: ResolvedRem;
   /** Loaded server config — used to resolve dream.model to a ResolvedModel. */
   config: Config;
   /** Per-agent memory manager (already initialized). */
@@ -630,7 +631,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
 export async function resumeDream(args: {
   agent: string;
   id: string;
-  rem: RemConfig;
+  rem: ResolvedRem;
   config: Config;
   mgr: MemoryManager;
   signal?: AbortSignal;

@@ -18,7 +18,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { join } from 'node:path';
 
-import { listAgents } from '../persona/loader.ts';
+import { deriveDreams, listAgents } from '../persona/loader.ts';
 import { teamFilePath } from '../team/store.ts';
 import { initialTeamFile, writeTeamFile } from '../team/write.ts';
 import {
@@ -640,22 +640,41 @@ async function stepMemory(ctx: Ctx): Promise<void> {
       Lucid  once a week, the wiki is checked for contradictions and duplicates;
              what it finds is shown to you, nothing is changed without a yes`);
 
-  // REM — per agent
-  const remState = agents.map((a) => ({ name: a.name, file: agentYaml(a.name) })).map((a) => ({ ...a, on: getIn(a.file, ['rem', 'enabled']) === true }));
-  const off = remState.filter((a) => !a.on);
-  if (off.length === 0) {
-    ok(`REM is on for ${remState.map((a) => a.name).join(', ')}`);
-  } else if (await p.confirm(`Turn on REM for ${off.map((a) => a.name).join(', ')}?`)) {
-    explain('REM runs often and reads whole conversations — a fast, inexpensive model is the right one.');
+  // REM — one model for every agent that dreams (config.yaml rem.model);
+  // an agent's own rem.model still wins. Which agents dream is the
+  // `dreams` switch in each agent.yaml (new agents dream).
+  const dreamState = agents.map((a) => ({ name: a.name, file: agentYaml(a.name) })).map((a) => ({
+    ...a,
+    on: deriveDreams({
+      dreams: getIn(a.file, ['dreams']) as boolean | undefined,
+      kind: getIn(a.file, ['kind']) as 'chat' | 'builder' | undefined,
+      rem: { enabled: getIn(a.file, ['rem', 'enabled']) as boolean | undefined },
+      tools: { deny: getIn(a.file, ['tools', 'deny']) as string[] | undefined },
+    }).dreams,
+  }));
+  const asleep = dreamState.filter((a) => !a.on);
+  if (asleep.length > 0 && await p.confirm(`${asleep.map((a) => a.name).join(', ')} ${asleep.length === 1 ? 'does' : 'do'} not dream. Turn dreaming on?`)) {
+    for (const a of asleep) {
+      setIn(a.file, ['dreams'], true);
+      deleteIn(a.file, ['rem', 'enabled']);
+      deleteIn(a.file, ['rem', 'participate_in_wiki']);
+      if (save(a.file, 'plain', `${a.name} dreams`)) ctx.needsRestart = true;
+      a.on = true;
+    }
+  }
+  const dreamers = dreamState.filter((a) => a.on);
+  const centralRem = getIn(config, ['rem', 'model']) as string | undefined;
+  if (dreamers.length > 0 && centralRem) {
+    ok(`REM model: ${centralRem}`);
+  } else if (dreamers.length > 0) {
+    explain('REM runs often and reads whole conversations — a fast, inexpensive model is the right one. It is set once for every agent that dreams.');
     const model = (await chooseModel(p, 'Model for REM:', aliases, pickPreferred('rem', aliases)))!;
     const rest = aliases.filter((a) => a !== model);
     const fallback = rest.length ? await chooseModel(p, 'Backup model for REM:', rest, pickPreferred('rem', rest), true) : null;
-    for (const a of off) {
-      setIn(a.file, ['rem'], { enabled: true, model, ...(fallback ? { fallback } : {}), idleMinutes: 30 });
-      if (save(a.file, 'plain', `REM on for ${a.name}`)) ctx.needsRestart = true;
-    }
+    setIn(config, ['rem', 'model'], model);
+    if (fallback) setIn(config, ['rem', 'fallback'], fallback);
   }
-  const anyRem = remState.some((a) => a.on) || remState.some((a) => getIn(a.file, ['rem', 'enabled']) === true);
+  const anyRem = dreamers.length > 0;
   if (anyRem && getIn(config, ['rem', 'dedup', 'judge', 'enabled']) !== true) {
     explain(`Before a new note is kept, a model can check whether your agent already knows
       it. That keeps the memory free of repeats, for a few extra model calls per run.`);

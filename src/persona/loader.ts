@@ -93,15 +93,17 @@ function normaliseFallbackChain(
   return out;
 }
 
-const RemConfigSchema = z.object({
-  /** Master toggle. When false, REM-Phase never runs for this agent. */
-  enabled: z.boolean(),
+export const RemConfigSchema = z.object({
+  /** Replaced by the agent's `dreams` switch (2026-10). Still read for a
+   *  file the start-up rewrite could not change (deriveDreams). */
+  enabled: z.boolean().optional(),
   /**
-   * Worker model for extraction (alias or `provider/modelId`). Required
-   * when enabled — there's intentionally no fallback to the agent's
-   * primary, so a REM run never silently runs on an expensive model.
+   * Worker model for extraction (alias or `provider/modelId`). Without
+   * one the central `rem.model` in config.yaml applies (remWorkerModel).
+   * There is intentionally no fallback to the agent's primary, so a REM
+   * run never silently runs on an expensive model.
    */
-  model: z.string().min(1),
+  model: z.string().min(1).optional(),
   /**
    * Optional backup worker (alias or `provider/modelId`), used only
    * when `model` is unreachable — connection refused, 5xx, timeout,
@@ -143,13 +145,10 @@ const RemConfigSchema = z.object({
    * fail-fast on stalls. Most setups want the headroom.
    */
   chunkTimeoutMs: z.number().int().positive().default(600_000),
-  /**
-   * Phase 4: opt out of Deep-Phase (Memory→Wiki) for this agent.
-   * When false, the agent's memory still gets REM processing but is
-   * NOT considered as a candidate for promotion to the shared wiki.
-   * Useful for scratch/test agents. Default true.
-   */
-  participate_in_wiki: z.boolean().default(true),
+  /** Replaced by the agent's `dreams` switch (2026-10): an agent that
+   *  dreams takes part in Deep, one that does not stays out. Still
+   *  accepted so an old file parses; it no longer decides anything. */
+  participate_in_wiki: z.boolean().optional(),
   /**
    * Optional thinking-level for the REM worker LLM call. When set and
    * the configured worker model declares the 'reasoning' capability,
@@ -171,6 +170,15 @@ const AgentYamlSchema = z
      *           See docs/builder.md.
      */
     kind: z.enum(['chat', 'builder']).optional(),
+    /**
+     * Whether this agent dreams (private/dream-switch/KONZEPT.md). One
+     * switch for the whole chain: REM on its conversations, Deep taking
+     * its notes into the wiki, and the tools for both (the dream tools,
+     * the wiki writing tools). An agent that does not dream keeps its
+     * notes to itself and reads the wiki and the vault, never writes
+     * them. Missing: see deriveDreams — new agents dream, builders not.
+     */
+    dreams: z.boolean().optional(),
     /**
      * Per-agent loop limits (openai-compatible engine): override the
      * server's agentLoop caps for this agent. A builder's defaults are
@@ -309,6 +317,32 @@ const AgentYamlSchema = z
   .passthrough();
 
 export type RemConfig = z.infer<typeof RemConfigSchema>;
+
+export type DreamsSource = 'dreams' | 'rem.enabled' | 'builder' | 'dream-tools-off' | 'default';
+
+/**
+ * The `dreams` switch of an agent.yaml, and where it came from. A file
+ * from before the switch is rewritten once at start-up (dreams-migrate.ts)
+ * by these same rules, so a file the rewrite could not touch still means
+ * the same:
+ *   1. `dreams:` written            → that
+ *   2. `rem.enabled:` written       → that
+ *   3. a builder                    → false
+ *   4. the dream tools denied       → false
+ *   5. otherwise                    → true (new agents dream)
+ */
+export function deriveDreams(yaml: {
+  dreams?: boolean;
+  kind?: AgentKind;
+  rem?: { enabled?: boolean };
+  tools?: { deny?: string[] };
+}): { dreams: boolean; source: DreamsSource } {
+  if (typeof yaml.dreams === 'boolean') return { dreams: yaml.dreams, source: 'dreams' };
+  if (typeof yaml.rem?.enabled === 'boolean') return { dreams: yaml.rem.enabled, source: 'rem.enabled' };
+  if (yaml.kind === 'builder') return { dreams: false, source: 'builder' };
+  if (yaml.tools?.deny?.includes('toolset:dream')) return { dreams: false, source: 'dream-tools-off' };
+  return { dreams: true, source: 'default' };
+}
 export type VoicePersonaConfig = NonNullable<z.infer<typeof AgentYamlSchema>['voice']>;
 
 type Frontmatter = z.infer<typeof FrontmatterSchema>;
@@ -377,8 +411,11 @@ export interface Persona {
    * no restriction. Enforced at both list surfaces (in-process
    * ToolInvoker and MCP-child tools/list) via src/tools/gating.ts.
    */
-  toolGating: { deny: string[]; allow: string[] } | undefined;
+  toolGating: ToolGating | undefined;
   rem: RemConfig | undefined;
+  /** agent.yaml `dreams:` (or derived, see deriveDreams). */
+  dreams: boolean;
+  dreamsSource: DreamsSource;
   /** Image-review stance from agent.yaml. `undefined` = 'never'. */
   imageReview: 'never' | 'always' | undefined;
   /** agent.yaml `voice:` — the speaking half of this agent. */
@@ -485,6 +522,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
   const userMd = await readMd(join(dir, 'USER.md'));
   const agentYaml = await readAgentYaml(join(dir, 'agent.yaml'));
   const kind: AgentKind = agentYaml.kind ?? 'chat';
+  const { dreams, source: dreamsSource } = deriveDreams(agentYaml);
   const toolGatingRaw: ToolGating | undefined = agentYaml.tools
     ? { deny: agentYaml.tools.deny ?? [], allow: agentYaml.tools.allow ?? [] }
     : undefined;
@@ -516,8 +554,10 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     // the denied ones, as before.
     skillGating: kind === 'builder' ? builderSkillGating(normalizeSkillGating(agentYaml.skills)) : normalizeSkillGating(agentYaml.skills),
     toolGatingRaw,
-    toolGating: effectiveToolGating(kind, toolGatingRaw),
+    toolGating: effectiveToolGating(kind, toolGatingRaw, dreams),
     rem: agentYaml.rem,
+    dreams,
+    dreamsSource,
     imageReview: agentYaml.imageReview,
     voice: agentYaml.voice,
     systemPrompt: sections.join('\n\n---\n\n'),
@@ -562,8 +602,12 @@ const SAMPLE_AGENT_YAML = `# Operator config for this agent. Edit by hand — no
 #           capability. Per-session override via /thinking <level>.
 # sampling: temperature / top_p / … for openai-compatible models. Overrides
 #           the model's defaults per key. Per-session via /sampling, /temp.
+# dreams:   whether the agent dreams — REM on its conversations, Deep
+#           taking its notes into the wiki, the dream and wiki tools.
+#           false: its notes stay its own, wiki and vault read-only.
 
 model: opus
+dreams: true
 # fallback: sonnet
 # thinking: medium
 # sampling:

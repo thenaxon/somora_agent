@@ -211,7 +211,7 @@ the day, a `subagents.tools.deny` entry that names no tool).
 
 | Field | Meaning |
 |---|---|
-| `key` | Stable per thing, e.g. `update:<version>`, `news:<hash>`, `config`, `login:claude-cli`, `login:openai-compatible:<provider>`, `login:mcp:<server>`, `tls`, `rem:<agent>`, `deep:<agent>/<slug>`, `lucid`, `mcp:<server>`, `model:<provider/id>`, `sentinel:<triggerId>`, `config:subagents-deny`. |
+| `key` | Stable per thing, e.g. `update:<version>`, `news:<hash>`, `config`, `login:claude-cli`, `login:openai-compatible:<provider>`, `login:mcp:<server>`, `tls`, `rem:<agent>`, `deep:<agent>/<slug>`, `lucid`, `mcp:<server>`, `model:<provider/id>`, `sentinel:<triggerId>`, `config:subagents-deny`, `config:rem-model` (agents that dream without a REM model), `dream:switch` (the one-time rewrite to the dreams switch). |
 | `kind` | `update`, `news`, `config`, `login`, `tls`, `dream`, `mcp`, `model`, `sentinel`. |
 | `level` | `info`, `warning`, `important`. |
 | `title`, `text`, `url?` | Plain text. `url` is `https://` only. |
@@ -1398,10 +1398,31 @@ and nothing is changed.
 
 The agent's persona files with what is needed to edit them.
 
-Returns `{agent, kind, files, budgets, totals: {personaChars}}`. Each
+Returns `{agent, kind, dreams, files, budgets, totals: {personaChars}}`.
+`dreams` is the same object `GET /agents/:agent/dreams` returns. Each
 file is `{name, exists, content, hash, chars, bytes, mtime, readOnly}`.
 The files are `AGENTS.md`, `SOUL.md`, `USER.md` and, read-only,
 `agent.yaml`.
+
+### `GET /agents/:agent/dreams` · `PUT /agents/:agent/dreams`
+
+The agent's dreams switch: REM, Deep, the dream tools and the wiki
+writing tools, see [Who dreams](dream-phases.md#who-dreams).
+
+| Field | Meaning |
+|---|---|
+| `agent` | The agent. |
+| `on` | Whether it dreams. |
+| `remModel` | The model REM runs on, or `null` when it does not dream or no model is set. |
+| `remModelFrom` | `agent` (its own `rem.model`), `config` (`rem.model` in `config.yaml`) or `null`. |
+| `problem` | Only when it dreams but REM cannot run, for example without any REM model. |
+
+`PUT` takes `{on: boolean}`, writes `dreams:` into the agent's
+`agent.yaml` (an old `rem.enabled` goes, the previous file is kept as a
+backup) and answers `{ok: true, …the fields above}`. It applies at
+once: REM starts or stops for the agent, the next Deep run follows it,
+and the tools follow from the agent's next turn. `400` for a wrong
+body, `404` for an unknown agent, `500` when the file cannot be written.
 
 ### `PUT /agents/:agent/persona/:file`
 
@@ -1443,7 +1464,8 @@ Which tools an agent may use.
 | `gating` | The agent's `tools:` section as `{deny, allow}`, or `null`. |
 | `hasPatternRules` | Always `false`. Kept for older clients; the Abilities window is always editable. |
 | `handWrittenRules` | Patterns in the section that are not a family rule (`toolset:<tag>`), a server rule (`mcp__<server>__*`) or `*`. They apply; the window lists them as a note. |
-| `tools` | `[{name, toolset, mcpServer?, description, visible, availableNow}]`: every tool, built in or from an external MCP server. `visible` says whether the agent may use it. |
+| `dreams` | The agent's dreams switch. |
+| `tools` | `[{name, toolset, mcpServer?, description, visible, availableNow, lockedBy?}]`: every tool, built in or from an external MCP server. `visible` says whether the agent may use it. `lockedBy: "dreams"` marks the dream tools and the wiki writing tools: they follow the dreams switch, not the rules. |
 
 `PUT` takes `{deny: string[], allow: string[]}` and rewrites only the
 `tools:` block of the agent's `agent.yaml`. Returns `{ok: true}`. `400`
@@ -1465,7 +1487,8 @@ every client edits the same way. Body:
 Returns `{ok: true, gating}` with the rules now in `agent.yaml`. Only
 the named entries change state. `400` for a wrong body, an unknown
 name, or a builder-only tool (`todo_write`, `ask_user`, `plan_write`)
-for a chat agent. `404` for an unknown agent. Clicks on one agent run
+for a chat agent. `409` with `lockedBy: "dreams"` for a tool that
+follows the dreams switch. `404` for an unknown agent. Clicks on one agent run
 one after another, and each write keeps the previous `agent.yaml` as a
 backup (the newest five stay).
 
@@ -1506,7 +1529,7 @@ for the builder-only tools on a chat agent. See
 |---|---|
 | `200` | The tool ran; the body is its result. |
 | `400` | The tool reported a failure, or no tool has this name (with the nearest names). |
-| `403` | The tool is turned off for this agent. |
+| `403` | The tool is turned off for this agent, or it is a dream or wiki writing tool and the agent does not dream. |
 | `404` | No such agent. |
 
 ## Team
@@ -2049,8 +2072,9 @@ usual.
 ```
 
 `outcome` is `started`, `busy` (already running) or `nothing_to_do`.
-`400` when REM is not enabled for the agent, `409` when it was enabled
-after the server started.
+`409` with `reason`: `does-not-dream` when the agent's dreams switch is
+off, `no-model` when no REM model is set, neither in its `agent.yaml`
+nor in `config.yaml`.
 
 ### `POST /dream/run-deep`
 

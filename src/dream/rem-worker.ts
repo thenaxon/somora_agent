@@ -1,7 +1,7 @@
 // RemWorker — per-agent idle-triggered dream extraction.
 // (Phase REM. DECISION #33 (originally Dream-A).)
 //
-// Lifecycle per agent with rem.enabled = true:
+// Lifecycle per agent that dreams (agent.yaml dreams: true, src/dream/dreams.ts):
 //
 //   chat.send arrives  ──►  resetActivity(agent)
 //                              │  cancels in-flight REM run (AbortSignal)
@@ -22,6 +22,7 @@
 // the REM worker picks them up on the next idle for whichever agent
 // they belong to.
 
+import type { ResolvedRem } from './dreams.ts';
 import type { Config } from '../config/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import type { RemConfig } from '../persona/loader.ts';
@@ -32,7 +33,7 @@ import { runDream } from './rem-runner.ts';
 
 interface AgentState {
   agent: string;
-  rem: RemConfig;
+  rem: ResolvedRem;
   /** Pending idle-fire timer. null when no timer scheduled. */
   idleTimer: NodeJS.Timeout | null;
   /** Abort controller for the dream currently running for this agent. */
@@ -112,14 +113,18 @@ export class RemWorker {
 
   /**
    * Register an agent with the worker. Called once per agent at server
-   * startup (only for agents with rem.enabled). The first idle timer
+   * startup and when the switch flips (syncRemRegistration, only for agents that dream). The first idle timer
    * is started immediately so the worker can pick up paused dreams from
    * the previous server run without waiting for a chat.send first.
    */
-  register(agent: string, rem: RemConfig): void {
+  register(agent: string, rem: ResolvedRem): void {
     if (this.shuttingDown) return;
-    if (this.agents.has(agent)) {
-      logger.debug({ msg: 'dream.rem.re_register', agent });
+    const known = this.agents.get(agent);
+    if (known) {
+      // Registered again after a switch or a config reload: the new
+      // settings apply from the next run.
+      known.rem = rem;
+      logger.debug({ msg: 'dream.rem.re_register', agent, model: rem.model });
       return;
     }
     const state: AgentState = {
@@ -139,6 +144,25 @@ export class RemWorker {
       idleMinutes: rem.idleMinutes,
       model: rem.model,
     });
+  }
+
+  /**
+   * The agent stopped dreaming: no more idle timer, and a run in
+   * progress is stopped the way activity stops it (its file becomes
+   * `paused` and waits, should the agent dream again).
+   */
+  unregister(agent: string): void {
+    const state = this.agents.get(agent);
+    if (!state) return;
+    this.agents.delete(agent);
+    if (state.idleTimer) clearTimeout(state.idleTimer);
+    state.idleTimer = null;
+    state.activeAbort?.abort();
+    logger.info({ msg: 'dream.rem.unregistered', agent, wasRunning: state.isWorking });
+  }
+
+  isRegistered(agent: string): boolean {
+    return this.agents.has(agent);
   }
 
   /**
@@ -197,6 +221,8 @@ export class RemWorker {
 
   private scheduleIdle(state: AgentState, factor = 1): void {
     if (this.shuttingDown) return;
+    // Unregistered while a run was finishing: no new timer.
+    if (this.agents.get(state.agent) !== state) return;
     const ms = Math.max(1, state.rem.idleMinutes) * 60_000 * factor;
     state.idleTimer = setTimeout(() => {
       void this.fireIdle(state.agent);

@@ -11,7 +11,7 @@ import { writeAgentToolGating } from '../../persona/tool-gating-store.ts';
 import { isSkillAllowed } from '../../skills/gating.ts';
 import { loadAvailableSkills } from '../../skills/load.ts';
 import { toggleSkills, toggleTools } from '../../tools/gating-edit.ts';
-import { type AgentKind, BUILDER_TOOL_ALLOW, gatingToStore, isBuilderOnly, isImpliedRule, isToolAllowed } from '../../tools/gating.ts';
+import { type AgentKind, BUILDER_TOOL_ALLOW, followsDreams, gatingToStore, isBuilderOnly, isImpliedRule, isToolAllowed } from '../../tools/gating.ts';
 import type { ToolContext } from '../../tools/types.ts';
 import { logger } from '../logger.ts';
 import { config } from '../server-state.ts';
@@ -83,6 +83,7 @@ export function registerAbilitiesRoutes(app: Hono, routeDeps: AbilitiesRoutesDep
     return c.json({
       agent,
       kind: persona.kind,
+      dreams: persona.dreams,
       handWrittenRules: handWritten,
       // The kind's own list — the web shows a builder these as its set and
       // everything else under "more".
@@ -101,6 +102,8 @@ export function registerAbilitiesRoutes(app: Hono, routeDeps: AbilitiesRoutesDep
         description: t.description.slice(0, 140),
         visible: isToolAllowed(t.name, t.toolset, gating ?? undefined),
         availableNow: true,
+        // Follows the agent's dreams switch, not a click here.
+        ...(followsDreams(t.toolset) ? { lockedBy: 'dreams' as const } : {}),
       })),
     });
   });
@@ -161,6 +164,10 @@ export function registerAbilitiesRoutes(app: Hono, routeDeps: AbilitiesRoutesDep
     const byName = new Map(catalog.map((t) => [t.name, t]));
     const unknown = (body.names as string[]).filter((n) => !byName.has(n));
     if (unknown.length > 0) return c.json({ error: `unknown tool(s): ${unknown.join(', ')}` }, 400);
+    const locked = (body.names as string[]).filter((n) => followsDreams(byName.get(n)!.toolset));
+    if (locked.length > 0) {
+      return c.json({ error: `${locked.join(', ')} follow${locked.length === 1 ? 's' : ''} the agent's dreams switch — turn dreaming on or off in the Agent window`, lockedBy: 'dreams' }, 409);
+    }
     const builderOnly = persona.kind === 'builder' ? [] : (body.names as string[]).filter((n) => isBuilderOnly(n, byName.get(n)!.toolset));
     if (builderOnly.length > 0) return c.json({ error: `builder-only tool(s), never offered to a chat agent: ${builderOnly.join(', ')}` }, 400);
     const picked = (body.names as string[]).map((n) => {

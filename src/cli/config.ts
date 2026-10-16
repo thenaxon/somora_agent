@@ -1,9 +1,35 @@
 // `somora config check [file]` — validate config.yaml exactly as the
 // server does (YAML, schema, unique aliases) without starting anything.
 // An agent that edits the file runs it before relying on the change.
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { configPath, validateConfigText } from '../config/loader.ts';
+import { parseYaml } from '../config/yaml.ts';
+
+/** agent.yaml files that still carry keys the `dreams` switch replaced
+ *  (the server rewrites them at start; one written by hand later stays).
+ *  A note, not an error: the old keys still mean what they meant. */
+export function oldDreamKeyNotes(agentsDir: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(agentsDir);
+  } catch {
+    return [];
+  }
+  const notes: string[] = [];
+  for (const name of names.sort()) {
+    let doc: unknown;
+    try {
+      doc = parseYaml(readFileSync(join(agentsDir, name, 'agent.yaml'), 'utf8'));
+    } catch {
+      continue;
+    }
+    const rem = (doc as { rem?: Record<string, unknown> } | undefined)?.rem;
+    const old = ['enabled', 'participate_in_wiki'].filter((k) => rem && typeof rem === 'object' && k in rem);
+    if (old.length > 0) notes.push(`  note: agents/${name}/agent.yaml: rem.${old.join(' and rem.')} replaced by \`dreams: true|false\` (docs/dream-phases.md)`);
+  }
+  return notes;
+}
 
 function usage(): string {
   return `somora config — the server configuration (~/.somora/config.yaml)
@@ -36,6 +62,10 @@ export async function runConfigCli(args: string[]): Promise<number> {
     const file = args[1] ? resolve(args[1]) : configPath();
     const r = checkConfigFile(file);
     (r.code === 0 ? process.stdout : process.stderr).write(r.out);
+    if (!args[1]) {
+      const notes = oldDreamKeyNotes(join(dirname(file), 'agents'));
+      if (notes.length > 0) process.stdout.write(`${notes.join('\n')}\n`);
+    }
     return r.code;
   }
   if (sub === 'path') {

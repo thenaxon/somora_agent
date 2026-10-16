@@ -20,6 +20,10 @@
 //   4. builder: on when in its own set (BUILDER_TOOL_ALLOW), else off
 //   5. chat: an allow list from the old "only these" form → off;
 //      otherwise on
+// Before all of them: the dream tools and the wiki writing tools follow
+// the agent's `dreams` switch (followsDreams), whatever the rules say —
+// one switch, not a second one in the Abilities window that can contradict
+// it (private/dream-switch/KONZEPT.md).
 // The Abilities window only ever writes names and the family/server
 // rules it offers, so it can always edit what it wrote.
 
@@ -35,6 +39,16 @@ export interface ToolGating {
    *  `subagents.tools.deny` list on a session started as a sub-agent
    *  (withSessionDeny). */
   sessionDeny?: string[];
+  /** The agent's `dreams` switch, set on the gating a turn runs with:
+   *  the tools that follow it (followsDreams) are on exactly when it is. */
+  dreams?: boolean;
+}
+
+/** Tools that follow the `dreams` switch instead of the rules: the dream
+ *  tools (review and apply findings, start a phase) and the wiki writing
+ *  tools. An agent that does not dream reads the wiki, never writes it. */
+export function followsDreams(toolset: Toolset | undefined): boolean {
+  return toolset === 'dream' || toolset === 'wiki';
 }
 
 /** A rule for a whole family or server: `toolset:<tag>` or `<prefix>*`. */
@@ -103,8 +117,8 @@ export const BUILDER_ONLY_TOOLS: ReadonlySet<string> = new Set(['todo_write', 'a
  * kind, which supplies the default for tools no rule names (a builder's
  * own set; for a chat agent everything but the builder-only tools).
  */
-export function effectiveToolGating(kind: AgentKind, own: ToolGating | undefined): ToolGating {
-  return { deny: [...(own?.deny ?? [])], allow: [...(own?.allow ?? [])], kind };
+export function effectiveToolGating(kind: AgentKind, own: ToolGating | undefined, dreams?: boolean): ToolGating {
+  return { deny: [...(own?.deny ?? [])], allow: [...(own?.allow ?? [])], kind, ...(dreams !== undefined ? { dreams } : {}) };
 }
 
 /** A chat agent's allow list from the old "only these tools" form: some
@@ -157,6 +171,7 @@ export function isToolAllowed(
 ): boolean {
   if (!gating) return true;
   if (gating.sessionDeny?.some((p) => matchesToolPattern(p, name, toolset))) return false;
+  if (gating.dreams !== undefined && followsDreams(toolset)) return gating.dreams;
   const builder = gating.kind === 'builder';
   if (!builder && isBuilderOnly(name, toolset)) return false;
   if (gating.deny.includes(name)) return false;

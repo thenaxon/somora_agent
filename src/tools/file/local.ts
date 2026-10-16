@@ -1,6 +1,7 @@
 // Local-filesystem implementations for file_* tools. These are the
 // 'target=local' (default) paths.
 
+import { enforceVaultReadOnly } from './vault-lock.ts';
 import { spawn } from 'node:child_process';
 import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative } from 'node:path';
@@ -128,6 +129,7 @@ export async function localWrite(args: {
   const { absolute, workspace, warning } = await resolveLocalPath(args.path, args.agent, args.config, args.session);
   const policy = checkWriteAllowed(absolute, args.agent);
   if (!policy.ok) throw new Error(policy.reason);
+  await enforceVaultReadOnly({ paths: [absolute], agent: args.agent, config: args.config });
   if (warning) {
     logger.warn({ msg: 'tool.file_write.path_prefix_doubled', agent: args.agent, path: absolute });
   }
@@ -138,6 +140,7 @@ export async function localWrite(args: {
   const real = await realpathSafeAncestor(absolute);
   const policyReal = checkWriteAllowed(real, args.agent);
   if (!policyReal.ok) throw new Error(policyReal.reason);
+  await enforceVaultReadOnly({ paths: [absolute, real], agent: args.agent, config: args.config });
   await enforceWriteScope({ absolute, real, agent: args.agent, session: args.session, config: args.config });
   const personaBackup = await backupPersonaFile(real, args.agent);
 
@@ -242,6 +245,7 @@ export async function localPatch(args: {
   const real = await realpathSafeAncestor(absolute);
   const policyReal = checkWriteAllowed(real, args.agent);
   if (!policyReal.ok) throw new Error(policyReal.reason);
+  await enforceVaultReadOnly({ paths: [absolute, real], agent: args.agent, config: args.config });
   await enforceWriteScope({ absolute, real, agent: args.agent, session: args.session, config: args.config });
   const personaBackup = await backupPersonaFile(real, args.agent);
   if (!(await fileExists(absolute))) {

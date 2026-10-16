@@ -369,13 +369,14 @@ sweeps the search index. Nothing is deleted.
 
 ## Keeping an agent out
 
-Every agent's inbox feeds the wiki by default. To keep one out, set
-this in its `agent.yaml`:
+Every agent that dreams feeds the wiki. To keep one out, switch its
+dreaming off, in the Agent window or in its `agent.yaml`:
 
 ```yaml
-rem:
-  participate_in_wiki: false   # REM still runs, Deep skips this inbox
+dreams: false   # no REM, no Deep; the wiki and the vault are read-only for it
 ```
+
+See [Who dreams](dream-phases.md#who-dreams).
 
 A single note stays out with `wiki_promote: false` in its frontmatter.
 
@@ -530,7 +531,7 @@ absolute paths lead nowhere.
 | No wiki tile, routes answer 503 | `GET /wiki/status` shows `enabled: false`. Set both `wiki.enabled` and `obsidian.vault`, then restart. |
 | The agent does not know a new page exists | Its overview is the one from session start. Start a new session or reset. The log line `wiki.overview_failed` means the overview could not be built. |
 | A page you edited was not updated by Deep | Your edit came between its read and its write. The note is tried again on the next run. |
-| A note is never promoted | It was skipped and is looked at again when it changes or after `skipCacheDays`. Check for `wiki_promote: false` and `participate_in_wiki: false`. |
+| A note is never promoted | It was skipped and is looked at again when it changes or after `skipCacheDays`. Check for `wiki_promote: false`, and that the agent dreams (`dreams: true`). |
 | Migration says "no model" | Set `wiki.lucid.model` or `wiki.deep.model`. |
 
 ## See also
@@ -538,7 +539,7 @@ absolute paths lead nowhere.
 - [Memory](memory.md): the per-agent inbox, recall and search ranking
 - [Dream phases](dream-phases.md): how REM, Deep and Lucid work, and
   the review loop
-- [Agents](agents.md): `agent.yaml`, including `participate_in_wiki`
+- [Agents](agents.md): `agent.yaml`, including `dreams`
 - [Web client](web.md): the desktop the wiki window lives in
 - [API](api.md): the wiki and migration routes in full
 - [Cache strategy](cache-strategy.md): why the overview is frozen per

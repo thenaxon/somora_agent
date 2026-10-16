@@ -456,6 +456,14 @@ export const RemDedupConfigSchema = z.object({
 export type RemDedupConfig = z.infer<typeof RemDedupConfigSchema>;
 
 export const RemGlobalConfigSchema = z.object({
+  /** The REM worker for every agent that dreams and names none in its
+   *  agent.yaml `rem.model` (alias or `provider/modelId`). Without
+   *  either, an agent that dreams has no REM — an inbox note says so. */
+  model: z.string().min(1).optional(),
+  /** Backup(s) for `model`, one ref or an ordered chain. Used only with
+   *  the central `model`: an agent that names its own model brings its
+   *  own `rem.fallback`. */
+  fallback: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
   dedup: RemDedupConfigSchema,
 }).default({ dedup: { enabled: true, similarityThreshold: 0.85, judge: REM_JUDGE_DEFAULTS } });
 export type RemGlobalConfig = z.infer<typeof RemGlobalConfigSchema>;

@@ -276,8 +276,9 @@ What keeps the prompt small:
 - **Skills only when allowed.** A builder sees no skill unless its
   `agent.yaml` allows it. A chat agent sees all but the denied ones.
 
-Dreaming (REM) is off unless `rem.enabled` is set in the builder's
-`agent.yaml`.
+A builder does not dream unless `dreams: true` is set in its
+`agent.yaml` or in the Agent window. With it, it gets REM, Deep and the
+dream and wiki tools like a chat agent.
 
 ## Long turns
 
@@ -354,7 +355,7 @@ skills:
 | `tools.allow` | none | Adds tools to the builder list. |
 | `tools.deny` | none | Removes tools from it. |
 | `skills.allow` | none | The skills the builder sees. Empty means no skill. |
-| `rem.enabled` | off | Turns dreaming on for this builder. |
+| `dreams` | `false` | `true` lets this builder dream (REM, Deep, the dream and wiki tools). |
 
 The `agentLoop` values count on the openai-compatible engine. The
 Abilities window edits `tools` and `skills` for you: switching off one

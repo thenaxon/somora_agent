@@ -9,6 +9,7 @@
 // 2026-09-21, back to archives from May, with duplicate findings in
 // review and old statements re-entering memory as new.
 
+import type { ResolvedRem } from './dreams.ts';
 import type { Config } from '../config/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import type { RemConfig } from '../persona/loader.ts';
@@ -20,7 +21,7 @@ import { markSessionDreamed } from './rem-worker.ts';
 export interface ResetDreamArgs {
   agent: string;
   archivedId: string;
-  rem: RemConfig;
+  rem: ResolvedRem;
   config: Config;
   mgr: MemoryManager;
   /** Test seam. */

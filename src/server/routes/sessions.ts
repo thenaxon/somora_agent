@@ -2,6 +2,7 @@
 // where these routes stood, so the registration order is the same.
 // Names index.ts shares come in through `routeDeps`.
 
+import { remSettingsFor } from '../../dream/dreams.ts';
 import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
 import { SamplingSchema, type ThinkingLevel, describeModelRefs, resolveAnyRef } from '../../config/types.ts';
@@ -396,9 +397,10 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
     // ramifications for the reset response. If it fails, only the dream
     // file gets a `failed` status; user is otherwise unaffected.
     let dreamSpawned = false;
-    if (persona.rem?.enabled) {
+    const remSettings = remSettingsFor(persona, config);
+    if (remSettings.ok) {
       const archivedId = result.archivedId;
-      const remConfig = persona.rem;
+      const remConfig = remSettings.rem;
       void (async () => {
         try {
           const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian });

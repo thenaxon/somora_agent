@@ -23,18 +23,12 @@ needs your approval.
 
 ## Set it up
 
-REM is switched on per agent, in `~/.somora/agents/<name>/agent.yaml`:
+Everything goes in `config.yaml`. REM needs a model, and Deep and Lucid
+need the wiki, which lives in an Obsidian vault:
 
 ```yaml
 rem:
-  enabled: true
-  model: <alias>          # required: a model alias or provider/modelId
-```
-
-Deep and Lucid are switched on for the whole instance, in `config.yaml`.
-They need the wiki, and the wiki needs an Obsidian vault:
-
-```yaml
+  model: <alias>          # the REM worker for every agent that dreams
 obsidian:
   vault: ~/Documents/Vault/
 wiki:
@@ -45,9 +39,65 @@ wiki:
     model: <alias>        # required
 ```
 
+Agents dream unless you switch it off, see
+[Who dreams](#who-dreams).
+
 Restart somora. Then chat with the agent, leave it alone for half an
 hour and ask: "Did you dream anything?" The agent calls `dream_list` and
 walks you through the findings.
+
+## Who dreams
+
+Each agent has one switch, `dreams`, in
+`~/.somora/agents/<name>/agent.yaml` or in the Agent window of the web
+client. It covers the whole chain:
+
+| | `dreams: true` | `dreams: false` |
+|---|---|---|
+| REM reads its conversations | yes | no |
+| Deep takes its notes into the wiki | yes | no |
+| Dream tools (`dream_list`, `dream_apply`, `dream_run`, …) | on | off |
+| Wiki writing tools (`wiki_create`, `wiki_edit`, `wiki_move`, `wiki_delete`) | on | off |
+| `file_write` and `file_patch` into the vault and the wiki | allowed | refused |
+| Its own notes (`memory_write`, …) | yes | yes, they stay its own |
+| Reading and searching the wiki and the vault | yes | yes |
+
+```yaml
+dreams: false
+```
+
+- **Defaults:** a new agent dreams; a builder does not.
+- **Applies at once:** a switch in the Agent window starts or stops REM
+  for the agent, the next Deep run follows it, and the tools follow from
+  the agent's next turn. No restart.
+- **Abilities window:** the dream tools and the wiki writing tools are
+  shown there, but follow the switch. A click on them changes nothing.
+- **Lucid** looks after the shared wiki and belongs to no agent, so the
+  switch does not touch it.
+- **Old findings:** when an agent stops dreaming, its open findings stay
+  on disk. They are back in `dream_list` if it dreams again.
+
+> **Note:** For an agent with `exec`, read-only is a rule of somora's
+> tools, not a wall: a shell can still write where your user account
+> can. Deny `toolset:exec` too when it has to hold. See
+> [Security](security.md).
+
+### Files from before the switch
+
+Until 2026-10, REM was switched on with `rem.enabled` and kept out of
+Deep with `rem.participate_in_wiki`. The first start of a version with
+the switch rewrites each `agent.yaml` once:
+
+- **The value:** `dreams` is taken from `rem.enabled`. A builder without
+  it does not dream; a chat agent without it dreams, unless its dream
+  tools were switched off.
+- **The file:** the old keys go, comments stay.
+- **Backup:** each file is copied to `agent.yaml.bak-<date>-dreams` first.
+- **Inbox:** an entry lists which agent dreams and which does not.
+
+A file that cannot be rewritten stays as it is and means the same: the
+old keys are still read by these rules. `somora config check` names
+files that still carry them.
 
 ## The three phases
 
@@ -117,19 +167,25 @@ skipped. What you clarify there goes straight into the wiki.
 
 ### The REM worker
 
-`rem.model` is required when REM is enabled. REM never falls back to
-the agent's chat model or chat fallback, so a run cannot land on an
-expensive model by accident. A small local model is good enough for
-this job and REM runs often. A strong hosted model works too.
+The worker is `rem.model` in `config.yaml`, for every agent that
+dreams. An agent can name its own in its `agent.yaml`, which then wins.
+REM never falls back to the agent's chat model or chat fallback, so a
+run cannot land on an expensive model by accident. A small local model
+is good enough for this job and REM runs often. A strong hosted model
+works too.
 
-`rem.fallback` names one backup worker or an ordered list:
+`rem.fallback` names one backup worker or an ordered list. It goes with
+the model it backs up: the one in `config.yaml` with the central model,
+the one in `agent.yaml` with the agent's own.
 
 ```yaml
 rem:
-  enabled: true
   model: local-small
   fallback: [glm, flash]
 ```
+
+An agent that dreams while no REM model is set anywhere gets no REM.
+The inbox names it until a model is set.
 
 | Situation | What REM does |
 |---|---|
@@ -239,8 +295,8 @@ Two ways to keep notes out of Deep:
 
 - `wiki_promote: false` in the frontmatter of a note keeps that note in
   the inbox.
-- `rem.participate_in_wiki: false` in `agent.yaml` keeps all notes of
-  that agent out of the wiki.
+- `dreams: false` in `agent.yaml` keeps all notes of that agent out of
+  the wiki (and its conversations out of REM).
 
 ### When Deep runs
 
@@ -527,30 +583,32 @@ wiki subfolder. The rest of your vault is read, never written.
 
 ### REM per agent
 
-In `agent.yaml`. The values shown are the defaults.
+In `agent.yaml`. The values shown are the defaults. All of them are
+optional.
 
 ```yaml
+dreams: true
 rem:
-  enabled: true
-  model: <alias>
+  # model: <alias>             # default: rem.model in config.yaml
   # fallback: <alias>          # or a list: [a, b]
   idleMinutes: 30
   chunkTokens: 50000
   chunkTimeoutMs: 600000
-  participate_in_wiki: true
   # thinking: medium
 ```
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `rem.enabled` | none | Switches REM on for this agent. |
-| `rem.model` | none | The worker. Required. Alias or `provider/modelId`. |
-| `rem.fallback` | none | Backup worker, or an ordered list of them. |
+| `dreams` | true, false for a builder | The whole chain for this agent, see [Who dreams](#who-dreams). |
+| `rem.model` | `rem.model` in `config.yaml` | This agent's own worker. Alias or `provider/modelId`. |
+| `rem.fallback` | none | Backup for this agent's own worker, or an ordered list of them. |
 | `rem.idleMinutes` | 30 | Minutes without chat before REM starts. |
 | `rem.chunkTokens` | 50000 | Size of one piece of a long transcript. |
 | `rem.chunkTimeoutMs` | 600000 | Time limit per piece. Ten minutes leave room for local models. |
-| `rem.participate_in_wiki` | true | `false` keeps this agent's notes out of Deep. |
 | `rem.thinking` | none | `off`, `low`, `medium` or `high`. Used when the worker model can reason. |
+
+`rem.enabled` and `rem.participate_in_wiki` are replaced by `dreams`,
+see [Files from before the switch](#files-from-before-the-switch).
 
 ### REM for all agents
 
@@ -558,6 +616,8 @@ In `config.yaml`.
 
 ```yaml
 rem:
+  # model: <alias>
+  # fallback: <alias>          # or a list
   dedup:
     enabled: true
     similarityThreshold: 0.85
@@ -574,6 +634,8 @@ rem:
 
 | Setting | Default | Meaning |
 |---|---|---|
+| `rem.model` | none | The REM worker for every agent that dreams and names none of its own. A reload applies it at once. |
+| `rem.fallback` | none | Backup for `rem.model`, or an ordered list of them. |
 | `rem.dedup.enabled` | true | Check findings against stored notes and pages. |
 | `rem.dedup.similarityThreshold` | 0.85 | Similarity (0 to 1) from which a finding is marked `likely_duplicate`. Lower marks more. A rewording of the same fact scores about 0.85 to 0.95, the same topic with another fact about 0.6 to 0.8. |
 | `rem.dedup.judge.enabled` | false | Switches the coverage judge on. |
@@ -694,7 +756,8 @@ curl -H "Authorization: Bearer $(somora key)" -X POST http://127.0.0.1:18737/dre
 
 | Symptom | Where to look |
 |---|---|
-| REM never runs for an agent | `rem.enabled` and `rem.model` in `agent.yaml`. The log line `dream.rem.registered` appears at start for every agent with REM. After enabling REM, restart. |
+| REM never runs for an agent | Does it dream? The Agent window shows the switch and the REM model. No model anywhere shows as an inbox entry ("REM has no model"). The log line `dream.rem.registered` appears for every agent REM runs for. |
+| An agent can no longer write into the wiki or the vault | It does not dream (`dreams: false`): the wiki and the vault are read-only for it. Switch it on, or let it keep the note in its own memory. |
 | A dream shows `failed` in `dream_list` | Read its `error`. The same stretch is retried automatically, so wait for the new dream. `dream.worker_fallback` in the log shows a switch to a backup. |
 | REM gave up after an outage | `dream.rem.self_heal_exhausted` in the log. Send the agent a message or call `dream_run({phase: 'rem'})`. |
 | The judge marks nothing | `dream.rem.dedup_summary` carries `judged`, `judge_marked`, `judge_cleared`, `judge_failed`, `judge_skipped` and `judge_model`. Single failures are logged as `dream.rem.judge_failed` and `dream.rem.judge_unreadable`. |

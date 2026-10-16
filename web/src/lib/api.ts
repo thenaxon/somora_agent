@@ -535,9 +535,20 @@ export interface PromptBudgets {
   personaFileChars: number;
   personaTotalChars: number;
 }
+/** The agent's `dreams` switch (GET/PUT /agents/:agent/dreams). */
+export interface DreamsInfo {
+  on: boolean;
+  /** What REM runs on; null when it does not dream or has no model. */
+  remModel: string | null;
+  remModelFrom: 'agent' | 'config' | null;
+  /** Set when the agent dreams but REM cannot run. */
+  problem?: string;
+}
 export interface PersonaResponse {
   agent: string;
   kind?: 'chat' | 'builder';
+  /** Missing from servers before the switch. */
+  dreams?: DreamsInfo | null;
   files: PersonaFileDto[];
   budgets: PromptBudgets;
   totals: { personaChars: number };
@@ -655,6 +666,17 @@ export const api = {
     return (await res.json()) as { ok: true; control: { mode: BrowserControlMode } };
   },
   persona: (agent: string) => getJson<PersonaResponse>(`/agents/${encodeURIComponent(agent)}/persona`),
+  /** Flip the agent's dreams switch; applies at once. */
+  setDreams: async (agent: string, on: boolean): Promise<DreamsInfo> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/dreams`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on }),
+    });
+    const body = (await res.json().catch(() => ({}))) as DreamsInfo & { error?: string };
+    if (!res.ok) throw new Error(body.error ?? `PUT dreams ${res.status}`);
+    return body;
+  },
   /** Save one persona file. A 409 (changed on disk meanwhile) is thrown
    *  with `status` and `currentContent` attached so the editor can offer
    *  a reload instead of overwriting the agent's own edit. */
@@ -1396,6 +1418,9 @@ export interface AgentToolInfo {
    *  exists, so an entry here is always something worth switching.
    *  Kept on the wire for older clients that still read it. */
   availableNow: boolean;
+  /** Set on the dream tools and the wiki writing tools: they follow the
+   *  agent's dreams switch (Agent window), a click here changes nothing. */
+  lockedBy?: 'dreams';
 }
 
 export interface AgentSkillsResponse {
@@ -1428,6 +1453,8 @@ export interface AgentToolsResponse {
   /** Pattern rules in agent.yaml the window did not write (anything but
    *  a family, a server or `*`). Shown as a note; they still apply. */
   handWrittenRules?: string[];
+  /** The agent's dreams switch; missing from servers before it. */
+  dreams?: boolean;
   tools: AgentToolInfo[];
 }
 

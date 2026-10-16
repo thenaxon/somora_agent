@@ -813,6 +813,18 @@ providers:
 #   enabled: true
 #   endpoint: https://somora.ai/api/latest-version   # a mirror of your own
 
+# REM — reads the conversations of every agent that dreams (agent.yaml
+# `dreams: true`, the default for chat agents) and proposes notes for its
+# memory. One worker model for all of them; an agent's own `rem.model`
+# in its agent.yaml wins. Without any model, agents that dream get no
+# REM and the inbox says so. docs/dream-phases.md → "Who dreams".
+# rem:
+#   model: haiku                          # alias or provider/model
+#   fallback: [luna]                      # backup(s) for `model`
+#   dedup:
+#     judge:
+#       enabled: false                    # a model checks whether a note is already known
+
 # Obsidian vault + wiki layer (docs/wiki.md, docs/dream-phases.md).
 # The vault is read as a recall source for every agent; the wiki is a
 # subfolder of it that Deep writes (memory → wiki consolidation) and
@@ -834,7 +846,7 @@ providers:
 #     enabled: true
 #     intervalHours: 12
 #     model: opus                         # worker model ref (alias or provider/model)
-#     fallback: [sol]                   # backup(s) when `model` is unreachable — best on another provider
+#     fallback: [sol]                     # backup(s) when `model` is unreachable — best on another provider
 #     callTimeoutMs: 300000               # one model call (one note); past it the note goes to the backup
 #   lucid:
 #     enabled: true

@@ -89,6 +89,8 @@ import { loadAvailableSkills } from '../skills/load.ts';
 import { shutdownSshPool } from '../ssh/index.ts';
 import { archiveEmptyCompletedDreams, consolidateStalePausedDreams, recoverOrphanRunningDreams } from '../dream/storage.ts';
 import { RemWorker } from '../dream/rem-worker.ts';
+import { syncRemRegistration } from '../dream/dreams.ts';
+import { migrateDreamsSwitch } from '../persona/dreams-migrate.ts';
 import { DeepWorker } from '../dream/deep-worker.ts';
 import { LucidWorker } from '../dream/lucid-worker.ts';
 import { setMaxWikiCallsPerTurn } from '../dream/loop-state.ts';
@@ -707,9 +709,9 @@ setInterval(checkInboxState, 5 * 60_000).unref();
 
 registerInboxRoutes(app, { checkInboxState, inbox, refreshSubagentDenyCheck });
 
-registerServerRoutes(app, { configFileMtime, refreshSubagentDenyCheck, updateChecker });
+registerServerRoutes(app, { configFileMtime, refreshSubagentDenyCheck, syncDreamers, updateChecker });
 
-registerAgentRoutes(app, { get nextTurnPrompt() { return nextTurnPrompt as typeof nextTurnPrompt; } });
+registerAgentRoutes(app, { get nextTurnPrompt() { return nextTurnPrompt as typeof nextTurnPrompt; }, syncDreamers });
 
 // The system prompt and tool list the NEXT turn of a session would send.
 // Read-only: the wiki snapshot is not persisted. Shared by the prompt
@@ -920,6 +922,9 @@ try {
 }
 
 await ensureDefaultAgent();
+// agent.yaml files from before the `dreams` switch get it once, before
+// anything reads it (src/persona/dreams-migrate.ts).
+const dreamsMigrated = await migrateDreamsSwitch();
 const agentList = await listAgents();
 logger.info({ msg: 'agents.loaded', count: agentList.length, names: agentList.map((a) => a.name).join(',') });
 
@@ -1368,15 +1373,45 @@ configureExecConcurrencyCaps(
   config.agentLoop.execMaxConcurrentGlobal,
 );
 logExecCaps();
-for (const a of agentList) {
-  try {
-    const persona = await loadPersona(a.name);
-    if (persona?.rem?.enabled) {
-      remWorker.register(a.name, persona.rem);
+/**
+ * Keep the REM worker in step with every agent's `dreams` switch and the
+ * central `rem.model`: at start, after a config reload, after the switch
+ * is flipped. An agent that dreams but has no REM model anywhere is named
+ * in the inbox.
+ */
+export async function syncDreamers(): Promise<void> {
+  const noModel: string[] = [];
+  for (const a of await listAgents()) {
+    try {
+      const persona = await loadPersona(a.name);
+      if (!persona) continue;
+      const settings = syncRemRegistration(remWorker, a.name, persona, config);
+      if (!settings.ok && settings.reason === 'no-model') noModel.push(a.name);
+    } catch (err) {
+      logger.warn({ msg: 'dream.rem.register_failed', agent: a.name, err: String(err) });
     }
-  } catch (err) {
-    logger.warn({ msg: 'dream.rem.register_failed', agent: a.name, err: String(err) });
   }
+  if (noModel.length > 0) {
+    logger.warn({ msg: 'dream.rem.no_model', agents: noModel, hint: 'set rem.model in config.yaml, or rem.model in the agent.yaml' });
+    inbox.raise('config:rem-model', {
+      kind: 'config',
+      level: 'warning',
+      title: 'REM has no model',
+      text: `${noModel.join(', ')} ${noModel.length === 1 ? 'dreams' : 'dream'}, but no REM model is set, so ${noModel.length === 1 ? 'its' : 'their'} conversations are not read. Set \`rem.model\` in config.yaml (or in the agent.yaml) and reload. See docs/dream-phases.md.`,
+    }, { count: false });
+  } else {
+    inbox.resolve('config:rem-model');
+  }
+}
+await syncDreamers();
+if (dreamsMigrated.length > 0) {
+  const line = (m: (typeof dreamsMigrated)[number]) => `- ${m.agent}: ${m.dreams ? 'dreams' : 'does not dream'}${m.error ? ` (file not rewritten: ${m.error})` : ''}`;
+  inbox.raise('dream:switch', {
+    kind: 'dream',
+    level: dreamsMigrated.some((m) => m.error) ? 'warning' : 'info',
+    title: 'One dreams switch per agent',
+    text: `REM, Deep and the dream tools now follow one switch per agent (\`dreams:\` in agent.yaml, or the Agent window). Set from what each agent did before; backups next to each file.\n\n${dreamsMigrated.map(line).join('\n')}`,
+  }, { count: false });
 }
 
 // DeepWorker — Memory→Wiki consolidation. Server-global, real-clock-
@@ -1398,7 +1433,8 @@ export const deepWorker = new DeepWorker({
     const out: Array<{ name: string; vaultPath: string }> = [];
     for (const a of liveAgents) {
       const persona = await loadPersona(a.name);
-      if (persona?.rem?.participate_in_wiki === false) continue;
+      // Only agents that dream hand their notes to Deep.
+      if (!persona?.dreams) continue;
       out.push({ name: a.name, vaultPath: globalVault.vaultPath });
     }
     return out;

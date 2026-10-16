@@ -271,6 +271,19 @@ The memory tools cannot write to the wiki or the vault. The wiki is
 written by the Deep and Lucid phases, which run on the server. An agent
 with file tools can still write there like anywhere else.
 
+### Agents that do not dream
+
+An agent with `dreams: false` keeps its notes in its own memory folder.
+The vault and the wiki inside it are read-only for it:
+- **No tools:** it has no wiki writing tools and no dream tools.
+- **File writes refused:** `file_write` and `file_patch` refuse every
+  path in the vault, including one reached through a symlink. Reading
+  and searching work.
+- **The shell can still write:** with `exec` it can write where your
+  user account can. Deny `toolset:exec` too when that has to hold.
+
+See [Who dreams](dream-phases.md#who-dreams).
+
 ### Limiting an agent
 
 To take tools away, add a `tools` block to the agent's `agent.yaml`:

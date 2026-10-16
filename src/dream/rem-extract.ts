@@ -3,7 +3,7 @@
 // vault content, produces structured Findings ready for user review
 // via the dream tools.
 //
-// Worker model is configured per-agent in agent.yaml under `rem.model`.
+// Worker model: agent.yaml `rem.model`, else config.yaml `rem.model` (src/dream/dreams.ts).
 // Any engine with a one-shot path can be the worker: an
 // openai-compatible provider is asked through chat.completions here, a
 // model on claude-cli or codex-cli (a subscription, no endpoint of its

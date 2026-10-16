@@ -3,6 +3,7 @@
 // Names index.ts shares come in through `routeDeps`; deepWorker, lucidWorker, remWorker are read from it
 // per request (index.ts sets them up later or changes them).
 
+import { syncRemRegistration } from '../../dream/dreams.ts';
 import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
 import { getLoopState } from '../../dream/loop-state.ts';
@@ -98,10 +99,20 @@ export function registerDreamRoutes(app: Hono, routeDeps: DreamRoutesDeps): void
     const agent = c.req.param('agent');
     const persona = await loadPersona(agent);
     if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
-    if (!persona.rem?.enabled) return c.json({ error: `REM is not enabled for agent '${agent}' (agent.yaml rem.enabled)` }, 400);
+    // The switch decides, and the worker is brought in line with it here
+    // too, so a file edited by hand needs no restart.
+    const settings = syncRemRegistration(routeDeps.remWorker, agent, persona, config);
+    if (!settings.ok) {
+      return c.json(
+        settings.reason === 'does-not-dream'
+          ? { error: `agent '${agent}' does not dream (dreams: false in its agent.yaml) — turn it on in the Agent window`, reason: 'does-not-dream' }
+          : { error: `no REM model for '${agent}' — set rem.model in config.yaml or in its agent.yaml`, reason: 'no-model' },
+        409,
+      );
+    }
     const outcome = await routeDeps.remWorker.runNow(agent);
     logger.info({ msg: 'dream.rem.run_now', agent, outcome });
-    if (outcome === 'not_registered') return c.json({ error: `REM worker has no entry for '${agent}' — restart after enabling rem` }, 409);
+    if (outcome === 'not_registered') return c.json({ error: `REM worker has no entry for '${agent}'` }, 409);
     const message =
       outcome === 'started'
         ? 'REM started in the background; it works through the unread sessions one after another. Findings appear in dream_list.'

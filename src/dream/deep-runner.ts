@@ -67,7 +67,7 @@ const MAX_EXPIRED_RECHECKS_PER_AGENT_RUN = 10;
 export interface RunDreamBArgs {
   config: Config;
   /** Agents participating in the wiki (server-side opt-out via
-   *  agent.yaml.rem.participate_in_wiki = false is filtered upstream). */
+   *  agents that do not dream (dreams: false) are filtered upstream). */
   agents: Array<{ name: string; vaultPath: string }>;
   /** Resolves a per-agent MemoryManager — needed for wiki-context
    *  embedding-search (index + top-N relevant pages). */

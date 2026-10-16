@@ -29,6 +29,7 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  Moon,
   Plug,
   RefreshCw,
   Sparkles,
@@ -370,9 +371,18 @@ export function ToolsWindow() {
             hidden={list.filter((t) => !t.visible).length}
             expanded={expanded.has(group)}
             onToggleExpanded={() => toggleExpanded(group)}
-            onToggleAll={toolsLocked ? undefined : () => toggleGroup(list)}
-            ruleOff={ruleOff(list)}
+            onToggleAll={toolsLocked || list.every((t) => t.lockedBy === 'dreams') ? undefined : () => toggleGroup(list.filter((t) => !t.lockedBy))}
+            // An old family rule has no effect on tools that follow the switch.
+            ruleOff={list.every((t) => t.lockedBy === 'dreams') ? false : ruleOff(list)}
           >
+            {list.some((t) => t.lockedBy === 'dreams') && (
+              <div data-testid={`tools-dreams-note-${group}`} style={{ fontSize: 11.5, color: 'var(--text-2)', padding: '2px 6px 6px', lineHeight: 1.45 }}>
+                <Moon size={11} className="icon-inline" />{' '}
+                {data?.dreams === false
+                  ? `Off because ${agent} does not dream. These tools follow the dreams switch — turn it on in the Agent window.`
+                  : `On because ${agent} dreams. These tools follow the dreams switch in the Agent window.`}
+              </div>
+            )}
             {list.map((t) => (
               <div
                 key={t.name}
@@ -389,9 +399,10 @@ export function ToolsWindow() {
               >
                 <span
                   data-testid={`tools-toggle-${t.name}`}
-                  onClick={() => toggle(t.name, t.visible)}
+                  onClick={() => { if (!t.lockedBy) toggle(t.name, t.visible); }}
+                  title={t.lockedBy === 'dreams' ? 'Follows the dreams switch (Agent window)' : undefined}
                   style={{
-                    cursor: toolsLocked ? 'not-allowed' : 'pointer',
+                    cursor: toolsLocked || t.lockedBy ? 'not-allowed' : 'pointer',
                     color: t.visible ? 'var(--accent)' : 'var(--text-2)',
                     display: 'inline-flex',
                   }}

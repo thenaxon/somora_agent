@@ -6,6 +6,8 @@
 import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
 import { readPersonaFiles, writePersonaFile } from '../../persona/files.ts';
+import { remSettingsFor } from '../../dream/dreams.ts';
+import { writeAgentDreams } from '../../persona/dreams-store.ts';
 import { listAgents, loadPersona } from '../../persona/loader.ts';
 import { resolveSessionId, sessionMetaStore } from '../../storage/sessions.ts';
 import { logger } from '../logger.ts';
@@ -13,6 +15,7 @@ import { config } from '../server-state.ts';
 
 export interface AgentRoutesDeps {
   readonly nextTurnPrompt: typeof Server.nextTurnPrompt;
+  readonly syncDreamers: typeof Server.syncDreamers;
 }
 
 export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void {
@@ -29,6 +32,44 @@ export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void
 
   app.get('/agents', async (c) => c.json(await listAgents()));
 
+  /** The `dreams` switch as a client shows it: on/off, and what REM
+   *  runs on (the agent's own model, the central one, or none). */
+  function dreamsInfo(persona: Awaited<ReturnType<typeof loadPersona>>) {
+    if (!persona) return null;
+    const rem = remSettingsFor(persona, config);
+    return {
+      on: persona.dreams,
+      remModel: rem.ok ? rem.rem.model : null,
+      remModelFrom: rem.ok ? rem.modelFrom : null,
+      ...(persona.dreams && !rem.ok ? { problem: 'no REM model: set rem.model in config.yaml or in the agent.yaml' } : {}),
+    };
+  }
+
+  // The `dreams` switch (private/dream-switch/KONZEPT.md). Applies at
+  // once: REM is (un)registered, Deep reads its participants live, the
+  // tools follow from the agent's next turn.
+  app.get('/agents/:agent/dreams', async (c) => {
+    const agent = c.req.param('agent');
+    const persona = await loadPersona(agent);
+    if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
+    return c.json({ agent, ...dreamsInfo(persona)! });
+  });
+  app.put('/agents/:agent/dreams', async (c) => {
+    const agent = c.req.param('agent');
+    if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+    const body = (await c.req.json().catch(() => null)) as { on?: unknown } | null;
+    if (!body || typeof body.on !== 'boolean') return c.json({ error: 'body must be { on: boolean }' }, 400);
+    try {
+      await writeAgentDreams(agent, body.on);
+    } catch (err) {
+      return c.json({ error: `could not write agent.yaml: ${(err as Error).message}` }, 500);
+    }
+    await routeDeps.syncDreamers();
+    const persona = await loadPersona(agent);
+    logger.info({ msg: 'agent.dreams_switched', agent, on: body.on });
+    return c.json({ ok: true, agent, ...dreamsInfo(persona)! });
+  });
+
   // ── Persona files + prompt preview (web Agent window) ───────────────
   // Read the three persona files (+ agent.yaml read-only) with hashes and
   // sizes against config.promptBudgets; write one under an optimistic
@@ -38,10 +79,12 @@ export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void
     if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
     const files = await readPersonaFiles(agent);
     const personaChars = files.filter((f) => !f.readOnly).reduce((n, f) => n + f.chars, 0);
-    const kind = (await loadPersona(agent))?.kind ?? 'chat';
+    const persona = await loadPersona(agent);
+    const kind = persona?.kind ?? 'chat';
     return c.json({
       agent,
       kind,
+      dreams: dreamsInfo(persona),
       files,
       budgets: config.promptBudgets,
       totals: { personaChars },

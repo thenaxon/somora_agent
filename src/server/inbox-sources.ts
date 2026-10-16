@@ -87,7 +87,7 @@ export function inboxFromLog(inbox: Inbox, line: Record<string, unknown>): void 
           kind: 'dream',
           level: 'warning',
           title: `REM keeps failing for ${agent}`,
-          text: `${o.count} REM runs in a row did not finish. The conversations stay waiting and are tried again, but nothing reaches the agent's memory until a run succeeds. Usually the REM model (or its backups) is unreachable — see rem.model and rem.fallback in ${agent}'s agent.yaml.`,
+          text: `${o.count} REM runs in a row did not finish. The conversations stay waiting and are tried again, but nothing reaches the agent's memory until a run succeeds. Usually the REM model (or its backups) is unreachable — see rem.model and rem.fallback in ${agent}'s agent.yaml, or the central ones in config.yaml.`,
         });
       }
       return;

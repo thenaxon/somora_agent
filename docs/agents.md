@@ -601,14 +601,13 @@ voice:
   consultPolicy: always     # auto | substantive | always
   maxSpokenSentences: 4
 
+dreams: true
 rem:
-  enabled: true
-  model: gemma4big
+  model: gemma4big          # default: rem.model in config.yaml
   fallback: [glm, deep41flash]
   idleMinutes: 30
   chunkTokens: 50000
   chunkTimeoutMs: 600000
-  participate_in_wiki: true
   thinking: low
 ```
 
@@ -702,20 +701,24 @@ agent is comes from its persona files.
 
 ### REM
 
-REM is the per-agent dream phase. After a session goes quiet it reads
-the conversation and proposes notes for the agent's memory. Deep and
-Lucid work for the whole install and are set under `wiki.deep` and
-`wiki.lucid` in `config.yaml`.
+`dreams` is the agent's one switch for dreaming. With it on, REM reads
+its conversations after they go quiet and proposes notes for its
+memory, Deep takes its notes into the shared wiki, and it has the dream
+and wiki writing tools. With it off, its notes stay its own and the
+wiki and the vault are read-only for it. See
+[Who dreams](dream-phases.md#who-dreams).
+
+Deep and Lucid themselves work for the whole install and are set under
+`wiki.deep` and `wiki.lucid` in `config.yaml`.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `rem.enabled` | boolean | required | Master switch. |
-| `rem.model` | string | required | The worker model. It never inherits the chat model, so REM cannot run on an expensive model by accident. |
-| `rem.fallback` | string or list | none | Backup workers, tried in order when the one before is unreachable: connection refused, a 5xx error, a timeout, a rate limit. A 4xx error is a configuration problem and does not switch. It never inherits the chat fallback. |
+| `dreams` | boolean | `true`, `false` for a builder | Whether this agent dreams. Also a switch in the Agent window; applies without a restart. |
+| `rem.model` | string | `rem.model` in `config.yaml` | This agent's own worker model. It never inherits the chat model, so REM cannot run on an expensive model by accident. |
+| `rem.fallback` | string or list | none | Backup workers for the agent's own model, tried in order when the one before is unreachable: connection refused, a 5xx error, a timeout, a rate limit. A 4xx error is a configuration problem and does not switch. It never inherits the chat fallback. |
 | `rem.idleMinutes` | number | `30` | Quiet minutes before REM starts. Every message to the agent resets the count. |
 | `rem.chunkTokens` | integer | `50000` | Size of one piece of a long session. |
 | `rem.chunkTimeoutMs` | integer | `600000` | Time limit per piece. Ten minutes leaves room for local models. A piece that runs out is marked failed and REM continues with the next. |
-| `rem.participate_in_wiki` | boolean | `true` | `false` keeps Deep away from this agent's notes. REM still runs. Useful for scratch agents. |
 | `rem.thinking` | `off`, `low`, `medium`, `high` | none | Reasoning depth for the worker, when its model has the `reasoning` capability. |
 
 The worker can be a model on `claude-cli`, `codex-cli`, `grok-cli` or
@@ -817,9 +820,9 @@ opened it. Reload and apply your change again. An empty `AGENTS.md`,
 and a `name` that differs from the folder, are refused too.
 
 **REM does not start.** `POST /agents/:agent/dream/run-rem` answers
-"REM is not enabled" when `rem.enabled` is not `true`, and "REM worker
-has no entry" when REM was switched on after the server started.
-Restart the server.
+`409` with `reason: does-not-dream` when the agent's `dreams` switch is
+off, and `reason: no-model` when no REM model is set, neither in its
+`agent.yaml` nor in `config.yaml`.
 
 **A file was overwritten.** Look for `<file>.bak-<timestamp>` next to
 it. To see who changed the tool or skill rules through the web client,

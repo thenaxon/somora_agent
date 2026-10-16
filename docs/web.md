@@ -514,6 +514,7 @@ what its prompt costs.
 | Part | What it shows |
 |---|---|
 | Budget strip | Persona files, team block, full prompt and tool schemas, in characters and estimated tokens against `promptBudgets`. |
+| **Dreams** | The agent's dreams switch and the model REM runs on. It applies at once, see [Who dreams](dream-phases.md#who-dreams). |
 | `AGENTS.md`, `SOUL.md`, `USER.md` | Editors with a counter per file, Save and Discard. |
 | `agent.yaml` | Read-only. |
 | **Full prompt** | The system prompt as the next turn on a chosen session would send it, split into its parts with sizes. |
@@ -536,7 +537,7 @@ These features have their own pages. In short:
 
 | Window | What it is |
 |---|---|
-| **abilities** | A matrix of tools and skills per agent, plus the health of external MCP servers. A switch takes effect on the agent's next turn. On `codex-cli` the chat shows a `tools changed` marker. |
+| **abilities** | A matrix of tools and skills per agent, plus the health of external MCP servers. A switch takes effect on the agent's next turn. On `codex-cli` the chat shows a `tools changed` marker. The dream tools and the wiki writing tools follow the agent's dreams switch instead; a note in their group says so. |
 | **team** | Drag agents onto their superior, edit titles and rules, and preview the `# Your team` block every agent gets. Saved to `~/.somora/team.yaml`. |
 | **sentinel** | The triggers that wake agents on their own, with history and a test button. A check trigger also shows its checks and wakes, the last check, the decision model's answer, its script (read only), and a dry run in place. |
 | **browser** | One row per agent window of the shared browser. A row opens the live view with tabs, address bar and take-over buttons. A waiting handoff also shows as an **Open browser** notice in its chat. |
@@ -620,6 +621,7 @@ controls on this page:
 | `DELETE /chat/queue/:id` | ↩ edit and × in the queue |
 | `GET /agents/:agent/sessions/:session/work` | Work badge and list, refetched on every queue event and every 3 s while the list is open |
 | `PUT /agents/<a>/sessions/<s>/model` | Model switch |
+| `GET /agents/:agent/persona`, `PUT /agents/:agent/dreams` | Agent window, its dreams switch |
 | `GET /agents/:agent/sessions/:session/export?format=…` | Session export |
 | `GET /sessions` | Sessions window |
 | `GET /activity/stream` | Status and unread dots |
