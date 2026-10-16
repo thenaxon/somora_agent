@@ -92,7 +92,7 @@ providers:
 | `claude-opus-5-5` | 1000000 | Anthropic's recommendation for most workloads. It replaces `claude-opus-5`: keep your alias, change the `id`. Thinking text is a placeholder, as above. | full check |
 | `claude-sonnet-5-5` | 1000000 | The current Sonnet: same surface as Opus, cheaper on the subscription budget. It replaces `claude-sonnet-5`: keep your alias, change the `id`. | in use |
 | `claude-sonnet-5` | 1000000 | The previous Sonnet. | full check |
-| `claude-haiku-5-5` | 1000000 | The current Haiku: fast and cheap, a good REM and background worker. Thinks adaptively, keep `reasoning` in `capabilities`. It replaces `claude-haiku-4-5`. | in use |
+| `claude-haiku-5-5` | 1000000 | The current Haiku: fast and cheap, a good REM and background worker. Claude Code runs it with the full 1M window, five times its predecessor's. Thinks adaptively, keep `reasoning` in `capabilities`. It replaces `claude-haiku-4-5`. | in use |
 | `claude-haiku-4-5` | 200000 | The previous Haiku. Supports extended thinking. Keep `reasoning` in `capabilities`. | full check |
 
 What is special about this engine:
