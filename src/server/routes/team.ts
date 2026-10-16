@@ -6,7 +6,7 @@ import type { Hono } from 'hono';
 import { listAgents, loadPersona } from '../../persona/loader.ts';
 import { renderTeamBlock, renderTeamBlockCompact } from '../../team/render.ts';
 import { parseTeamFile, resolveTeam } from '../../team/resolve.ts';
-import { getResolvedTeam, loadTeamFile, teamFilePath } from '../../team/store.ts';
+import { getResolvedTeam, loadTeamFile, teamFilePath, teamRoster } from '../../team/store.ts';
 import type { ResolvedTeam } from '../../team/types.ts';
 import { initialTeamFile, writeTeamFile } from '../../team/write.ts';
 import type { AgentKind } from '../../tools/gating.ts';
@@ -64,7 +64,7 @@ export function registerTeamRoutes(app: Hono): void {
     if (load.exists) return c.json({ error: 'team.yaml already exists' }, 409);
     const body = (await c.req.json().catch(() => ({}))) as { principal?: string };
     const name = typeof body.principal === 'string' && body.principal.trim() ? body.principal.trim() : 'Principal';
-    const agents = (await listAgents()).map((a) => ({ name: a.name, role: a.role, description: a.description }));
+    const agents = (await teamRoster()).map((a) => ({ name: a.name, role: a.role, description: a.description }));
     if (agents.length === 0) return c.json({ error: 'no agents on disk' }, 400);
     await writeTeamFile(initialTeamFile(agents, name));
     logger.info({ msg: 'team.initialised', agents: agents.length, principal: name });
@@ -85,8 +85,7 @@ export function registerTeamRoutes(app: Hono): void {
     if (!body || typeof body.agent !== 'string') return c.json({ error: 'body {file, agent} required' }, 400);
     const parsed = parseTeamFile(body.file ?? {});
     if (!parsed.file) return c.json({ agent: body.agent, valid: false, issues: parsed.issues, block: '' });
-    const agents = (await listAgents()).map((a) => ({ name: a.name, role: a.role, description: a.description, kind: a.kind }));
-    const team = resolveTeam(parsed.file, agents);
+    const team = resolveTeam(parsed.file, await teamRoster());
     const block = teamBlockFor(team, body.agent, (await loadPersona(body.agent))?.kind) ?? '';
     return c.json({ agent: body.agent, valid: true, issues: [], warnings: team.warnings, block, chars: block.length, softMaxChars: config.promptBudgets.teamBlockChars });
   });
@@ -105,8 +104,9 @@ export function registerTeamRoutes(app: Hono): void {
     const load = await loadTeamFile();
     const team = await getResolvedTeam();
     const kindByName = new Map((await listAgents()).map((a) => [a.name, a.kind] as const));
+    // External agents get no block of their own: nothing to measure.
     const blocks = team
-      ? team.order.map((name) => {
+      ? team.order.filter((name) => team.agents[name]?.kind !== 'external').map((name) => {
           const chars = (teamBlockFor(team, name, kindByName.get(name)) ?? '').length;
           return { agent: name, chars, overSoftMax: chars > config.promptBudgets.teamBlockChars };
         })

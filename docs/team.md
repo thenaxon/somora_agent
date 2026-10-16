@@ -150,12 +150,13 @@ pull colleagues in unless asked.
 [External agents](external-agents.md) are placed like any agent. What
 colleagues read about one depends on whether it takes work:
 
-- **With A2A access**, it is listed under "Who to involve" with how to
-  hand it work: a self-contained task over `agent_ask` or
-  `spawn_subagent`, all the context it needs, text only. Its
-  `involve_for` and `not_for` phrases follow.
-- **Without A2A access**, it is named as for chatting with the
-  principal only, with `do not involve it`.
+- **With A2A access**, it is listed under "Who to involve" with its
+  system, for example `claw (Lab assistant; external · OpenClaw)`, and
+  its phrases. One shared note below the list says how to hand external
+  agents work: a self-contained task over `agent_ask` or
+  `spawn_subagent`, all the context it needs, text only.
+- **Without A2A access**, it is named in one `Chat only, do not
+  involve` line.
 
 An external agent gets no block itself, because somora's prompt does
 not reach it. [A2A](a2a.md#in-the-team) has the details.

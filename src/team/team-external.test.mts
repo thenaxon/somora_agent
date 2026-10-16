@@ -43,27 +43,27 @@ test('the org chart marks external agents with their system', () => {
   assert.equal(team.warnings.some((w) => /claw|herm/.test(w) && /skipped/.test(w)), false, 'not dropped as unknown');
 });
 
-test('one that takes work: under who to involve, with how to hand it work and its phrases', () => {
+test('one that takes work: under who to involve with its system and phrases; one shared note on how to hand it work', () => {
   const block = renderTeamBlock(team, 'ada')!;
   const line = block.split('\n').find((l) => l.startsWith('- claw'))!;
-  assert.match(line, /External agent \(OpenClaw\) — another system with its own memory and tools/);
-  assert.match(line, /agent_ask or spawn_subagent \(sent over A2A\)/);
-  assert.match(line, /browsing the lab machine/);
+  assert.equal(line, '- claw (Lab assistant; external · OpenClaw): browsing the lab machine.');
+  const notes = block.split('\n').filter((l) => l.startsWith('External agents ('));
+  assert.equal(notes.length, 1, 'said once, not per agent');
+  assert.match(notes[0]!, /^External agents \(claw, loose\) work in other systems, with their own memory and tools and no access to ours/);
+  assert.match(notes[0]!, /agent_ask or spawn_subagent \(sent over A2A\)/);
 });
 
 test('one without A2A access: chat only, never under who to involve', () => {
   const block = renderTeamBlock(team, 'ada')!;
-  const involve = block.slice(block.indexOf('Who to involve'));
-  const herm = involve.split('\n').filter((l) => l.includes('herm'));
-  assert.equal(herm.length, 1);
-  assert.match(herm[0]!, /for chatting with the principal only — it takes no work from agents; do not involve it/);
-  assert.doesNotMatch(herm[0]!, /agent_ask or spawn_subagent/);
+  assert.equal(block.split('\n').some((l) => l.startsWith('- herm')), false);
+  assert.match(block, /^Chat only, do not involve: herm \(external agents the principal talks to directly; they take no work from agents\)\.$/m);
+  assert.doesNotMatch(block, /External agents \([^)]*herm/);
 });
 
-test('unplaced external agents get their line under "not in the org chart"', () => {
+test('unplaced external agents are named under "not in the org chart" and counted in the shared note', () => {
   const block = renderTeamBlock(team, 'ada')!;
   assert.match(block, /Not in the org chart yet: .*loose/);
-  assert.match(block, /- loose: External agent \(Hermes\) — another system/);
+  assert.match(block, /External agents \(claw, loose\)/);
 });
 
 test("the builder's short block names only those that take work", () => {
@@ -96,4 +96,18 @@ test('the roster brings external agents in from config.yaml, with their A2A acce
   const herm = t.unlisted.find((u) => u.name === 'herm')!;
   assert.deepEqual(herm.external, { label: 'Hermes', a2a: false });
   assert.deepEqual(t.missing, []);
+});
+
+test('the Team window preview and the check use the same list as the prompt (external agents included)', async () => {
+  const { Hono } = await import('hono');
+  const { registerTeamRoutes } = await import('../server/routes/team.ts');
+  const app = new Hono();
+  registerTeamRoutes(app as never);
+  const file = { version: 1, principal: { name: 'Max' }, agents: { nova: { reports_to: 'principal' }, claw: { reports_to: 'nova' } } };
+  const r = await app.request('/team/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ file, agent: 'nova' }) });
+  const body = (await r.json()) as { block: string; warnings: string[] };
+  assert.match(body.block, /claw — .*\(external · OpenClaw\)/);
+  assert.equal(body.warnings.some((w) => /claw/.test(w)), false, 'not reported as unknown');
+  const check = (await (await app.request('/team/check')).json()) as { blocks: Array<{ agent: string }> };
+  assert.equal(check.blocks.some((b) => b.agent === 'claw'), false, 'an external agent has no block to measure');
 });

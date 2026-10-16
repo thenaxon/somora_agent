@@ -13,6 +13,7 @@ import { listExternalAgents } from '../external/registry.ts';
 import { listAgents } from '../persona/loader.ts';
 import { parseTeamFile, resolveTeam } from './resolve.ts';
 import { renderTeamBlock, renderTeamBlockCompact } from './render.ts';
+import type { Config } from '../config/types.ts';
 import { TEAM_FILE_NAME, type ResolvedTeam, type TeamAgentInfo, type TeamFile, type TeamIssue } from './types.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
@@ -63,15 +64,23 @@ let lastValidTeam: ResolvedTeam | null = null;
 let rosterCache: { at: number; agents: TeamAgentInfo[]; key: string } | null = null;
 let warnedForMtime: number | null = null;
 
-async function roster(): Promise<{ agents: TeamAgentInfo[]; key: string }> {
+/** Everyone the team can name: somora's agents and the external agents
+ *  from config.yaml — the same list the prompt's team block uses, for
+ *  every view of the team (editor preview, check, CLI). */
+export async function teamRoster(config?: Config): Promise<TeamAgentInfo[]> {
+  return (await roster(config)).agents;
+}
+
+/** `config` given (a CLI, no running server): read fresh, not cached. */
+async function roster(config?: Config): Promise<{ agents: TeamAgentInfo[]; key: string }> {
   const now = Date.now();
-  if (rosterCache && now - rosterCache.at < ROSTER_TTL_MS) return rosterCache;
+  if (!config && rosterCache && now - rosterCache.at < ROSTER_TTL_MS) return rosterCache;
   const list = await listAgents();
   const agents: TeamAgentInfo[] = list.map((a) => ({ name: a.name, role: a.role, description: a.description, kind: a.kind }));
   // External agents (docs/external-agents.md) belong to the team too: the
   // operator places them like anyone else, and colleagues learn whether
   // they take work (A2A) or are for chatting with the principal only.
-  for (const ext of listExternalAgents()) {
+  for (const ext of listExternalAgents(config)) {
     const label = externalBadge(ext).label;
     agents.push({
       name: ext.name,
@@ -81,6 +90,7 @@ async function roster(): Promise<{ agents: TeamAgentInfo[]; key: string }> {
     });
   }
   const key = agents.map((a) => `${a.name}:${a.role ?? ''}:${a.kind ?? ''}:${a.description}:${a.external ? `${a.external.label}/${a.external.a2a}` : ''}`).join('|');
+  if (config) return { agents, key };
   rosterCache = { at: now, agents, key };
   return rosterCache;
 }

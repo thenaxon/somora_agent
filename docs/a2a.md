@@ -214,15 +214,22 @@ shows them with their system's sign and lets you place them.
 
 What your agents read about them in their team block:
 
-| External agent | Your agents read |
-|---|---|
-| with A2A access | Under "Who to involve": an external agent, its system, its own memory and tools, no access to yours. Hand it a self-contained task with `agent_ask` or `spawn_subagent` and all the context it needs. Text only, slower than a colleague, and a stop may not reach it. Then its `involve_for` phrases. |
-| without A2A access | Chat only: for chatting with you, takes no work from agents, do not involve it. |
+- **With A2A access**, under "Who to involve": the name, the title and
+  the system, such as `claw (Lab assistant; external · OpenClaw)`, then
+  its `involve_for` and `not_for` phrases. Below the list, one shared
+  note: external agents work in other systems with their own memory and
+  tools and no access to yours, so hand them a self-contained task with
+  `agent_ask` or `spawn_subagent` and all the context it needs. Text
+  only, slower than a colleague, and a stop may not reach them.
+- **Without A2A access**, a line `Chat only, do not involve`: they are
+  for chatting with you and take no work from agents.
 
-The org chart marks both as `(external · OpenClaw)` or the like.
-External agents get no team block themselves, because somora's prompt
-does not reach them. They learn who asks from the first line of each
-task.
+The note is said once for all external agents, because every agent
+carries its team block in every turn. The org chart marks external
+agents as `(external · OpenClaw)` or the like. `somora team check`
+lists them without a block size: they get no team block themselves,
+because somora's prompt does not reach them. They learn who asks from
+the first line of each task.
 
 ## Brakes and timing
 

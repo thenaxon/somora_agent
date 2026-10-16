@@ -14,7 +14,7 @@ import { renderTeamBlock, renderTeamBlockCompact, TEAM_BLOCK_SOFT_MAX_CHARS } fr
 import type { ResolvedTeam } from '../team/types.ts';
 import { loadConfig } from '../config/loader.ts';
 import { resolveTeam } from '../team/resolve.ts';
-import { loadTeamFile, teamFilePath } from '../team/store.ts';
+import { loadTeamFile, teamFilePath, teamRoster } from '../team/store.ts';
 import { initialTeamFile, teamFileToYaml } from '../team/write.ts';
 
 function usage(): string {
@@ -86,16 +86,23 @@ async function cmdCheck(): Promise<number> {
     process.stderr.write('The server keeps the last valid team (or none) until this is fixed.\n');
     return 1;
   }
-  const team = resolveTeam(load.file, agents.map((a) => ({ name: a.name, role: a.role, description: a.description, kind: a.kind })));
   let cap = TEAM_BLOCK_SOFT_MAX_CHARS;
+  let config: Awaited<ReturnType<typeof loadConfig>> | undefined;
   try {
-    cap = (await loadConfig()).promptBudgets.teamBlockChars;
+    config = await loadConfig();
+    cap = config.promptBudgets.teamBlockChars;
   } catch {
-    /* unreadable config → built-in default */
+    /* unreadable config → built-in default, no external agents */
   }
+  const team = resolveTeam(load.file, await teamRoster(config));
   process.stdout.write(`team.yaml OK: principal ${team.principal.name}, ${team.order.length} agent(s) in the chart.\n`);
   for (const w of team.warnings) process.stdout.write(`  warning: ${w}\n`);
   for (const name of team.order) {
+    // External agents get no block of their own.
+    if (team.agents[name]?.kind === 'external') {
+      process.stdout.write(`  ${name}: external agent, no block of its own\n`);
+      continue;
+    }
     const block = blockFor(team, name, agents) ?? '';
     const flag = block.length > cap ? `  ← over ${cap} chars (promptBudgets.teamBlockChars), shorten involve_for/not_for/notes` : '';
     process.stdout.write(`  ${name}: block ${block.length} chars${flag}\n`);
@@ -128,7 +135,13 @@ async function cmdShow(args: string[]): Promise<number> {
     process.stderr.write(`unknown agent '${name}'. Agents: ${agents.map((a) => a.name).join(', ')}\n`);
     return 1;
   }
-  const team = resolveTeam(load.file, agents.map((a) => ({ name: a.name, role: a.role, description: a.description, kind: a.kind })));
+  let config: Awaited<ReturnType<typeof loadConfig>> | undefined;
+  try {
+    config = await loadConfig();
+  } catch {
+    /* unreadable config: the team without external agents */
+  }
+  const team = resolveTeam(load.file, await teamRoster(config));
   process.stdout.write((blockFor(team, name, agents) ?? '(empty team)') + '\n');
   return 0;
 }
