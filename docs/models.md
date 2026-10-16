@@ -76,13 +76,13 @@ providers:
         alias: opus
         contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]
-      - id: claude-sonnet-5
+      - id: claude-sonnet-5-5
         alias: sonnet
         contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]
-      - id: claude-haiku-4-5
+      - id: claude-haiku-5-5
         alias: haiku
-        contextWindow: 200000
+        contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]
 ```
 
@@ -90,8 +90,10 @@ providers:
 |---|---|---|---|
 | `claude-fable-5-1` | 1000000 | Frontier model, adaptive thinking always on. The SDK discloses no thinking text for it, so somora shows a placeholder row that the model thought. No separate reasoning token count: it is part of `tokens_out`. | full check |
 | `claude-opus-5-5` | 1000000 | Anthropic's recommendation for most workloads. It replaces `claude-opus-5`: keep your alias, change the `id`. Thinking text is a placeholder, as above. | full check |
-| `claude-sonnet-5` | 1000000 | Same surface as Opus, cheaper on the subscription budget. | full check |
-| `claude-haiku-4-5` | 200000 | Supports extended thinking. Keep `reasoning` in `capabilities`. | full check |
+| `claude-sonnet-5-5` | 1000000 | The current Sonnet: same surface as Opus, cheaper on the subscription budget. It replaces `claude-sonnet-5`: keep your alias, change the `id`. | in use |
+| `claude-sonnet-5` | 1000000 | The previous Sonnet. | full check |
+| `claude-haiku-5-5` | 1000000 | The current Haiku: fast and cheap, a good REM and background worker. Thinks adaptively, keep `reasoning` in `capabilities`. It replaces `claude-haiku-4-5`. | in use |
+| `claude-haiku-4-5` | 200000 | The previous Haiku. Supports extended thinking. Keep `reasoning` in `capabilities`. | full check |
 
 What is special about this engine:
 
@@ -127,8 +129,8 @@ providers:
         capabilities: [text, image, pdf, reasoning]
         reasoning:
           levels: { "off": low, high: xhigh }   # Astra has no `minimal`: map `off` explicitly; `max` deliberately not a default
-      - id: gpt-5.6-sol
-        alias: gpt56
+      - id: gpt-6.1-sol
+        alias: sol
         contextWindow: 258400          # the codex session window, NOT the 1.05M API window
         capabilities: [text, image, pdf, reasoning]
         reasoning:
@@ -137,7 +139,7 @@ providers:
         alias: terra
         contextWindow: 258400
         capabilities: [text, image, pdf, reasoning]
-      - id: gpt-5.6-luna
+      - id: gpt-6-luna
         alias: luna
         contextWindow: 258400
         capabilities: [text, image, pdf, reasoning]
@@ -147,12 +149,20 @@ providers:
         capabilities: [text, image, pdf, reasoning]
 ```
 
+The aliases above are named after the family (`astra`, `sol`, `terra`,
+`luna`), not the version. When OpenAI ships a new Sol, change the `id`
+and keep `sol`: agents, fallbacks and dream settings that name the alias
+move along.
+
 | Model | contextWindow | Notes | Checked |
 |---|---|---|---|
 | `gpt-6-astra` | 258400 | For the hardest problems. Runs in Code Mode only, like the 5.6 family. Effort words are `low`, `medium`, `high`, `xhigh`, `max`. There is no `minimal`, so map `off` as in the block above. | full check |
-| `gpt-5.6-sol` | 258400 | Flagship: complex coding, research, deepest reasoning. | full check |
-| `gpt-5.6-terra` | 258400 | Workhorse. OpenAI positions it as GPT-5.5 class at lower cost. | full check |
-| `gpt-5.6-luna` | 258400 | Fast and cheap: extraction, classification, volume. | full check |
+| `gpt-6.1-sol` | 258400 | Flagship: complex coding, research, deepest reasoning. The current Sol. | in use |
+| `gpt-6-sol` | 258400 | The first GPT-6 Sol, followed by 6.1. | in use |
+| `gpt-6-luna` | 258400 | Fast and cheap: extraction, classification, volume. The current Luna. | in use |
+| `gpt-5.6-sol` | 258400 | The previous Sol. | full check |
+| `gpt-5.6-terra` | 258400 | Workhorse. OpenAI positions it as GPT-5.5 class at lower cost. GPT-6 has no Terra, so this is the current one. | full check |
+| `gpt-5.6-luna` | 258400 | The previous Luna. | full check |
 | `gpt-5.5` | 258400 | Still listed by Codex. The one model here that does not run in Code Mode only. Terra is the equivalent at lower cost. | full check |
 | `gpt-5.4-mini`, `gpt-5.3-codex` | none | Retired for ChatGPT accounts. Codex answers with an error, which shows as a failed turn or a crashed compaction worker. Remove them. | retired |
 

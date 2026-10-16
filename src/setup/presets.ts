@@ -28,8 +28,8 @@ export const CLAUDE_PRESET: ProviderPreset = {
   models: [
     { id: 'claude-fable-5-1', alias: 'fable', contextWindow: 1000000, capabilities: FULL, note: 'frontier model' },
     { id: 'claude-opus-5-5', alias: 'opus', contextWindow: 1000000, capabilities: FULL, note: 'recommended for most work' },
-    { id: 'claude-sonnet-5', alias: 'sonnet', contextWindow: 1000000, capabilities: FULL, note: 'lighter on the subscription budget' },
-    { id: 'claude-haiku-4-5', alias: 'haiku', contextWindow: 200000, capabilities: FULL, note: 'fast and cheap — good for background work' },
+    { id: 'claude-sonnet-5-5', alias: 'sonnet', contextWindow: 1000000, capabilities: FULL, note: 'lighter on the subscription budget' },
+    { id: 'claude-haiku-5-5', alias: 'haiku', contextWindow: 1000000, capabilities: FULL, note: 'fast and cheap — good for background work' },
   ],
 };
 
@@ -38,9 +38,9 @@ export const CODEX_PRESET: ProviderPreset = {
   engine: 'codex-cli',
   models: [
     { id: 'gpt-6-astra', alias: 'astra', contextWindow: 258400, capabilities: FULL, note: 'frontier model', reasoning: { levels: { off: 'low', high: 'xhigh' } } },
-    { id: 'gpt-5.6-sol', alias: 'gpt56', contextWindow: 258400, capabilities: FULL, note: 'strong all-rounder', reasoning: { levels: { high: 'xhigh' } } },
+    { id: 'gpt-6.1-sol', alias: 'sol', contextWindow: 258400, capabilities: FULL, note: 'strong all-rounder', reasoning: { levels: { high: 'xhigh' } } },
     { id: 'gpt-5.6-terra', alias: 'terra', contextWindow: 258400, capabilities: FULL, note: 'balanced' },
-    { id: 'gpt-5.6-luna', alias: 'luna', contextWindow: 258400, capabilities: FULL, note: 'fast and cheap — good for background work' },
+    { id: 'gpt-6-luna', alias: 'luna', contextWindow: 258400, capabilities: FULL, note: 'fast and cheap — good for background work' },
     { id: 'gpt-5.5', alias: 'gpt55', contextWindow: 258400, capabilities: FULL, note: 'previous generation' },
   ],
 };
@@ -57,9 +57,9 @@ export const GROK_PRESET: ProviderPreset = {
  *  is configured wins. Chat wants the best model, the dream workers a
  *  cheap one (REM) or a careful one (Deep, Lucid). */
 export const PREFERRED = {
-  chat: ['opus', 'fable', 'gpt56', 'astra', 'sonnet', 'terra', 'grok'],
+  chat: ['opus', 'fable', 'sol', 'astra', 'sonnet', 'terra', 'grok'],
   rem: ['haiku', 'luna', 'sonnet', 'terra'],
-  deep: ['opus', 'gpt56', 'sonnet', 'terra', 'fable', 'astra'],
+  deep: ['opus', 'sol', 'sonnet', 'terra', 'fable', 'astra'],
 } as const;
 
 export function pickPreferred(job: keyof typeof PREFERRED, aliases: string[]): string | undefined {

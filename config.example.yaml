@@ -72,14 +72,14 @@ providers:
         alias: opus
         contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]
-      - id: claude-sonnet-5
+      - id: claude-sonnet-5-5
         alias: sonnet
         contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]
-      - id: claude-haiku-4-5
+      - id: claude-haiku-5-5
         alias: haiku
-        contextWindow: 200000
-        capabilities: [text, image, pdf]
+        contextWindow: 1000000
+        capabilities: [text, image, pdf, reasoning]
 
   # OpenAI via the bundled Codex (ChatGPT Plus/Pro/Business
   # subscription). Log in with `somora codex login`; an existing
@@ -90,18 +90,14 @@ providers:
   openai:
     engine: codex-cli
     models:
-      - id: gpt-5.5
-        alias: gpt55
-        contextWindow: 400000
+      - id: gpt-6.1-sol
+        alias: sol
+        contextWindow: 258400            # the Codex session window, not the API one
         capabilities: [text, image, pdf, reasoning]
-      - id: gpt-5.4-mini
-        alias: gpt54mini
-        contextWindow: 400000
-        capabilities: [text, reasoning]
-      - id: gpt-5.3-codex
-        alias: codex53
-        contextWindow: 400000
-        capabilities: [text, reasoning]
+      - id: gpt-6-luna
+        alias: luna
+        contextWindow: 258400
+        capabilities: [text, image, pdf, reasoning]
 
   # xAI via the Grok CLI, bundled with somora. A SuperGrok or Premium
   # subscription signs it in with `somora grok login`; no API key. Images
@@ -838,13 +834,13 @@ providers:
 #     enabled: true
 #     intervalHours: 12
 #     model: opus                         # worker model ref (alias or provider/model)
-#     fallback: [gpt56]                   # backup(s) when `model` is unreachable — best on another provider
+#     fallback: [sol]                   # backup(s) when `model` is unreachable — best on another provider
 #     callTimeoutMs: 300000               # one model call (one note); past it the note goes to the backup
 #   lucid:
 #     enabled: true
 #     intervalDays: 7
 #     model: opus
-#     fallback: [gpt56]
+#     fallback: [sol]
 
 # Workspace — default cwd for file_* tools. NOT a sandbox: agents can
 # also write outside (their own persona files, the global config).

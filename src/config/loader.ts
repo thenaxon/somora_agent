@@ -37,13 +37,13 @@ providers:
         alias: opus
         contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]
-      # - id: claude-sonnet-5
+      # - id: claude-sonnet-5-5
       #   alias: sonnet
       #   contextWindow: 1000000
       #   capabilities: [text, image, pdf, reasoning]
-      # - id: claude-haiku-4-5
+      # - id: claude-haiku-5-5
       #   alias: haiku
-      #   contextWindow: 200000
+      #   contextWindow: 1000000
       #   capabilities: [text, image, pdf, reasoning]
 
   # Example: local OpenAI-compatible server (Ollama / LM Studio / oMLX / vLLM).
