@@ -22,6 +22,7 @@ import type {
   AgentInfo,
   PendingQueuedTurn,
   ProjectInfo,
+  SessionQuestion,
   SessionWork,
   StreamEvent,
   Turn,
@@ -46,6 +47,14 @@ const HISTORY_MAX = 100;
 /** One line for the scrollback when a fallback model takes over a turn.
  *  With a chain, every failed hop is named so the operator sees which
  *  hosts were down — the ⇄ chip in /web carries the same list. */
+/** The question as a notice with numbered options: "probe asks for
+ *  permission: exec: rm -rf /tmp/x — 1 Allow once · 2 Reject (type the
+ *  number)". */
+export function questionNotice(agent: string, q: SessionQuestion): string {
+  const options = q.options.map((o, i) => `${i + 1} ${o.label}`).join(' · ');
+  return `❓ ${q.question}\n   ${options}   — type the number (${agent} waits)`;
+}
+
 function fallbackNotice(fb: {
   requested: string;
   actual: string;
@@ -107,6 +116,17 @@ export function App({
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [agentIcons, setAgentIcons] = useState<Record<string, string>>({});
+  // External agents (docs/external-agents.md): name → status-line label
+  // shown instead of a model ("external · OpenClaw 2026.10.3").
+  const [externalLabels, setExternalLabels] = useState<Record<string, string>>({});
+  // The session's open question (an external agent asking permission):
+  // answered by typing an option's number.
+  const [openQuestion, setOpenQuestionState] = useState<SessionQuestion | null>(null);
+  const openQuestionRef = useRef<SessionQuestion | null>(null);
+  const setOpenQuestion = (q: SessionQuestion | null): void => {
+    openQuestionRef.current = q;
+    setOpenQuestionState(q);
+  };
   const [showMemory, setShowMemory] = useState(initialShowMemory);
   const [showTools, setShowTools] = useState(initialShowTools);
   const [verboseTools, setVerboseTools] = useState(initialVerboseTools);
@@ -243,8 +263,14 @@ export function App({
       .then((list: AgentInfo[]) => {
         if (cancelled) return;
         const next: Record<string, string> = {};
-        for (const a of list) if (a.icon) next[a.name] = a.icon;
+        const labels: Record<string, string> = {};
+        for (const a of list) {
+          if (a.icon) next[a.name] = a.icon;
+          else if (a.external) next[a.name] = a.external.badge;
+          if (a.external) labels[a.name] = `external · ${a.external.label}${a.external.version ? ` ${a.external.version}` : ''}`;
+        }
         setAgentIcons(next);
+        setExternalLabels(labels);
       })
       .catch(() => {
         /* leave icons empty if endpoint is unreachable */
@@ -383,6 +409,7 @@ export function App({
     setStats(null);
     setNextModel(null);
     refreshNextModel(agent, session);
+    setOpenQuestion(null);
     setPendingQueued([]);
     pendingQueuedBufferRef.current.clear();
     setWork(null);
@@ -417,6 +444,19 @@ export function App({
         }
       } catch {
         /* history endpoint failures are non-fatal — leave scrollback empty */
+      }
+
+      if (cancelled) return;
+      // A question already open (asked before this client looked) goes
+      // below the replayed history; later ones arrive on the stream.
+      try {
+        const q = await apiRef.current.fetchSessionQuestion(agent, session);
+        if (!cancelled && q) {
+          setOpenQuestion(q);
+          appendTurn({ kind: 'system', id: nextId(), text: questionNotice(agent, q), tone: 'warn' });
+        }
+      } catch {
+        /* an older server has no such route */
       }
 
       if (cancelled) return;
@@ -883,6 +923,21 @@ export function App({
         refreshWork(agent, session);
         return;
       }
+      case 'question':
+        setOpenQuestion(ev.question);
+        appendTurn({ kind: 'system', id: nextId(), text: questionNotice(agent, ev.question), tone: 'warn' });
+        return;
+      case 'question-answered':
+      {
+        // The event handler lives across renders (the stream loop), so
+        // the open question is read from its ref, not from state.
+        const q = openQuestionRef.current;
+        if (q && (ev.questionId === null || ev.questionId === q.id)) {
+          setOpenQuestion(null);
+          appendTurn({ kind: 'system', id: nextId(), text: `→ ${ev.choice ?? 'no answer — the safest option was taken'}`, tone: 'info' });
+        }
+        return;
+      }
       case 'project': {
         // Server broadcasts project focus changes on the HTTP path
         // (slash-command from any client, or DELETE via REST). On the
@@ -993,6 +1048,25 @@ export function App({
     const trimmed = text.trim();
     if (!trimmed) return;
     setInput('');
+    // An open question takes its option's number ("1", "2", …).
+    if (openQuestion && /^\d+$/.test(trimmed)) {
+      const option = openQuestion.options[Number(trimmed) - 1];
+      if (option) {
+        const q = openQuestion;
+        try {
+          await apiRef.current.answerSessionQuestion(agent, session, q.id, option.label);
+          if (openQuestionRef.current?.id === q.id) {
+            setOpenQuestion(null);
+            appendTurn({ kind: 'system', id: nextId(), text: `→ ${option.label}`, tone: 'info' });
+          }
+        } catch (err) {
+          appendTurn({ kind: 'system', id: nextId(), text: `could not answer: ${(err as Error).message}`, tone: 'error' });
+        }
+        return;
+      }
+      appendTurn({ kind: 'system', id: nextId(), text: `no option ${trimmed} — type 1 to ${openQuestion.options.length}`, tone: 'warn' });
+      return;
+    }
     pushHistory(trimmed);
     if (trimmed.startsWith('/')) {
       try {
@@ -1222,6 +1296,7 @@ export function App({
         unreadOtherAgents={unreadOtherAgents}
         workCounters={formatWorkCounters(work)}
         nextModel={nextModel}
+        externalLabel={externalLabels[agent] ?? null}
       />
       <SlashAutocomplete matches={slashMatches} selectedIndex={safeAutocompleteIndex} />
       <Box>

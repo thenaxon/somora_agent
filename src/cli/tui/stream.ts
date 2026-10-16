@@ -308,6 +308,26 @@ export function openStream(
         if (!id) return null;
         return { kind: 'turn-dequeued', turnId: id };
       }
+      case 'question_asked':
+        if (typeof data.questionId !== 'string' || typeof data.question !== 'string' || !Array.isArray(data.options)) return null;
+        return {
+          kind: 'question',
+          question: {
+            id: data.questionId,
+            question: data.question,
+            ...(typeof data.header === 'string' ? { header: data.header } : {}),
+            options: (data.options as Array<{ label?: unknown; description?: unknown }>)
+              .filter((o) => typeof o?.label === 'string')
+              .map((o) => ({ label: o.label as string, ...(typeof o.description === 'string' ? { description: o.description } : {}) })),
+            expiresAt: typeof data.expiresAt === 'number' ? data.expiresAt : Date.now() + 600_000,
+          },
+        };
+      case 'question_answered':
+        return {
+          kind: 'question-answered',
+          questionId: typeof data.questionId === 'string' ? data.questionId : null,
+          choice: typeof data.choice === 'string' ? data.choice : null,
+        };
       case 'project':
         return {
           kind: 'project',

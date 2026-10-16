@@ -64,6 +64,19 @@ export interface AgentInfo {
   name: string;
   description: string;
   icon?: string;
+  /** 'external' for an agent of another system (docs/external-agents.md). */
+  kind?: string;
+  external?: { system: string; label: string; badge: string; version: string | null };
+}
+
+/** A session's open question — an external agent asking "may I run
+ *  this?" (docs/external-agents.md). */
+export interface SessionQuestion {
+  id: string;
+  question: string;
+  header?: string;
+  options: Array<{ label: string; description?: string }>;
+  expiresAt: number;
 }
 
 export interface SessionSummary {
@@ -404,6 +417,19 @@ export type StreamEvent =
       // a human turn it equals the turnId /chat/send returned.
       kind: 'turn-dequeued';
       turnId: string;
+    }
+  | {
+      // A question to the person (an external agent's permission
+      // request); answered by typing the option's number.
+      kind: 'question';
+      question: SessionQuestion;
+    }
+  | {
+      // The open question was answered (here or in another client) or
+      // ran out of time.
+      kind: 'question-answered';
+      questionId: string | null;
+      choice: string | null;
     }
   | {
       // The session's model was set or cleared from somewhere (another

@@ -38,6 +38,9 @@ interface Props {
   /** The model the session's next turn uses (alias or id), read from
    *  the server and refreshed on every switch. */
   nextModel?: { label: string; modelId: string } | null;
+  /** An external agent: shown in place of the model
+   *  ("external · OpenClaw 2026.10.3"), which its own system sets. */
+  externalLabel?: string | null;
 }
 
 // Status line. Sits right above the input, NOT at the top of the terminal —
@@ -62,6 +65,7 @@ export function Header({
   unreadOtherAgents,
   workCounters,
   nextModel,
+  externalLabel,
 }: Props) {
   const tokenSegment = renderTokenSegment(stats);
   const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
@@ -88,7 +92,12 @@ export function Header({
       <Text color="cyan" bold>
         {agentTag}:{session}
       </Text>
-      {stats?.model ? (
+      {externalLabel ? (
+        <>
+          <Text color="gray"> · </Text>
+          <Text color="magentaBright">{externalLabel}</Text>
+        </>
+      ) : stats?.model ? (
         <>
           <Text color="gray"> · </Text>
           <Text color="magentaBright">{stats.model}</Text>

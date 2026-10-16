@@ -9,6 +9,19 @@
 // these at 5 minutes once HTTPS is the transport.
 
 import { loopbackFetch } from '../../server/loopback-fetch.ts';
+
+/** A failed response's message: the server's `{ error }` when it sent
+ *  one, else the body as it came. */
+async function errorText(res: Response): Promise<string> {
+  const body = await res.text();
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown };
+    if (typeof parsed.error === 'string') return parsed.error;
+  } catch {
+    /* not JSON */
+  }
+  return body || `HTTP ${res.status}`;
+}
 import type { FromSystemKind, TurnOrigin } from './types.ts';
 import type {
   AgentInfo,
@@ -19,6 +32,7 @@ import type {
   SamplingPatch,
   SessionModelInfo,
   SessionProjectInfo,
+  SessionQuestion,
   SessionSamplingInfo,
   SessionSummary,
   SessionWork,
@@ -114,7 +128,7 @@ export class Api {
       const taken = (await res.json().catch(() => ({}))) as { id?: string };
       if (taken.id) return taken.id;
     }
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await errorText(res));
     const data = (await res.json()) as { id: string };
     return data.id;
   }
@@ -124,7 +138,7 @@ export class Api {
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/reset`,
       { method: 'POST' },
     );
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await errorText(res));
     return (await res.json()) as ResetResult;
   }
 
@@ -164,7 +178,7 @@ export class Api {
         body: JSON.stringify({ model: ref }),
       },
     );
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await errorText(res));
   }
 
   async clearSessionModel(agent: string, session: string): Promise<void> {
@@ -172,7 +186,7 @@ export class Api {
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/model`,
       { method: 'DELETE' },
     );
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await errorText(res));
   }
 
   async fetchSessionThinking(agent: string, session: string): Promise<SessionThinkingInfo | null> {
@@ -192,7 +206,7 @@ export class Api {
         body: JSON.stringify({ level }),
       },
     );
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await errorText(res));
   }
 
   async clearSessionThinking(agent: string, session: string): Promise<void> {
@@ -200,7 +214,7 @@ export class Api {
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/thinking`,
       { method: 'DELETE' },
     );
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await errorText(res));
   }
 
   async fetchSessionSampling(agent: string, session: string): Promise<SessionSamplingInfo | null> {
@@ -221,7 +235,7 @@ export class Api {
         body: JSON.stringify(patch),
       },
     );
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await errorText(res));
   }
 
   /** DELETE clears the whole session override. */
@@ -230,7 +244,7 @@ export class Api {
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/sampling`,
       { method: 'DELETE' },
     );
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await errorText(res));
   }
 
   async reloadConfig(): Promise<{ ok: boolean; changed?: string[]; restartRequired?: string[]; error?: string }> {
@@ -438,6 +452,27 @@ export class Api {
     };
   }
 
+  /** The session's open question, or null (also on an older server). */
+  async fetchSessionQuestion(agent: string, session: string): Promise<SessionQuestion | null> {
+    const res = await loopbackFetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/question`,
+    );
+    if (!res.ok) return null;
+    return ((await res.json()) as { question?: SessionQuestion | null }).question ?? null;
+  }
+
+  /** Answer the session's open question with an option label. */
+  async answerSessionQuestion(agent: string, session: string, questionId: string, label: string): Promise<void> {
+    const res = await loopbackFetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/questions/${encodeURIComponent(questionId)}/answer`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ answers: [label] }) },
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error ?? `HTTP ${res.status}`);
+    }
+  }
+
   /** Pin a project to a session. */
   async setSessionProject(agent: string, session: string, slug: string): Promise<void> {
     const res = await loopbackFetch(
@@ -448,7 +483,7 @@ export class Api {
         body: JSON.stringify({ slug }),
       },
     );
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await errorText(res));
   }
 
   /** Clear the pinned project for a session. */
@@ -457,7 +492,7 @@ export class Api {
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/project`,
       { method: 'DELETE' },
     );
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await errorText(res));
   }
 
   /**

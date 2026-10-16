@@ -480,6 +480,8 @@ export async function runCommand(
         const info = await ctx.api.fetchSessionModel(ctx.agent, ctx.session);
         if (!info) {
           out.push({ kind: 'notice', text: 'could not fetch session model', tone: 'error' });
+        } else if ((info.source as string) === 'external') {
+          out.push({ kind: 'notice', text: `${ctx.agent} is an external agent — its model is set on its own system`, tone: 'info' });
         } else {
           const aliasPart = info.alias ? ` (alias: ${info.alias})` : '';
           const sourcePart =
@@ -522,6 +524,10 @@ export async function runCommand(
         const info = await ctx.api.fetchSessionThinking(ctx.agent, ctx.session);
         if (!info) {
           out.push({ kind: 'notice', text: 'could not fetch thinking state', tone: 'error' });
+          return out;
+        }
+        if ((info.source as string) === 'external') {
+          out.push({ kind: 'notice', text: `${ctx.agent} is an external agent — its thinking is set on its own system`, tone: 'info' });
           return out;
         }
         const eff = info.effective ?? 'model decides';
@@ -617,6 +623,10 @@ export async function runCommand(
         const info = await ctx.api.fetchSessionSampling(ctx.agent, ctx.session);
         if (!info) {
           out.push({ kind: 'notice', text: 'could not fetch sampling state', tone: 'error' });
+          return out;
+        }
+        if ((info.source as string) === 'external') {
+          out.push({ kind: 'notice', text: `${ctx.agent} is an external agent — its sampling is set on its own system`, tone: 'info' });
           return out;
         }
         const eff = formatSamplingParams(info.effective);
