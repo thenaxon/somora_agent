@@ -11,7 +11,7 @@
 // refused (409) instead of overwriting what the agent wrote.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, Eye, FileText, Lock, Moon, PhoneCall, RefreshCw, Save, Undo2 } from 'lucide-react';
+import { AlertTriangle, ArrowLeftRight, Check, Eye, FileText, Lock, Moon, PhoneCall, RefreshCw, Save, Undo2 } from 'lucide-react';
 import { api, type PersonaResponse, type PromptPreviewResponse, type SessionSummary, type VoiceInstructionsResponse } from '../lib/api';
 
 type Tab = 'AGENTS.md' | 'SOUL.md' | 'USER.md' | 'agent.yaml' | 'prompt' | 'voice';
@@ -118,6 +118,17 @@ export function AgentConfigWindow({ agentName }: { agentName: string }) {
     } finally { setBusy(false); }
   };
 
+  const flipA2A = async (on: boolean) => {
+    setBusy(true); setNotice(null); setError(null);
+    try {
+      const a2a = await api.setA2A(agentName, on);
+      setData((d) => (d ? { ...d, a2a } : d));
+      setNotice(on ? `${agentName} is reachable over A2A for: ${a2a.peers.join(', ') || 'nobody yet (add a peer under a2a.peers in config.yaml)'}.` : `${agentName} is no longer reachable over A2A.`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally { setBusy(false); }
+  };
+
   const editable = (data?.kind === 'builder' ? ['AGENTS.md'] : ['AGENTS.md', 'SOUL.md', 'USER.md']) as readonly ('AGENTS.md' | 'SOUL.md' | 'USER.md')[];
   const personaDraftChars = editable.reduce((n, f) => n + (drafts[f]?.length ?? 0), 0);
 
@@ -188,6 +199,38 @@ export function AgentConfigWindow({ agentName }: { agentName: string }) {
                     ? <span style={{ color: 'var(--text-3)' }}>REM on <span style={mono}>{data.dreams.remModel}</span>{data.dreams.remModelFrom === 'config' ? ' (config.yaml)' : ''}.</span>
                     : <span style={{ color: 'var(--warn)' }}><AlertTriangle size={11} className="icon-inline" /> {data.dreams.problem}</span>}</>
               : <>Does not dream: its notes stay its own, the wiki and the vault are read-only for it.</>}
+          </span>
+        </div>
+      )}
+
+      {/* The a2a switch (docs/a2a.md) — not for a builder */}
+      {data.a2a && data.a2a.available && (
+        <div data-testid="agent-a2a" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 14px', borderBottom: '1px solid var(--bg-3)', flexWrap: 'wrap' }}>
+          <ArrowLeftRight size={13} style={{ color: data.a2a.on ? 'var(--accent)' : 'var(--text-3)', flexShrink: 0 }} />
+          <span style={label}>A2A</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={data.a2a.on}
+            aria-label="Reachable over A2A"
+            data-testid="agent-a2a-switch"
+            disabled={busy}
+            onClick={() => void flipA2A(!data.a2a!.on)}
+            style={{
+              position: 'relative', width: 32, height: 18, borderRadius: 9, padding: 0, flexShrink: 0,
+              cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1,
+              background: data.a2a.on ? 'var(--accent)' : 'var(--bg-3)',
+              border: `1px solid ${data.a2a.on ? 'var(--accent)' : 'var(--line)'}`,
+            }}
+          >
+            <span style={{ position: 'absolute', top: 2, left: data.a2a.on ? 16 : 2, width: 12, height: 12, borderRadius: '50%', background: data.a2a.on ? 'var(--on-accent)' : 'var(--text-2)', transition: 'left 120ms' }} />
+          </button>
+          <span style={{ fontSize: 12, color: 'var(--text-1)', minWidth: 0, flex: 1 }}>
+            {data.a2a.on
+              ? <>Other agent systems can send it tasks{data.a2a.peers.length > 0 ? <>: <span style={mono}>{data.a2a.peers.join(', ')}</span></> : null}.{' '}
+                  {data.a2a.url && <span style={{ color: 'var(--text-3)' }}>Address <span style={mono}>{data.a2a.url}</span>.</span>}
+                  {data.a2a.problem && <span style={{ color: 'var(--warn)' }}><AlertTriangle size={11} className="icon-inline" /> {data.a2a.problem}</span>}</>
+              : <>Not reachable for other agent systems.</>}
           </span>
         </div>
       )}

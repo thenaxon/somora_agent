@@ -414,7 +414,7 @@ watches:
 
 | Agent | Offered when |
 |---|---|
-| Chat agent | The turn was started by you, typed or spoken. Never in a turn from Sentinel, another agent or a sub-agent: nobody would answer. |
+| Chat agent | The turn was started by you, typed or spoken, or it works on a task another system sent over [A2A](a2a.md#taking-work-in): then the question goes back to that system. Never in a turn from Sentinel, another agent or a sub-agent: nobody would answer. |
 | Builder | The session is attended (see [Builder agents](builder.md)). |
 
 A chat agent's question waits 10 minutes, a builder's 30, unless the

@@ -35,6 +35,7 @@ import {
   User,
   X,
   type LucideIcon,
+  ArrowLeftRight,
 } from 'lucide-react';
 import type { SessionWorkResponse, WorkItemDto } from '../lib/api';
 import { inkVars } from '../lib/colors';
@@ -61,6 +62,7 @@ const WORK_ICONS: Record<WorkIconKey, LucideIcon> = {
   job: Clapperboard,
   system: Cog,
   voice: PhoneCall,
+  peer: ArrowLeftRight,
 };
 
 export interface WorkCounts {

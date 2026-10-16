@@ -322,7 +322,7 @@ export interface MediaRecordDto extends ImageRecordDto {
 /** One notice in the inbox (GET /inbox). */
 export interface InboxEntryDto {
   key: string;
-  kind: 'update' | 'news' | 'config' | 'login' | 'tls' | 'dream' | 'mcp' | 'model' | 'sentinel';
+  kind: 'update' | 'news' | 'config' | 'login' | 'tls' | 'dream' | 'mcp' | 'model' | 'sentinel' | 'a2a';
   level: 'info' | 'warning' | 'important';
   title: string;
   text: string;
@@ -574,11 +574,25 @@ export interface DreamsInfo {
   /** Set when the agent dreams but REM cannot run. */
   problem?: string;
 }
+/** The agent's `a2a` switch (GET/PUT /agents/:agent/a2a, docs/a2a.md). */
+export interface A2AInfo {
+  on: boolean;
+  /** False for a builder: never reachable over A2A. */
+  available: boolean;
+  /** Peers in config.yaml that may reach this agent. */
+  peers: string[];
+  /** Its A2A address, when config.yaml sets a2a.publicUrl. */
+  url?: string;
+  /** What keeps it from working. */
+  problem?: string;
+}
 export interface PersonaResponse {
   agent: string;
   kind?: 'chat' | 'builder';
   /** Missing from servers before the switch. */
   dreams?: DreamsInfo | null;
+  /** Missing from servers before A2A. */
+  a2a?: A2AInfo | null;
   files: PersonaFileDto[];
   budgets: PromptBudgets;
   totals: { personaChars: number };
@@ -705,6 +719,15 @@ export const api = {
     });
     const body = (await res.json().catch(() => ({}))) as DreamsInfo & { error?: string };
     if (!res.ok) throw new Error(body.error ?? `PUT dreams ${res.status}`);
+    return body;
+  },  setA2A: async (agent: string, on: boolean): Promise<A2AInfo> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/a2a`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on }),
+    });
+    const body = (await res.json().catch(() => ({}))) as A2AInfo & { error?: string };
+    if (!res.ok) throw new Error(body.error ?? `PUT a2a ${res.status}`);
     return body;
   },
   /** Save one persona file. A 409 (changed on disk meanwhile) is thrown

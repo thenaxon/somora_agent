@@ -184,6 +184,7 @@ export const SYSTEM_LABELS: Record<FromSystemKind, string> = {
   tmux: '🖥  tmux',
   job: '🎬 video',
   system: '⚙  system',
+  peer: '⇄  A2A task',
 };
 
 function fromSystemOfOrigin(origin: TurnOrigin): FromSystemKind | undefined {
@@ -195,6 +196,8 @@ function fromSystemOfOrigin(origin: TurnOrigin): FromSystemKind | undefined {
       return origin.kind;
     case 'wake':
       return origin.about;
+    case 'peer':
+      return 'peer';
     default:
       return undefined;
   }
@@ -241,6 +244,8 @@ export function systemNoticeOf(
       };
     case 'job':
       return { label, name: summarizeVideoWakeText(text) };
+    case 'peer':
+      return { label, name: origin?.kind === 'peer' ? `from ${origin.peer}` : 'from another system' };
     case 'system':
       // The occasion in a word: from the origin, else from the
       // `[system: restart]` lead-in of the text.

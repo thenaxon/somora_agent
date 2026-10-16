@@ -78,30 +78,37 @@ function today(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function readUsage(): { day: string; count: number } {
+type Usage = { day: string; counts: Record<string, number> };
+
+function readUsage(): Usage {
   try {
-    const u = JSON.parse(readFileSync(usagePath(), 'utf8')) as { day?: unknown; count?: unknown };
-    if (u.day === today() && typeof u.count === 'number') return { day: u.day, count: u.count };
+    const u = JSON.parse(readFileSync(usagePath(), 'utf8')) as { day?: unknown; count?: unknown; counts?: unknown };
+    if (u.day === today()) {
+      if (u.counts && typeof u.counts === 'object') return { day: u.day, counts: u.counts as Record<string, number> };
+      if (typeof u.count === 'number') return { day: u.day, counts: { external: u.count } };
+    }
   } catch {
     /* first use, or a garbled file: start counting from zero */
   }
-  return { day: today(), count: 0 };
+  return { day: today(), counts: {} };
 }
 
-/** Count one task against today's limit. False when the limit is reached
- *  (nothing is counted then). */
-export function takeDailyCall(max: number): { ok: boolean; count: number } {
+/** Count one task against today's limit for `key` (`external`: tasks to
+ *  external agents; `peer-<name>`: tasks from that peer). False when the
+ *  limit is reached (nothing is counted then). */
+export function takeDailyCall(max: number, key = 'external'): { ok: boolean; count: number } {
   const u = readUsage();
-  if (u.count >= max) return { ok: false, count: u.count };
-  const next = { day: u.day, count: u.count + 1 };
+  const have = u.counts[key] ?? 0;
+  if (have >= max) return { ok: false, count: have };
+  u.counts[key] = have + 1;
   const p = usagePath();
   mkdirSync(dirname(p), { recursive: true });
   const tmp = `${p}.tmp-${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(next) + '\n');
+  writeFileSync(tmp, JSON.stringify(u) + '\n');
   renameSync(tmp, p);
-  return { ok: true, count: next.count };
+  return { ok: true, count: have + 1 };
 }
 
-export function dailyCalls(): number {
-  return readUsage().count;
+export function dailyCalls(key = 'external'): number {
+  return readUsage().counts[key] ?? 0;
 }

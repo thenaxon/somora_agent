@@ -19,7 +19,7 @@ import type { FromSystem, TurnOrigin } from '../types/origin';
 
 /** The divider row a message maps to. `subagent` here is the WAKE
  *  ("your sub-agent finished"), not a sub-agent's own session. */
-export type OriginRowKind = 'sentinel' | 'tmux' | 'browser' | 'voice' | 'a2a' | 'subagent' | 'job' | 'system';
+export type OriginRowKind = 'sentinel' | 'tmux' | 'browser' | 'voice' | 'a2a' | 'subagent' | 'job' | 'system' | 'peer';
 
 export interface OriginPresentation {
   /** Which row matched — components pick their icon set by this. */
@@ -118,6 +118,7 @@ function rowFromLegacy(fromSystem: string | undefined): OriginRowKind | null {
     case 'subagent':
     case 'job':
     case 'system':
+    case 'peer':
       return fromSystem;
     default:
       return null;
@@ -135,6 +136,8 @@ function rowFromOrigin(origin: TurnOrigin): OriginRowKind | null {
       return origin.kind;
     case 'wake':
       return origin.about;
+    case 'peer':
+      return 'peer';
     default:
       return null;
   }
@@ -210,6 +213,17 @@ export function originPresentation(msg: OriginPresentationInput): OriginPresenta
         subtitle: agentAnswerWhoFromText(text),
         ...(origin?.kind === 'wake' ? { detail: origin.ref } : {}),
         ariaLabel: 'answer from an agent you asked',
+        body,
+      };
+    case 'peer':
+      // A task another agent system sent over A2A (docs/a2a.md).
+      return {
+        kind,
+        glyph: '⇄',
+        label: 'A2A task',
+        subtitle: origin?.kind === 'peer' ? `from ${origin.peer}` : 'from another system',
+        ...(origin?.kind === 'peer' ? { detail: origin.taskId } : {}),
+        ariaLabel: 'task from another agent system',
         body,
       };
     case 'subagent':
@@ -292,6 +306,8 @@ export function originGlyphLabel(kind: string, about?: string): WorkGlyphLabel {
       return { glyph: '🌐', label: 'browser', icon: 'browser' };
     case 'voice':
       return { glyph: '🎙', label: 'voice', icon: 'voice' };
+    case 'peer':
+      return { glyph: '⇄', label: 'A2A task', icon: 'peer' };
     case 'wake':
       switch (about) {
         case 'a2a':

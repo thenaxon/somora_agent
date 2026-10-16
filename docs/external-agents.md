@@ -168,7 +168,8 @@ as a sub-agent, the other system needs A2A switched on and the agent an
 Chat keeps using ACP. Work from your agents travels over A2A, the
 standard for agents giving each other tasks. [A2A](a2a.md) explains how
 to switch it on in OpenClaw and Hermes, what each can do, and the
-brakes.
+brakes. The same page shows the other direction: OpenClaw and Hermes
+sending tasks to your somora agents.
 
 ## Troubleshooting
 

@@ -17,10 +17,13 @@ export const TURN_ATTENDED_KEY = 'turnAttended';
 /** How long a chat agent's question waits by default (a builder's: 30 min). */
 export const CHAT_QUESTION_TIMEOUT_MS = 10 * 60 * 1000;
 
-/** A person started this turn (typed or spoken). A turn without a
- *  recorded origin does not count: when in doubt, nobody is watching. */
+/** Someone waits for this turn who can answer a question: a person who
+ *  typed or spoke, or another agent system that sent the task over A2A
+ *  (its question goes back to it as input-required, docs/a2a.md). A turn
+ *  without a recorded origin does not count: when in doubt, nobody is
+ *  watching. */
 export function isAttendedOrigin(origin: TurnOrigin | undefined): boolean {
-  return origin?.kind === 'human';
+  return origin?.kind === 'human' || origin?.kind === 'peer';
 }
 
 /** Whether this session offers `toolName` right now, on top of the

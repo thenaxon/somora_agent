@@ -3,6 +3,7 @@
 // Names index.ts shares come in through `routeDeps`; nextTurnPrompt are read from it
 // per request (index.ts sets them up later or changes them).
 
+import { writeAgentA2A } from '../../persona/a2a-store.ts';
 import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
 import { readPersonaFiles, writePersonaFile } from '../../persona/files.ts';
@@ -72,6 +73,50 @@ export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void
     return c.json({ ok: true, agent, ...dreamsInfo(persona)! });
   });
 
+  /** The `a2a` switch as a client shows it (docs/a2a.md): on/off, who may
+   *  reach the agent, its address, and what keeps it from working. */
+  function a2aInfo(persona: Awaited<ReturnType<typeof loadPersona>>) {
+    if (!persona) return null;
+    const peers = Object.entries(config.a2a.peers)
+      .filter(([, p]) => !p.agents || p.agents.includes(persona.name))
+      .map(([name]) => name);
+    const base = config.a2a.publicUrl?.replace(/\/+$/, '');
+    return {
+      on: persona.a2a,
+      available: persona.kind !== 'builder',
+      peers,
+      ...(base ? { url: `${base}/a2a/agents/${encodeURIComponent(persona.name)}` } : {}),
+      ...(persona.kind === 'builder'
+        ? { problem: 'a builder is not reachable over A2A; other systems reach it with somora acp' }
+        : persona.a2a && peers.length === 0
+          ? { problem: 'no peer may reach this agent: add one under a2a.peers in config.yaml' }
+          : {}),
+    };
+  }
+
+  // The `a2a` switch: other agent systems may send this agent tasks.
+  app.get('/agents/:agent/a2a', async (c) => {
+    const agent = c.req.param('agent');
+    const persona = await loadPersona(agent);
+    if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
+    return c.json({ agent, ...a2aInfo(persona)! });
+  });
+  app.put('/agents/:agent/a2a', async (c) => {
+    const agent = c.req.param('agent');
+    const persona = await loadPersona(agent);
+    if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
+    const body = (await c.req.json().catch(() => null)) as { on?: unknown } | null;
+    if (!body || typeof body.on !== 'boolean') return c.json({ error: 'body must be { on: boolean }' }, 400);
+    if (body.on && persona.kind === 'builder') return c.json({ error: 'a builder is not reachable over A2A; other systems reach it with somora acp' }, 409);
+    try {
+      await writeAgentA2A(agent, body.on);
+    } catch (err) {
+      return c.json({ error: `could not write agent.yaml: ${(err as Error).message}` }, 500);
+    }
+    logger.info({ msg: 'agent.a2a_switched', agent, on: body.on });
+    return c.json({ ok: true, agent, ...a2aInfo(await loadPersona(agent))! });
+  });
+
   // ── Persona files + prompt preview (web Agent window) ───────────────
   // Read the three persona files (+ agent.yaml read-only) with hashes and
   // sizes against config.promptBudgets; write one under an optimistic
@@ -87,6 +132,7 @@ export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void
       agent,
       kind,
       dreams: dreamsInfo(persona),
+      a2a: a2aInfo(persona),
       files,
       budgets: config.promptBudgets,
       totals: { personaChars },

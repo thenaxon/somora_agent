@@ -3204,6 +3204,60 @@ curl -H "Authorization: Bearer $KEY" -X POST $BASE/agents/<your-agent>/tools/sen
 The tool's actions are `create`, `dry_run`, `update`, `list`, `get`,
 `pause`, `resume`, `delete`, `test`, `history` and `purge_completed`.
 
+## A2A endpoint
+
+somora's agents as A2A agents ([A2A](a2a.md#taking-work-in)). These
+paths are the only ones the login key does not guard: the cards are
+public, and the JSON-RPC endpoint checks the peer tokens of
+`a2a.peers` (`Authorization: Bearer <token>`). Without peers, all of
+them answer `404`.
+
+### `GET /a2a/agents/:agent/.well-known/agent-card.json`
+
+The agent's Agent Card, for agents with `a2a: true`. `agent.json` at the
+same place answers too. `GET /.well-known/agent-card.json` gives the card
+of `a2a.defaultAgent`.
+
+```json
+{ "name": "nova", "description": "…", "version": "2026.1016.8",
+  "supportedInterfaces": [{ "url": "https://<host>:18737/a2a/agents/nova", "protocolBinding": "JSONRPC", "protocolVersion": "1.0" }],
+  "capabilities": { "streaming": true, "pushNotifications": false },
+  "defaultInputModes": ["text/plain"], "defaultOutputModes": ["text/plain"],
+  "security": [{ "bearer": [] }] }
+```
+
+### `POST /a2a/agents/:agent`
+
+JSON-RPC 2.0. Methods in A2A 1.0 naming and their 0.3 names; the answer
+uses the naming of the request.
+
+| Method | 0.3 name | Does |
+|---|---|---|
+| `SendMessage` | `message/send` | A new task, or the answer to an open question in the same `contextId`. Waits up to `a2a.replyTimeoutSeconds` unless `configuration.returnImmediately` (0.3: `blocking: false`). |
+| `SendStreamingMessage` | `message/stream` | The same as an SSE stream: the task, `statusUpdate`, `artifactUpdate` with `append`, until the task ends or asks back. |
+| `GetTask` | `tasks/get` | The task by `id`. |
+| `ListTasks` | `tasks/list` | The peer's tasks for this agent, optionally by `contextId`. |
+| `CancelTask` | `tasks/cancel` | Stops the turn; `-32002` when the task already ended. |
+| `SubscribeToTask` | `tasks/resubscribe` | The stream of a running task. |
+
+| Error | Meaning |
+|---|---|
+| HTTP 401, `-32050` | No token or an unknown one. |
+| HTTP 404, `-32001` | No such agent for this peer, or no such task. |
+| HTTP 429, `-32051` | Rate or daily limit of the peer. |
+| HTTP 429, `-32050` | Too many wrong tokens from this address. |
+| `-32601` | Unknown method. |
+| `-32602` | No message text, or longer than `a2a.maxMessageChars`. |
+
+A turn for such a task carries `origin: { kind: "peer", peer, contextId,
+taskId }` in its `user_message` events, and `from_system: "peer"`.
+
+### `GET /agents/:agent/a2a` · `PUT /agents/:agent/a2a`
+
+The agent's A2A switch: `{ on, available, peers, url?, problem? }`.
+`PUT` takes `{ on: boolean }` and writes `a2a:` into `agent.yaml`; `409`
+for a builder.
+
 ## External agents
 
 Agents of other agent systems, reached over ACP (see

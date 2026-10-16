@@ -46,6 +46,33 @@ const key = (agent: string, session: string): string => `${agent}/${session}`;
 export const DEFAULT_QUESTION_TIMEOUT_MS = 30 * 60 * 1000;
 export const MAX_QUESTION_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 
+/** Who else learns that a question was asked or settled on a session —
+ *  the A2A side (src/a2a/server.ts), which passes it to the agent system
+ *  that sent the task. Clients learn it over SSE from the routes. */
+type QuestionWatcher = (ev: { type: 'asked'; q: PendingQuestion } | { type: 'settled'; questionId: string; answered: boolean }) => void;
+const watchers = new Map<string, Set<QuestionWatcher>>();
+
+export function watchQuestions(agent: string, session: string, fn: QuestionWatcher): () => void {
+  const k = key(agent, session);
+  const set = watchers.get(k) ?? new Set<QuestionWatcher>();
+  set.add(fn);
+  watchers.set(k, set);
+  return () => {
+    set.delete(fn);
+    if (set.size === 0) watchers.delete(k);
+  };
+}
+
+function tell(k: string, ev: Parameters<QuestionWatcher>[0]): void {
+  for (const fn of watchers.get(k) ?? []) {
+    try {
+      fn(ev);
+    } catch {
+      /* a watcher must not break the question */
+    }
+  }
+}
+
 export function pendingQuestion(agent: string, session: string): PendingQuestion | null {
   return pending.get(key(agent, session))?.q ?? null;
 }
@@ -83,12 +110,14 @@ export function askQuestion(
       if (pending.get(k)?.q.id !== q.id) return;
       pending.delete(k);
       logger.info({ msg: 'builder.question_timeout', agent: q.agent, session: q.session, questionId: q.id });
+      tell(k, { type: 'settled', questionId: q.id, answered: false });
       resolve({ answered: false, answers: [] });
     }, timeoutMs);
     timer.unref?.();
     pending.set(k, { q, resolve, timer });
     logger.info({ msg: 'builder.question_asked', agent: q.agent, session: q.session, questionId: q.id, options: q.options.length });
     onAsked?.(q);
+    tell(k, { type: 'asked', q });
   });
 }
 
@@ -103,6 +132,7 @@ export function answerQuestion(agent: string, session: string, questionId: strin
   const text = typeof answer.text === 'string' && answer.text.trim().length > 0 ? answer.text.trim() : undefined;
   logger.info({ msg: 'builder.question_answered', agent, session, questionId, answers: answers.length, text: Boolean(text) });
   slot.resolve({ answered: true, answers: answers.length > 0 ? answers : text ? [text] : [], ...(text ? { text } : {}) });
+  tell(k, { type: 'settled', questionId, answered: true });
   return true;
 }
 

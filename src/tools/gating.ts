@@ -200,6 +200,16 @@ export function isSubagentSession(meta: unknown): boolean {
  *  A2A (docs/a2a.md) — an external agent's `a2a-<asker>` conversation. */
 export const A2A_QUIET_KEY = 'a2aQuiet';
 
+/** Meta key of a session another agent system talks to over A2A
+ *  (docs/a2a.md): `{ peer, contextId }`. */
+export const A2A_PEER_KEY = 'a2aPeer';
+
+/** A session another agent system sends tasks to over A2A. */
+export function isPeerSession(meta: unknown): boolean {
+  const p = (meta as Record<string, unknown> | null | undefined)?.[A2A_PEER_KEY] as { peer?: unknown } | undefined;
+  return typeof p?.peer === 'string';
+}
+
 /** A session nobody needs a dot for: a sub-agent's, or one where agents
  *  hand each other work over A2A. Its answer reaches the person through
  *  the asking agent's conversation. */
@@ -208,14 +218,20 @@ export function isQuietSession(meta: unknown): boolean {
 }
 
 /** The rules a session adds on top of its agent's: `subagents.tools.deny`
- *  for a sub-agent session, nothing otherwise. */
+ *  for a sub-agent session, `a2a.tools.deny` for one another agent system
+ *  sends tasks to, nothing otherwise. */
 export function sessionToolDeny(
-  config: { subagents?: { tools?: { deny?: readonly string[] } } } | undefined,
+  config: { subagents?: { tools?: { deny?: readonly string[] } }; a2a?: { tools?: { deny?: readonly string[] } } } | undefined,
   meta: unknown,
 ): string[] {
+  if (isPeerSession(meta)) return [...(config?.a2a?.tools?.deny ?? DEFAULT_A2A_INBOUND_TOOL_DENY)];
   if (!isSubagentSession(meta)) return [];
   return [...(config?.subagents?.tools?.deny ?? DEFAULT_SUBAGENT_TOOL_DENY)];
 }
+
+/** Default of `a2a.tools.deny`, kept here beside the sub-agent one so the
+ *  gating has no config import. Same as config/types.ts. */
+export const DEFAULT_A2A_INBOUND_TOOL_DENY: readonly string[] = ['agent_ask', 'agent_ask_result', 'agent_ask_cancel'];
 
 /** The agent's gating with a session's own rules on top. */
 export function withSessionDeny(gating: ToolGating | undefined, deny: readonly string[]): ToolGating | undefined {

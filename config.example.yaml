@@ -942,6 +942,24 @@ providers:
 #         herm:
 #           command: hermes acp
 
+# A2A in (docs/a2a.md): other agent systems send tasks to somora agents
+# with `a2a: true` in their agent.yaml. Only the peers listed here, each
+# with its own token (openssl rand -hex 32). No peers = nothing reachable.
+# a2a:
+#   publicUrl: https://<host>.<tailnet>.ts.net:18737   # written into the cards
+#   peers:
+#     hermes:
+#       token: <token Hermes sends>
+#     openclaw:
+#       token: <token OpenClaw sends>
+#       agents: [<your-agent>]          # optional: only these agents
+#   rateLimitPerMinute: 30              # per peer
+#   maxTasksPerDay: 200                 # per peer
+#   replyTimeoutSeconds: 300            # a waiting request returns "working" after this
+#   archiveAfterDays: 7                 # quiet conversations with peers are archived
+#   tools:
+#     deny: [agent_ask, agent_ask_result, agent_ask_cancel]   # tools a task from outside may not use
+
 # Web-tools credentials. Per-provider keys — tools whose provider isn't
 # configured are hidden from the agent (the `available()` probe on the
 # tool returns false). Brave is the only provider today; free tier gives

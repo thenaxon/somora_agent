@@ -655,6 +655,7 @@ How the fallback chain works:
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `kind` | `chat`, `builder` | `chat` | The kind of agent. Set once at creation. |
+| `a2a` | boolean | `false` | Other agent systems may send this agent tasks over [A2A](a2a.md#taking-work-in), if `config.yaml` lists them under `a2a.peers`. Also the A2A switch in the Agent window. Never for a builder. |
 | `steering` | boolean | `false` | Default for a message typed in the web client while a turn runs. `true` hands it into the running turn before its next step. `false` queues it as its own turn. The toggle next to Send flips it per message. Steering works on every engine: `openai-compatible`, `claude-cli`, `codex-cli` and `grok-cli`. |
 | `imageReview` | `never`, `always` | `never` | `always` feeds each generated image back to the agent so it can judge it, about 2k tokens per image. Not a lock: the agent can set `return_image` per call either way. |
 | `agentLoop.maxRounds` | integer | server value (8) | Rounds per turn on the `openai-compatible` engine. Builders default to 500. |

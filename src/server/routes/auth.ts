@@ -2,6 +2,7 @@
 // where these routes stood, so the registration order is the same.
 // Names index.ts shares come in through `routeDeps`.
 
+import { isA2APublicPath } from '../../a2a/server.ts';
 import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
 import { COOKIE_NAME, MissCounter, presentedKey } from '../auth-key.ts';
@@ -24,6 +25,9 @@ export function registerAuthRoutes(app: Hono, routeDeps: AuthRoutesDeps): void {
    *  mobile app shells must load to show the key page. */
   function openWithoutKey(method: string, path: string): boolean {
     if (path === '/healthz' || path === '/auth/status' || path === '/auth/login' || path === '/auth/logout') return true;
+    // A2A (docs/a2a.md): the Agent Cards are public by the standard; the
+    // JSON-RPC endpoint checks the peers' own tokens, never the login key.
+    if (isA2APublicPath(method, path)) return true;
     if (method !== 'GET' && method !== 'HEAD') return false;
     return path === '/web' || path.startsWith('/web/') || path === '/mobile' || path.startsWith('/mobile/');
   }

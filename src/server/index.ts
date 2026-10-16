@@ -154,6 +154,7 @@ import { registerVideoRoutes } from './routes/video.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
 import { registerThemeRoutes } from './routes/themes.ts';
 import { registerExternalRoutes } from './routes/external.ts';
+import { archiveIdlePeerSessions, registerA2AInboundRoutes } from '../a2a/server.ts';
 import { closeAllExternal } from '../external/connection.ts';
 
 type Subscriber = (e: SseEvent) => Promise<void>;
@@ -778,6 +779,18 @@ registerProjectRoutes(app, { publish });
 
 registerBuilderRoutes(app, { publish });
 registerExternalRoutes(app, { publish });
+// somora as an A2A agent (docs/a2a.md): one inbox entry per peer and day
+// says who sent work; yesterday's entry of that peer resolves.
+// Quiet conversations with peers are archived (a2a.archiveAfterDays).
+setInterval(() => void archiveIdlePeerSessions().catch(() => {}), 60 * 60 * 1000).unref();
+registerA2AInboundRoutes(app, {
+  notify: (peer, agent, countToday) => {
+    const day = new Date().toISOString().slice(0, 10);
+    const key = `a2a:${peer}:${day}`;
+    inbox.resolvePrefix(`a2a:${peer}:`, key);
+    inbox.raise(key, { kind: 'a2a', level: 'info', title: `${peer} sent work over A2A`, text: `${countToday} task${countToday === 1 ? '' : 's'} today, the latest to ${agent}. Its conversations are sessions named a2a-${peer}-….` }, { count: false });
+  },
+});
 
 registerChatRoutes(app, { defaultAgentFallback, publish, subscribe, get remWorker() { return remWorker as typeof remWorker; } });
 

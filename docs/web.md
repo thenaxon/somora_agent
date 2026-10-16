@@ -647,6 +647,7 @@ what its prompt costs.
 |---|---|
 | Budget strip | Persona files, team block, full prompt and tool schemas, in characters and estimated tokens against `promptBudgets`. |
 | **Dreams** | The agent's dreams switch and the model REM runs on. It applies at once, see [Who dreams](dream-phases.md#who-dreams). |
+| **A2A** | Whether other agent systems may send the agent tasks, which peers may, and its address. Not shown for a builder. See [A2A](a2a.md#taking-work-in). |
 | `AGENTS.md`, `SOUL.md`, `USER.md` | Editors with a counter per file, Save and Discard. |
 | `agent.yaml` | Read-only. |
 | **Full prompt** | The system prompt as the next turn on a chosen session would send it, split into its parts with sizes. |
@@ -754,7 +755,7 @@ controls on this page:
 | `DELETE /chat/queue/:id` | ↩ edit and × in the queue |
 | `GET /agents/:agent/sessions/:session/work` | Work badge and list, refetched on every queue event and every 3 s while the list is open |
 | `PUT /agents/<a>/sessions/<s>/model` | Model switch |
-| `GET /agents/:agent/persona`, `PUT /agents/:agent/dreams` | Agent window, its dreams switch |
+| `GET /agents/:agent/persona`, `PUT /agents/:agent/dreams`, `PUT /agents/:agent/a2a` | Agent window, its dreams and A2A switches |
 | `GET /agents/:agent/sessions/:session/export?format=…` | Session export |
 | `GET /sessions` | Sessions window |
 | `GET /activity/stream` | Status and unread dots |

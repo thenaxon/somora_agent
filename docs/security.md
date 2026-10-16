@@ -481,8 +481,13 @@ seconds and does not follow redirects. The last answer is stored in
   somora gives it no access to somora's files or terminal.
 - **What an external agent gets in a task.** Work your agents hand an
   external agent over [A2A](a2a.md) leaves your machine as text, with
-  the token for that system. somora does not take tasks from other
-  systems over A2A.
+  the token for that system.
+- **Tasks from other systems.** Agents you switch on for A2A take tasks
+  from the peers listed in `a2a.peers`, each with its own token. Such a
+  task runs with the agent's tools minus `a2a.tools.deny`, so narrow
+  that list for an agent that should not run commands for others. The
+  Agent Cards under `/a2a/agents/…` are public by the standard and name
+  the switched-on agents ([A2A](a2a.md#security)).
 - **A leaked key.** Anyone who has the key and reaches the port has the
   same access as you, including a shell. `somora key rotate` locks them
   out. With `server.auth: off`, reaching the port is enough.

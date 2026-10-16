@@ -39,6 +39,7 @@ import {
   CornerDownLeft,
   Volume2,
   PhoneCall,
+  ArrowLeftRight,
   Clapperboard,
   Cog,
   type LucideIcon,
@@ -426,6 +427,7 @@ const ORIGIN_ICONS: Record<OriginRowKind, LucideIcon> = {
   job: Clapperboard,
   system: Cog,
   voice: PhoneCall,
+  peer: ArrowLeftRight,
 };
 
 function OriginDivider({ pres, ts }: { pres: OriginPresentation; ts: number }) {

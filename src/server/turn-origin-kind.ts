@@ -6,7 +6,7 @@ import type { TurnOrigin } from '../types/turn-origin.ts';
 
 export type { TurnOrigin, TurnOriginKind, TurnOriginRef } from '../types/turn-origin.ts';
 
-export type FromSystem = 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a' | 'system';
+export type FromSystem = 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a' | 'system' | 'peer';
 
 export interface LegacyOriginFields {
   fromAgent?: string;
@@ -44,6 +44,8 @@ export function originToLegacy(origin: TurnOrigin): LegacyOriginFields {
     case 'browser':
     case 'voice':
       return { fromSystem: origin.kind };
+    case 'peer':
+      return { fromSystem: 'peer' };
     case 'wake':
       return {
         fromSystem: origin.about,

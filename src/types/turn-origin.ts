@@ -52,6 +52,10 @@ export type TurnOrigin =
    *  result: "the restart you asked for is done", "the question you sent
    *  was cut off by a restart". `cause` names the occasion in a word
    *  (`restart`); new occasions need no new kind. */
+  /** Another agent system sent this task over A2A (docs/a2a.md): `peer`
+   *  is the sender's name from config.yaml `a2a.peers`, `contextId` its
+   *  conversation, `taskId` the A2A task this turn works on. */
+  | { kind: 'peer'; peer: string; contextId: string; taskId: string }
   | { kind: 'wake'; about: 'a2a' | 'subagent' | 'job' | 'system'; ref: string; depth?: number; cause?: string };
 
 export type TurnOriginKind = TurnOrigin['kind'];

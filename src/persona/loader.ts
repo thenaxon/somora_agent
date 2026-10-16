@@ -180,6 +180,13 @@ const AgentYamlSchema = z
      */
     dreams: z.boolean().optional(),
     /**
+     * Reachable for other agent systems over A2A (docs/a2a.md): the agent
+     * gets an A2A address on somora's server, and the peers listed in
+     * config.yaml `a2a.peers` may send it tasks. Default false; a builder
+     * is never reachable this way (it has `somora acp`).
+     */
+    a2a: z.boolean().optional(),
+    /**
      * Per-agent loop limits (openai-compatible engine): override the
      * server's agentLoop caps for this agent. A builder's defaults are
      * generous (500 rounds, 2000 calls, 8 h); a chat agent inherits the
@@ -416,6 +423,9 @@ export interface Persona {
   /** agent.yaml `dreams:` (or derived, see deriveDreams). */
   dreams: boolean;
   dreamsSource: DreamsSource;
+  /** agent.yaml `a2a: true`: other systems may send it tasks over A2A.
+   *  Always false for a builder. */
+  a2a: boolean;
   /** Image-review stance from agent.yaml. `undefined` = 'never'. */
   imageReview: 'never' | 'always' | undefined;
   /** agent.yaml `voice:` — the speaking half of this agent. */
@@ -558,6 +568,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     rem: agentYaml.rem,
     dreams,
     dreamsSource,
+    a2a: kind !== 'builder' && agentYaml.a2a === true,
     imageReview: agentYaml.imageReview,
     voice: agentYaml.voice,
     systemPrompt: sections.join('\n\n---\n\n'),

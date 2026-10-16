@@ -1,13 +1,27 @@
 # A2A
 
-Your somora agents can hand work to agents of other systems, such as
-OpenClaw or Hermes. An agent asks an [external agent](external-agents.md)
-a question or sends it off as a sub-agent, and gets the result back,
-exactly as with a colleague in somora.
+Your somora agents and agents of other systems, such as OpenClaw or
+Hermes, can give each other work. A somora agent asks an
+[external agent](external-agents.md) a question or sends it off as a
+sub-agent and gets the result back. The other way round, an agent of
+another system sends one of your somora agents a task and gets its
+answer.
 
 The work travels over A2A, the Agent2Agent protocol: an open standard,
 stewarded by the Linux Foundation, for agents of different systems giving
 each other tasks. Your own chat with an external agent keeps using ACP.
+
+## Tested with
+
+| System | Version | Both directions tested |
+|---|---|---|
+| OpenClaw | 2026.10.3 | yes; OpenClaw does not collect the answer to work it sends, see [From OpenClaw](#from-openclaw) |
+| Hermes | 0.22.2 (2026-09-24) | yes |
+| somora | 2026.1016 | |
+
+Both systems change quickly. Where a newer version differs, the settings
+on this page may have moved; their own documentation has the current
+names.
 
 ## Inside somora and outside
 
@@ -294,6 +308,169 @@ Not yet: `agent_ask` and `spawn_subagent` refuse images for an external
 agent, with a note to describe them in the message. Neither OpenClaw nor
 Hermes reads files sent over A2A today.
 
+## Taking work in
+
+The other direction: somora as an A2A agent. Agents you switch on get an
+A2A address on somora's own server, and the systems you list as peers
+send them tasks. Your agent works on a task like on any message, with
+its tools and memory, and the answer goes back to the sender.
+
+- **Only who you list.** Each peer has its own token in `config.yaml`.
+  Without peers, nothing is reachable.
+- **Only the agents you switch on.** `a2a: true` in the agent's
+  `agent.yaml`, or the A2A switch in its Agent window. A builder is never
+  reachable this way; editors and other systems reach it with
+  [`somora acp`](acp.md).
+- **A conversation per sender.** Each peer and conversation is a session
+  of its own, `a2a-<peer>-<id>`. You can open and read it; it carries no
+  unread dot.
+- **Live, and stoppable.** The answer streams back word by word, tool
+  calls show as short notes, and a stop from the sender really stops your
+  agent's turn.
+- **Questions go back.** When your agent asks with `ask_user`, the
+  question goes to the sender, which answers in the same conversation.
+
+## Set up somora as a target
+
+### In somora
+
+1. Make a token for each system that may send work:
+   `openssl rand -hex 32`.
+2. List the systems in `config.yaml`:
+
+```yaml
+a2a:
+  publicUrl: https://<host>.<tailnet>.ts.net:18737
+  peers:
+    hermes:
+      token: <token for Hermes>
+    openclaw:
+      token: <token for OpenClaw>
+      agents: [nova]                 # optional: only these agents
+```
+
+3. Switch on the agents that may be reached: the A2A switch in the
+   Agent window, or `a2a: true` in their `agent.yaml`.
+4. Check the agent's card from the other machine:
+
+```bash
+curl https://<host>.<tailnet>.ts.net:18737/a2a/agents/<agent>/.well-known/agent-card.json
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `a2a.publicUrl` | taken from the request | The address the other systems use, as written into the cards. Set it when somora is behind a proxy or the request host is not the one others reach. |
+| `a2a.defaultAgent` | none | The agent `/.well-known/agent-card.json` describes, for clients that only look there. |
+| `a2a.peers.<name>.token` | required | The token this system sends. At least 16 characters. |
+| `a2a.peers.<name>.agents` | every switched-on agent | The agents this system may reach. |
+| `a2a.rateLimitPerMinute` | `30` | Requests per minute per peer. |
+| `a2a.maxTasksPerDay` | `200` | Tasks per peer per day, from local midnight. |
+| `a2a.replyTimeoutSeconds` | `300` | How long a waiting request waits for the answer before it returns the task as still working. |
+| `a2a.maxMessageChars` | `64000` | Longest task text. |
+| `a2a.archiveAfterDays` | `7` | A conversation with a peer is archived after this many days without activity. `0` keeps them. |
+| `a2a.tools.deny` | `agent_ask`, `agent_ask_result`, `agent_ask_cancel` | Tools a task from outside may not use, as in `subagents.tools.deny`. |
+
+The address of an agent is `<publicUrl>/a2a/agents/<agent>`. somora
+needs no extra port: the A2A endpoint is part of its server, reachable
+wherever the web client is. With a Tailscale certificate
+([Setup](setup.md#https-via-tailscale)) it speaks HTTPS.
+
+### From Hermes
+
+Hermes calls other A2A agents with its `a2a_call` tool. Tell it where
+somora is, in `~/.hermes/config.yaml`:
+
+```bash
+hermes config set a2a_agents.somora.url https://<host>.<tailnet>.ts.net:18737/a2a/agents/<agent>
+hermes config set a2a_agents.somora.auth.type bearer
+hermes config set a2a_agents.somora.auth.token <token for Hermes>
+hermes config set a2a_agents.somora.timeout 300
+```
+
+Hermes notes that `a2a_agents` is a section it does not check; the
+values are saved anyway. Then switch the `a2a` tools on where Hermes
+should use them:
+
+| Where Hermes runs | Command |
+|---|---|
+| Its own terminal (CLI, TUI) | `hermes tools enable a2a --platform cli` |
+| A chat from somora (ACP) | `hermes config set platform_toolsets.acp "[hermes-acp, a2a]"` |
+| A messaging platform | `hermes tools enable a2a --platform telegram` (or the platform's name) |
+
+In Hermes 0.22.2, `hermes tools enable` does not know the `acp`
+platform, hence the `config set` line. Then ask Hermes: "Use a2a_call
+with agent somora and ask: …". Hermes waits for the answer, takes
+questions back, and continues a conversation with the same
+`context_id`.
+
+### From OpenClaw
+
+OpenClaw sends A2A messages through its A2A channel, to a peer that has
+a URL. Add somora's address and token to the peer in `openclaw.json`
+(the `somora` peer may already exist for the other direction):
+
+```json5
+// somora-out.patch.json5
+{ channels: { a2a: { peers: { somora: {
+    url: "https://<host>.<tailnet>.ts.net:18737/a2a/agents/<agent>",
+    outboundToken: "<token for OpenClaw>",
+} } } } }
+```
+
+```bash
+openclaw config patch --file somora-out.patch.json5
+```
+
+The OpenClaw agent then sends with its message tool to the target
+`a2a:somora`. The task arrives and your agent answers it. OpenClaw
+2026.10.3, however, only hands a message over: it returns at once and
+never collects the answer. The answer is in somora's session for that
+conversation, not with the OpenClaw agent. For work where OpenClaw
+needs the result, let a somora agent ask OpenClaw instead
+([Set it up](#set-it-up)).
+
+### Any other A2A client
+
+Every client that speaks A2A 1.0 or 0.3 over JSON-RPC works. A test
+with curl:
+
+```bash
+curl -X POST https://<host>.<tailnet>.ts.net:18737/a2a/agents/<agent> \
+  -H "Authorization: Bearer <token>" -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{
+       "messageId":"m1","role":"ROLE_USER","contextId":"test",
+       "parts":[{"text":"Reply with PONG."}]}}}'
+```
+
+## What a task from outside does
+
+1. somora checks the token and the peer's limits and finds the
+   conversation's session, `a2a-<peer>-<id>`, or makes it.
+2. Your agent gets the text with a line in front that names the sender
+   and says it is an outside agent, not you. The session keeps the text
+   as sent.
+3. The turn runs like any other, with the tools of the agent minus
+   `a2a.tools.deny`. By default it cannot ask other agents, so a task
+   from outside never sets off more agent work, and two systems cannot
+   bounce work between them.
+4. The answer goes back: word by word to a client that streams, or in
+   one piece when the turn ends. A client that does not wait gets the
+   task as still working and asks for it later.
+
+| The sender does | somora |
+|---|---|
+| `SendMessage` | waits up to `replyTimeoutSeconds` for the answer, or returns at once with `returnImmediately` |
+| `SendStreamingMessage` | streams the state, the answer as it grows, and a note per tool call (`using web_search`) |
+| `GetTask`, `ListTasks` | the task's state and answer; a peer only sees its own tasks |
+| `CancelTask` | stops your agent's turn; a waiting task is taken out of the line |
+| answers a question | the next message in the same conversation is the answer: an option's number or label, or own words |
+
+Messages in the same conversation wait for each other, like messages you
+type while the agent works. Tasks in different conversations run side by
+side. somora keeps tasks for 24 hours; after a restart of somora the
+answer is still in the session. Each peer gets one entry a day in the
+web client's inbox, saying how many tasks it sent.
+
 ## Troubleshooting
 
 | You see | Meaning |
@@ -306,16 +483,34 @@ Hermes reads files sent over A2A today.
 | `… did not finish within 60 min` | `external.a2a.maxTaskMinutes` ran out. The task may still finish over there. |
 | `waiting for a free slot` in the session | `maxConcurrentPerAgent` tasks are running. This one starts when one finishes. |
 | An OpenClaw task stays `working` | OpenClaw waits for an approval in its own interface (for example to run a command). Approve it there. |
+| A sender gets HTTP 401 `unauthorized` | Its token is not one of `a2a.peers`. |
+| A sender gets `no A2A agent '<name>' here` | The agent is not switched on, is a builder, or the peer's `agents` list leaves it out. |
+| A sender gets HTTP 429 | `a2a.rateLimitPerMinute` or `a2a.maxTasksPerDay` for that peer. |
+| The card is not found at all | No peers in `config.yaml`: then nothing is reachable. |
+| Hermes says it has no `a2a_call` | The `a2a` tools are not on for the place it runs, see [From Hermes](#from-hermes). |
 
-The server log names every task with `a2a.task`: agent, session, state,
-time and the day's count.
+The server log names every task to an external agent with `a2a.task`,
+and every task from outside with `a2a.inbound_accepted` and
+`a2a.inbound` (peer, agent, session, state, time). Refused tokens are
+logged as `a2a.inbound_refused`.
 
 ## Security
 
 - **Tokens.** Each system has its own token for somora. It sits in
   `config.yaml` beside your other keys and never appears in logs.
-- **Nothing in.** This page is about somora handing work out. The other
-  system cannot send tasks to somora's agents over this connection.
+- **What comes in.** Only peers with a token in `a2a.peers` can send
+  tasks, only to agents switched on for them. Wrong tokens count against
+  their address: after 10 in a minute, wrong tries from there wait a
+  minute. A right token always passes. The cards are public, as the standard wants: anyone who
+  reaches the server sees which agents are switched on and their
+  descriptions.
+- **The login key stays apart.** A peer's token opens the A2A endpoint
+  and nothing else in somora. The A2A paths are the only ones the login
+  key does not guard, and they check the peer tokens themselves.
+- **What a task may do.** A task from outside runs with the agent's
+  tools minus `a2a.tools.deny`. The agent is told the sender is an
+  outside agent, not you. Narrow the list further when an agent should
+  not, for example, run commands for other systems.
 - **The other side's rights.** The external agent works with its own
   tools and rights on its own machine. What it may do there is set on
   that system.

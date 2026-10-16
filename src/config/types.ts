@@ -945,6 +945,58 @@ export const ExternalSystemSchema = z.object({
 });
 export type ExternalSystemConfig = z.infer<typeof ExternalSystemSchema>;
 
+// Taking work from other agent systems over A2A (docs/a2a.md): agents with
+// `a2a: true` in agent.yaml get an A2A address on somora's own server;
+// only the peers listed here, each with its own token, may send them
+// tasks. No peers → nothing is reachable.
+export const DEFAULT_A2A_INBOUND_TOOL_DENY: readonly string[] = ['agent_ask', 'agent_ask_result', 'agent_ask_cancel'];
+
+export const A2AInboundConfigSchema = z
+  .object({
+    /** The address other systems reach somora under, e.g.
+     *  `https://<host>.<tailnet>.ts.net:18737`. Goes into the Agent Cards.
+     *  Default: taken from each request. */
+    publicUrl: z.string().url().optional(),
+    /** The agent `/.well-known/agent-card.json` describes. Others are
+     *  reached under `/a2a/agents/<name>`. */
+    defaultAgent: z.string().min(1).optional(),
+    /** Who may send tasks, by name. */
+    peers: z
+      .record(
+        z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,63}$/, 'peer name: lower-case letters, digits, _ . -'),
+        z
+          .object({
+            /** Bearer token this peer presents. At least 16 characters. */
+            token: z.string().min(16, 'a peer token needs at least 16 characters (openssl rand -hex 32)'),
+            /** Agents this peer may reach. Default: every agent with `a2a: true`. */
+            agents: z.array(z.string().min(1)).optional(),
+          })
+          .strict(),
+      )
+      .default({}),
+    /** Requests per minute per peer. */
+    rateLimitPerMinute: z.number().int().positive().default(30),
+    /** Tasks per peer per day (local midnight to midnight). */
+    maxTasksPerDay: z.number().int().positive().default(200),
+    /** How long a SendMessage waits for the answer before it returns the
+     *  task as still working (the peer then asks with GetTask). */
+    replyTimeoutSeconds: z.number().int().positive().default(300),
+    /** Longest task text in characters; longer is refused. */
+    maxMessageChars: z.number().int().positive().default(64_000),
+    /** A conversation with a peer is archived after this many days without
+     *  activity. 0 keeps them. */
+    archiveAfterDays: z.number().min(0).default(7),
+    /** Tools a task from outside may not use. Same patterns as
+     *  subagents.tools.deny (name, `toolset:<x>`, `<prefix>*`). */
+    tools: z
+      .object({ deny: z.array(z.string().min(1)).default([...DEFAULT_A2A_INBOUND_TOOL_DENY]) })
+      .strict()
+      .default({ deny: [...DEFAULT_A2A_INBOUND_TOOL_DENY] }),
+  })
+  .strict()
+  .default({ peers: {}, rateLimitPerMinute: 30, maxTasksPerDay: 200, replyTimeoutSeconds: 300, maxMessageChars: 64_000, archiveAfterDays: 7, tools: { deny: [...DEFAULT_A2A_INBOUND_TOOL_DENY] } });
+export type A2AInboundConfig = z.infer<typeof A2AInboundConfigSchema>;
+
 export const ExternalConfigSchema = z
   .object({
     /** Minutes without a prompt after which an agent's ACP connection is
@@ -2660,6 +2712,7 @@ export const ConfigSchema = z.object({
   workspace: WorkspaceConfigSchema,
   resources: ResourcesConfigSchema,
   external: ExternalConfigSchema,
+  a2a: A2AInboundConfigSchema,
   skills: SkillsConfigSchema,
   vision: VisionConfigSchema,
   stt: SttConfigSchema,
