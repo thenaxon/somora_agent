@@ -47,6 +47,9 @@ interface Props {
   onSetModel: (ref: string | null) => Promise<string | null>;
   /** A turn is running in the open session: a switch applies to the next one. */
   streaming: boolean;
+  /** An external agent: its model, thinking and context belong to its
+   *  own system, so the sheet offers sessions only. */
+  external?: boolean;
 }
 
 export function SessionSheet({
@@ -60,6 +63,7 @@ export function SessionSheet({
   modelInfo,
   onSetModel,
   streaming,
+  external = false,
 }: Props) {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [models, setModels] = useState<ModelRow[] | null>(null);
@@ -350,6 +354,7 @@ export function SessionSheet({
               <span className="sheet-row-name">Show all ({ordered.length})</span>
             </button>
           )}
+          {!external && (
           <button
             type="button"
             className="sheet-row more compact-row"
@@ -360,6 +365,7 @@ export function SessionSheet({
             <span className="sheet-row-name">{compacting ? 'Compacting…' : 'Compact this conversation'}</span>
             <span className="sheet-row-meta">{streaming ? 'after the turn' : 'keeps the session'}</span>
           </button>
+          )}
           <button
             type="button"
             className="sheet-row more archive-toggle"
@@ -394,6 +400,14 @@ export function SessionSheet({
           )}
         </section>
 
+        {external ? (
+        <section className="work-section">
+          <div className="session-sheet-head">
+            <h3>Model for this session</h3>
+          </div>
+          <div className="work-sheet-empty">This agent lives in another agent system — its model and thinking are set there.</div>
+        </section>
+        ) : (
         <section className="work-section">
           <div className="session-sheet-head">
             <h3>Model for this session</h3>
@@ -460,6 +474,7 @@ export function SessionSheet({
             );
           })}
         </section>
+        )}
       </div>
     </div>
   );

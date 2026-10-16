@@ -62,6 +62,11 @@ export function AvatarRow({
               style={a.color ? { background: `linear-gradient(135deg, ${a.color}, ${a.color}88)` } : undefined}
             >
               {a.icon ?? '🤖'}
+              {a.external && (
+                <span className="avatar-external-badge" title={`external agent · ${a.external.label}`} aria-label={`external agent of ${a.external.label}`}>
+                  {a.external.badgeImage ? <img src={a.external.badgeImage} alt="" /> : a.external.badge}
+                </span>
+              )}
               {streaming && <span className="avatar-streaming-dot" aria-hidden="true" />}
               {!streaming && unread && (
                 <span

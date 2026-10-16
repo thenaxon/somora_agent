@@ -17,6 +17,7 @@ import { WorkBadge, WorkSheet } from './WorkSheet';
 import { useSessionWork, type WorkItemDto } from '../hooks/useSessionWork';
 import { useSessionModel } from '../hooks/useSessionModel';
 import { SessionSheet } from './SessionSheet';
+import { QuestionCard, useSessionQuestion } from './QuestionCard';
 import { sessionKey } from '../hooks/useActivityStream';
 import { MAIN_SESSION, labelForRef, modelLabel, readLastSession, writeLastSession, type OpenSession } from '../hooks/session-pick';
 import type { SessionSummary } from '../../../web/src/lib/api';
@@ -286,7 +287,13 @@ export function MobileApp() {
     lastFallback && (!info || lastFallback.requested === `${info.provider}/${info.modelId}` || lastFallback.requested === info.alias)
       ? lastFallback
       : null;
-  const headerModel = fallback ? labelForRef(fallback.actual, []) : modelLabel(sessionModel.info);
+  const activeExternal = agents.find((a) => a.name === activeAgent)?.external ?? null;
+  const headerModel = activeExternal
+    ? `external · ${activeExternal.label}${activeExternal.version ? ` ${activeExternal.version}` : ''}`
+    : fallback
+      ? labelForRef(fallback.actual, [])
+      : modelLabel(sessionModel.info);
+  const question = useSessionQuestion(activeExternal ? activeAgent : null, session.id, chat.streaming);
 
   // Keep the screen awake while the app is open. Sticky per browser;
   // the hook re-acquires the lock every time the app comes back to the
@@ -449,6 +456,7 @@ export function MobileApp() {
           modelInfo={sessionModel.info}
           onSetModel={sessionModel.setModel}
           streaming={chat.streaming}
+          external={activeExternal !== null}
         />
       )}
 
@@ -490,6 +498,9 @@ export function MobileApp() {
               });
             }}
           />
+          {question.question && (
+            <QuestionCard agent={activeAgent} session={session.id} question={question.question} onAnswered={question.refresh} />
+          )}
           <MessageInput
             agent={activeAgent}
             onSend={chat.send}

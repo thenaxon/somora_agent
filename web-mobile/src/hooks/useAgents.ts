@@ -14,6 +14,10 @@ export interface AgentInfo {
   /** agent.yaml `steering:` — default for a message typed while a turn
    *  runs: into that turn (true) or queued behind it. */
   steering?: boolean;
+  /** 'external' for an agent of another system (docs/external-agents.md). */
+  kind?: string;
+  /** What to show about an external agent's system. */
+  external?: { system: string; label: string; badge: string; badgeImage: string | null; version: string | null };
 }
 
 const POLL_INTERVAL_MS = 30_000;

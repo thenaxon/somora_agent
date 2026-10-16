@@ -1325,3 +1325,90 @@ button { cursor: pointer; }
 .steer-row.on { color: var(--accent); }
 .steer-row-hint { color: var(--text-3); font-size: 11px; }
 .msg-steer { color: var(--accent); }
+
+/* External agent: the system's sign in the avatar's bottom-left corner
+   (🦞 OpenClaw, ☤ Hermes, else initials) — the web tile does the same. */
+.avatar-external-badge {
+  position: absolute;
+  left: -4px;
+  bottom: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 2px;
+  border-radius: 9px;
+  background: var(--bg-0);
+  border: 1px solid var(--line-2);
+  color: var(--text-0);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  overflow: hidden;
+}
+.avatar-external-badge img {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+
+/* The session's open question (an external agent asking permission). */
+.question-card {
+  margin: 6px 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 9%, var(--bg-2));
+  color: var(--text-0);
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.question-card-head {
+  display: flex;
+  justify-content: space-between;
+  color: var(--warn);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.question-card-wait {
+  color: var(--text-2);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.question-card-text {
+  line-height: 1.4;
+  word-break: break-word;
+}
+.question-card-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.question-card-options button {
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text-0);
+  border: 1px solid var(--line-2);
+  background: var(--bg-3);
+}
+.question-card-options button.allow {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.question-card-options button.reject {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.question-card-options button:disabled {
+  opacity: 0.6;
+}
+.question-card-error {
+  color: var(--danger);
+  font-size: 12px;
+}
