@@ -14,7 +14,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { isMap, isScalar, isSeq, parseDocument, type Document } from 'yaml';
-import { commit, openYaml, render, validateConfigText } from '../setup/config-edit.ts';
+import { validateConfigText } from '../setup/config-edit.ts';
 import { configPath } from '../config/loader.ts';
 import type { Config } from '../config/types.ts';
 import { getExternalAgent, listExternalAgents, nativeAgentExists } from '../external/registry.ts';
@@ -90,37 +90,82 @@ function busyReason(name: string): string | null {
   return null;
 }
 
-/** Rename a map key in place, keeping its comments and position. */
-function renameKey(doc: Document, path: string[], from: string, to: string): boolean {
-  const map = path.length === 0 ? doc.contents : doc.getIn(path, true);
-  if (!isMap(map)) return false;
-  for (const pair of map.items) {
-    if (isScalar(pair.key) && pair.key.value === from) {
-      pair.key.value = to;
-      return true;
-    }
-  }
-  return false;
+// ── surgical YAML edits ─────────────────────────────────────────────
+// A rename changes a name and nothing else: the edits replace exactly the
+// characters of each occurrence in the file's text, found through the
+// parsed document's source ranges. Re-rendering the document would
+// rewrap long texts and re-indent a hand-kept file.
+
+interface Edit {
+  start: number;
+  end: number;
+  text: string;
 }
 
-/** Replace a value in a string list, in place. */
-function renameInSeq(doc: Document, path: string[], from: string, to: string): boolean {
+/** The replacement for a scalar node, in the same quoting style. */
+function scalarEdit(node: unknown, to: string): Edit | null {
+  if (!isScalar(node) || !node.range) return null;
+  const quote = node.type === 'QUOTE_SINGLE' ? "'" : node.type === 'QUOTE_DOUBLE' ? '"' : '';
+  return { start: node.range[0], end: node.range[1], text: `${quote}${to}${quote}` };
+}
+
+/** Edit for a map key `from` at `path`. */
+function keyEdit(doc: Document, path: string[], from: string, to: string): Edit | null {
+  const map = path.length === 0 ? doc.contents : doc.getIn(path, true);
+  if (!isMap(map)) return null;
+  for (const pair of map.items) if (isScalar(pair.key) && pair.key.value === from) return scalarEdit(pair.key, to);
+  return null;
+}
+
+/** Edits for every `from` in a string list at `path`. */
+function seqEdits(doc: Document, path: string[], from: string, to: string): Edit[] {
   const seq = doc.getIn(path, true);
-  if (!isSeq(seq)) return false;
-  let hit = false;
-  for (const item of seq.items) {
-    if (isScalar(item) && item.value === from) {
-      item.value = to;
-      hit = true;
-    }
-  }
-  return hit;
+  if (!isSeq(seq)) return [];
+  return seq.items.filter((it) => isScalar(it) && it.value === from).map((it) => scalarEdit(it, to)).filter((e): e is Edit => e !== null);
+}
+
+/** Edit for a scalar value `from` at `path`. */
+function valueEdit(doc: Document, path: string[], from: string, to: string): Edit | null {
+  const node = doc.getIn(path, true);
+  return isScalar(node) && node.value === from ? scalarEdit(node, to) : null;
 }
 
 function mapKeys(doc: Document, path: string[]): string[] {
   const map = doc.getIn(path, true);
   if (!isMap(map)) return [];
   return map.items.map((p) => (isScalar(p.key) ? String(p.key.value) : '')).filter(Boolean);
+}
+
+function applyEdits(text: string, edits: Edit[]): string {
+  let out = text;
+  for (const e of [...edits].sort((x, y) => y.start - x.start)) out = out.slice(0, e.start) + e.text + out.slice(e.end);
+  return out;
+}
+
+interface YamlEdit {
+  path: string;
+  original: string;
+  next: string;
+  changes: string[];
+}
+
+function readYamlFile(path: string): { text: string; doc: Document } | null {
+  if (!existsSync(path)) return null;
+  const text = readFileSync(path, 'utf8');
+  const doc = parseDocument(text);
+  if (doc.errors.length > 0) throw new Error(`${path} is not valid YAML: ${doc.errors[0]!.message}`);
+  return { text, doc };
+}
+
+/** Write with a backup beside it, atomically. */
+function writeWithBackup(file: YamlEdit): string {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+  const backup = `${file.path}.bak-rename-${stamp}`;
+  writeFileSync(backup, file.original, { mode: 0o600 });
+  const tmp = `${file.path}.tmp-rename`;
+  writeFileSync(tmp, file.next, { mode: 0o600 });
+  renameSync(tmp, file.path);
+  return backup;
 }
 
 /** Where texts still say the old name: personas of every agent, team rules. */
@@ -138,8 +183,11 @@ async function textMentions(from: string, to: string): Promise<string[]> {
   }
   const team = teamFilePath();
   if (existsSync(team)) {
+    // The entry and reports_to lines are the rename's own business.
+    const esc = from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const structural = new RegExp(`^\\s*(${esc}:|reports_to:\\s*['"]?${esc}['"]?)\\s*(#.*)?$`);
     const lines = readFileSync(team, 'utf8').split('\n');
-    const hits = lines.map((l, i) => (word.test(l) ? i + 1 : 0)).filter(Boolean);
+    const hits = lines.map((l, i) => (word.test(l) && !structural.test(l) ? i + 1 : 0)).filter(Boolean);
     if (hits.length > 0) out.push(`team.yaml still says '${from}' in its text (line ${hits.slice(0, 5).join(', ')}) — a rule or note, left as written`);
   }
   return out;
@@ -166,36 +214,45 @@ export async function renameAgent(from: string, to: string, deps: RenameDeps, op
   const hasDir = existsSync(dir);
 
   // ── prepare the YAML edits (validated before anything moves) ──────
-  const cfg = openYaml(configPath());
+  const cfgFile = readYamlFile(configPath());
+  const cfgEdits: Edit[] = [];
   const cfgChanges: string[] = [];
-  if (external) {
-    if (renameKey(cfg.doc, ['external', 'systems', external.system, 'agents'], from, to)) cfgChanges.push(`config.yaml: external.systems.${external.system}.agents.${from} → ${to}`);
+  if (cfgFile) {
+    const d = cfgFile.doc;
+    const push = (e: Edit | Edit[] | null, change: string) => {
+      const list = Array.isArray(e) ? e : e ? [e] : [];
+      if (list.length > 0) {
+        cfgEdits.push(...list);
+        cfgChanges.push(change);
+      }
+    };
+    if (external) push(keyEdit(d, ['external', 'systems', external.system, 'agents'], from, to), `config.yaml: external.systems.${external.system}.agents.${from} → ${to}`);
+    push(valueEdit(d, ['a2a', 'defaultAgent'], from, to), `config.yaml: a2a.defaultAgent → ${to}`);
+    for (const peer of mapKeys(d, ['a2a', 'peers'])) push(seqEdits(d, ['a2a', 'peers', peer, 'agents'], from, to), `config.yaml: a2a.peers.${peer}.agents`);
+    for (const p of mapKeys(d, ['browser', 'profiles'])) push(seqEdits(d, ['browser', 'profiles', p, 'agents'], from, to), `config.yaml: browser.profiles.${p}.agents`);
+    push(keyEdit(d, ['tts', 'agentVoices'], from, to), `config.yaml: tts.agentVoices.${from} → ${to}`);
   }
-  const a2aDefault = cfg.doc.getIn(['a2a', 'defaultAgent']);
-  if (a2aDefault === from) {
-    cfg.doc.setIn(['a2a', 'defaultAgent'], to);
-    cfgChanges.push(`config.yaml: a2a.defaultAgent → ${to}`);
-  }
-  for (const peer of mapKeys(cfg.doc, ['a2a', 'peers'])) {
-    if (renameInSeq(cfg.doc, ['a2a', 'peers', peer, 'agents'], from, to)) cfgChanges.push(`config.yaml: a2a.peers.${peer}.agents`);
-  }
-  for (const p of mapKeys(cfg.doc, ['browser', 'profiles'])) {
-    if (renameInSeq(cfg.doc, ['browser', 'profiles', p, 'agents'], from, to)) cfgChanges.push(`config.yaml: browser.profiles.${p}.agents`);
-  }
-  if (renameKey(cfg.doc, ['tts', 'agentVoices'], from, to)) cfgChanges.push(`config.yaml: tts.agentVoices.${from} → ${to}`);
+  const cfg: YamlEdit | null = cfgFile && cfgEdits.length > 0 ? { path: configPath(), original: cfgFile.text, next: applyEdits(cfgFile.text, cfgEdits), changes: cfgChanges } : null;
 
   const teamPath = teamFilePath();
-  const team = existsSync(teamPath) ? openYaml(teamPath) : null;
+  const teamFile = readYamlFile(teamPath);
+  const teamEdits: Edit[] = [];
   const teamChanges: string[] = [];
-  if (team) {
-    if (renameKey(team.doc, ['agents'], from, to)) teamChanges.push(`team.yaml: agents.${from} → ${to}`);
-    for (const a of mapKeys(team.doc, ['agents'])) {
-      if (team.doc.getIn(['agents', a, 'reports_to']) === from) {
-        team.doc.setIn(['agents', a, 'reports_to'], to);
-        teamChanges.push(`team.yaml: ${a} reports to ${to}`);
+  if (teamFile) {
+    const k = keyEdit(teamFile.doc, ['agents'], from, to);
+    if (k) {
+      teamEdits.push(k);
+      teamChanges.push(`team.yaml: agents.${from} → ${to}`);
+    }
+    for (const a of mapKeys(teamFile.doc, ['agents'])) {
+      const e = valueEdit(teamFile.doc, ['agents', a, 'reports_to'], from, to);
+      if (e) {
+        teamEdits.push(e);
+        teamChanges.push(`team.yaml: ${a === from ? to : a} reports to ${to}`);
       }
     }
   }
+  const team: YamlEdit | null = teamFile && teamEdits.length > 0 ? { path: teamPath, original: teamFile.text, next: applyEdits(teamFile.text, teamEdits), changes: teamChanges } : null;
 
   // Another process (an agent's tool child) may have written triggers.
   await loadTriggers().catch(() => {});
@@ -230,8 +287,14 @@ export async function renameAgent(from: string, to: string, deps: RenameDeps, op
   // Validate the YAML before touching the disk: a result that would not
   // load stops here, with nothing moved.
   try {
-    if (cfgChanges.length > 0) commitCheck(cfg, 'config');
-    if (team && teamChanges.length > 0) commitCheck(team, 'plain');
+    if (cfg) {
+      const problem = validateConfigText(cfg.next);
+      if (problem) throw new Error(`config.yaml would not load after the rename: ${problem}`);
+    }
+    if (team) {
+      const d = parseDocument(team.next);
+      if (d.errors.length > 0) throw new Error(`team.yaml would not be valid YAML after the rename: ${d.errors[0]!.message}`);
+    }
   } catch (err) {
     return fail((err as Error).message);
   }
@@ -276,13 +339,13 @@ export async function renameAgent(from: string, to: string, deps: RenameDeps, op
     if (triggers.length > 0) done.push(`Sentinel: ${triggers.length} trigger${triggers.length === 1 ? '' : 's'}`);
     const tm = rewriteTmux(from, to);
     if (tm > 0) done.push(`tmux records: ${tm}`);
-    if (team && teamChanges.length > 0) {
-      commit(team, 'plain');
-      done.push(...teamChanges);
+    if (team) {
+      writeWithBackup(team);
+      done.push(...team.changes);
     }
-    if (cfgChanges.length > 0) {
-      commit(cfg, 'config');
-      done.push(...cfgChanges);
+    if (cfg) {
+      writeWithBackup(cfg);
+      done.push(...cfg.changes);
     }
   } catch (err) {
     // Put the folder back when the step after it failed; report the rest.
@@ -300,25 +363,13 @@ export async function renameAgent(from: string, to: string, deps: RenameDeps, op
   }
 
   resetTeamCache();
-  if (cfgChanges.length > 0) await deps.reloadConfig?.().catch(() => {});
+  if (cfg) await deps.reloadConfig?.().catch(() => {});
   await deps.syncDreamers?.().catch(() => {});
   report.ok = true;
   report.changes = done;
   report.warnings.push(...(await textMentions(from, to)));
   logger.info({ msg: 'agent.renamed', from, to, kind, changes: done.length });
   return report;
-}
-
-/** Throws when the edited document would not load, without writing. */
-function commitCheck(file: ReturnType<typeof openYaml>, kind: 'config' | 'plain'): void {
-  const text = render(file);
-  if (kind === 'config') {
-    const problem = validateConfigText(text);
-    if (problem) throw new Error(`config.yaml would not load after the rename: ${problem}`);
-  } else {
-    const doc = parseDocument(text);
-    if (doc.errors.length > 0) throw new Error(`team.yaml would not be valid YAML after the rename: ${doc.errors[0]!.message}`);
-  }
 }
 
 /** Point the memory index's paths at the new folder. Null when there is

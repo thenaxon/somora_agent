@@ -56,35 +56,51 @@ mkdirSync(join(home, 'browser', 'profiles', 'ada'), { recursive: true });
 writeFileSync(join(home, 'browser', 'state.json'), JSON.stringify({ browsers: { 'agent:ada': { profile: 'ada', views: { 'agent:ada@ada': { control: { handoff: { agent: 'ada' } } } } } } }));
 writeFileSync(join(home, 'tmux-origins.json'), JSON.stringify({ build: { name: 'build', agent: 'ada' }, other: { name: 'other', agent: 'bea' } }));
 
-writeFileSync(
-  join(home, 'team.yaml'),
-  '# my team, hand-written\nversion: 1\nprincipal:\n  name: Max\nrules:\n  - Only Max may involve ada directly.\nagents:\n  ada: # the researcher\n    reports_to: principal\n  bea:\n    reports_to: ada\n  claw:\n    reports_to: ada\n',
-);
-writeFileSync(
-  join(home, 'config.yaml'),
-  `providers: {}
-# A2A for the lab
-a2a:
-  defaultAgent: ada
-  peers:
-    lab:
-      token: 0123456789abcdef0123
-      agents: [ada, bea]   # who the lab may reach
-tts:
-  provider: openai
-  model: tts-1
-  agentVoices:
-    ada: nova
-external:
-  systems:
-    oc:
-      transport: { local: true }
-      agents:
-        # the OpenClaw lab agent
-        claw:
-          command: "false"
-`,
-);
+const TEAM = `# my team, hand-written
+version: 1
+principal:
+  name: Max
+  about: >-
+    A long folded text that a re-render would put on one line, so it must
+    stay wrapped exactly like this.
+rules:
+  - Only Max may involve ada directly.
+agents:
+  ada: # the researcher
+    reports_to: principal
+  bea:
+    reports_to: ada
+  claw:
+    reports_to: 'ada'
+`;
+writeFileSync(join(home, 'team.yaml'), TEAM);
+// Root keys indented, aligned comments, a folded text: a hand-kept file.
+const CONFIG = `  providers: {}
+  # A2A for the lab
+  a2a:
+    defaultAgent: ada
+    peers:
+      lab:
+        token: 0123456789abcdef0123
+        agents: [ada, bea]   # who the lab may reach
+  tts:
+    provider: openai
+    model: tts-1
+    agentVoices:
+      ada: nova                # her voice
+  external:
+    systems:
+      oc:
+        transport: { local: true }
+        agents:
+          # the OpenClaw lab agent
+          claw:
+            command: "false"
+            description: >-
+              A long folded description that must keep its line breaks after
+              the rename, like everything else in this file.
+`;
+writeFileSync(join(home, 'config.yaml'), CONFIG);;
 setConfig(await loadConfig());
 await loadTriggers();
 await saveTrigger({ id: 'trg-1', name: 'morning', ownerAgent: 'ada', source: {}, evaluator: {}, dispatch: { agent: 'ada', session: 'main' }, createdAt: '2026-10-16T00:00:00Z', status: 'active' } as never);
@@ -106,6 +122,8 @@ test('a dry run changes nothing and lists what would change', async () => {
   assert.ok(r.warnings.some((w) => /bea\/AGENTS\.md still says 'ada'/.test(w)), JSON.stringify(r.warnings));
   assert.ok(r.warnings.some((w) => /a2a\/agents\/nova/.test(w)), 'a2a address change is named');
   assert.equal(existsSync(join(agents, 'ada')), true, 'nothing moved');
+  const teamWarn = r.warnings.find((w) => w.startsWith('team.yaml'));
+  assert.match(teamWarn ?? '', /line 9\)/, 'only the rule line, not the entry or reports_to lines');
 });
 
 test('refused: unknown agent, invalid or taken name, a busy agent', async () => {
@@ -144,18 +162,16 @@ test('a somora agent: everything that names it moves to the new name', async () 
   const t = listTriggers().find((x) => x.id === 'trg-1')!;
   assert.equal(t.dispatch.agent, 'nova');
   assert.equal((t as { ownerAgent?: string }).ownerAgent, 'nova');
-  const team = readFileSync(join(home, 'team.yaml'), 'utf8');
-  assert.match(team, /^# my team, hand-written$/m, 'comments kept');
-  assert.match(team, /^ {2}nova:(?: # the researcher|\n {4}# the researcher)$/m, 'the key renamed in place, its comment kept');
-  assert.match(team, /^ {2}bea:\n {4}reports_to: nova$/m);
-  assert.match(team, /^ {2}claw:\n {4}reports_to: nova$/m);
-  assert.match(team, /Only Max may involve ada directly/, 'rule text left as written');
-  assert.ok(r.warnings.some((w) => /team\.yaml still says 'ada' in its text/.test(w)));
-  const cfg = readFileSync(join(home, 'config.yaml'), 'utf8');
-  assert.match(cfg, /defaultAgent: nova/);
-  assert.match(cfg, /agents: \[ nova, bea \]|agents: \[nova, bea\]/);
-  assert.match(cfg, /# who the lab may reach/, 'comments kept');
-  assert.match(cfg, /^ {4}nova: nova$/m, 'the voice key');
+  // Only the names changed, character for character.
+  assert.equal(
+    readFileSync(join(home, 'team.yaml'), 'utf8'),
+    TEAM.replace('  ada: # the researcher', '  nova: # the researcher').replace('  bea:\n    reports_to: ada', '  bea:\n    reports_to: nova').replace("reports_to: 'ada'", "reports_to: 'nova'"),
+  );
+  assert.ok(r.warnings.some((w) => /team\.yaml still says 'ada' in its text/.test(w)), 'the rule text is reported');
+  assert.equal(
+    readFileSync(join(home, 'config.yaml'), 'utf8'),
+    CONFIG.replace('defaultAgent: ada', 'defaultAgent: nova').replace('agents: [ada, bea]', 'agents: [nova, bea]').replace('      ada: nova                # her voice', '      nova: nova               # her voice'.replace('nova: nova               ', 'nova: nova                ')),
+  );
 });
 
 test('an external agent: its config entry in place, its sessions, the team', async () => {
@@ -163,10 +179,10 @@ test('an external agent: its config entry in place, its sessions, the team', asy
   assert.equal(r.ok, true, r.error);
   assert.equal(r.kind, 'external');
   const cfg = readFileSync(join(home, 'config.yaml'), 'utf8');
-  assert.match(cfg, / {8}# the OpenClaw lab agent\n {8}lobo:\n {10}command: "false"/);
+  assert.match(cfg, /^ {10}# the OpenClaw lab agent\n {10}lobo:\n {12}command: "false"\n {12}description: >-\n {14}A long folded description that must keep its line breaks after\n {14}the rename/m);
   assert.equal(existsSync(join(agents, 'lobo', 'sessions', 'main.jsonl')), true);
   assert.equal(existsSync(join(agents, 'claw')), false);
-  assert.match(readFileSync(join(home, 'team.yaml'), 'utf8'), /^ {2}lobo:\n {4}reports_to: nova$/m);
+  assert.match(readFileSync(join(home, 'team.yaml'), 'utf8'), /^ {2}lobo:\n {4}reports_to: 'nova'$/m, 'the quoting kept');
 });
 
 test('the route answers with the report; 409 when the name is taken', async () => {
