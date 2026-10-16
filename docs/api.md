@@ -1496,7 +1496,18 @@ curl -H "Authorization: Bearer $KEY" -X POST $BASE/agents/<your-agent>/tools/mem
      -d '{"query":"voice satellites","limit":3}'
 ```
 
-`400` with the result when the tool reports a failure.
+The agent's own tool rules apply, as in a chat turn: a tool switched
+off in the Abilities window or under `tools:` in its `agent.yaml`
+answers `403` with `{ok: false, error}` and does not run. The same goes
+for the builder-only tools on a chat agent. See
+[Choosing tools per agent](tools.md#choosing-tools-per-agent).
+
+| Status | Meaning |
+|---|---|
+| `200` | The tool ran; the body is its result. |
+| `400` | The tool reported a failure, or no tool has this name (with the nearest names). |
+| `403` | The tool is turned off for this agent. |
+| `404` | No such agent. |
 
 ## Team
 

@@ -340,6 +340,12 @@ A tool is decided in this order:
 
 No `tools:` block means no restriction.
 
+The rules hold wherever a tool runs as the agent: in its chat turns on
+every engine, and on `POST /agents/<name>/tools/<tool>`, which runs one
+tool as the agent without a turn. A tool that is off there answers
+`403` and does not run, so a lock cannot be stepped around through the
+API.
+
 ### What the window writes
 
 | You click | Written |
@@ -474,7 +480,7 @@ Per agent, in `agent.yaml`:
 | Route | What it does |
 |---|---|
 | `GET /tools` | Lists every registered tool with `name`, `toolset`, `description`, `inputSchema`, `maxResultSizeChars` and `hasAvailabilityCheck`. Includes tools that are not offered right now. |
-| `POST /agents/:agent/tools/:name` | Runs one tool as that agent. The body is the tool's input. A failed call answers 400. |
+| `POST /agents/:agent/tools/:name` | Runs one tool as that agent. The body is the tool's input. A tool the agent has turned off answers 403 and does not run. A failed call answers 400. |
 | `GET /agents/:agent/tools` | Lists the tools this agent could use, each with `visible`, plus the agent's `gating`. |
 | `POST /agents/:agent/tools/toggle` | One click in the Abilities window: `{names, visible, group?}`. The server writes the rules. |
 | `PUT /agents/:agent/tools` | Writes `{ deny: [...], allow: [...] }` into the agent's `agent.yaml`. |

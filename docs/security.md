@@ -281,6 +281,15 @@ tools:
 ```
 
 A denied tool is removed from the model's tool list on every engine.
+The route that runs one tool as an agent, `POST
+/agents/<name>/tools/<tool>`, checks the same rules and answers `403`
+for a denied tool, so another agent or a script cannot use it in this
+agent's name.
+
+The rules decide which somora tools an agent can call. They are not a
+wall around an agent that keeps a shell: with `exec` it can still do
+what its user account can do. Deny `toolset:exec` too when a lock has
+to hold.
 
 ## What each engine is kept from
 

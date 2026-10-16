@@ -7,6 +7,7 @@ import type * as Server from '../index.ts';
 import { modelUnavailable, resetModelAvailability } from '../../engine/model-availability.ts';
 import { getMemoryManager } from '../../memory/registry.ts';
 import { loadPersona } from '../../persona/loader.ts';
+import { isToolAllowed } from '../../tools/gating.ts';
 import { config } from '../server-state.ts';
 
 export interface ModelRoutesDeps {
@@ -74,8 +75,19 @@ export function registerModelRoutes(app: Hono, routeDeps: ModelRoutesDeps): void
   app.post('/agents/:agent/tools/:name', async (c) => {
     const agent = c.req.param('agent');
     const name = c.req.param('name');
-    if (!(await loadPersona(agent))) {
+    const persona = await loadPersona(agent);
+    if (!persona) {
       return c.json({ error: `agent '${agent}' not found` }, 404);
+    }
+    // The agent's own tool locks hold here as in a chat turn: this route
+    // ran any tool as any agent, so a lock set in Abilities could be
+    // stepped around through it (feedback report 2026-09-16).
+    const tool = tools.get(name);
+    if (tool && !isToolAllowed(name, tool.toolset, persona.toolGating)) {
+      return c.json(
+        { ok: false, error: `tool '${name}' is turned off for agent '${agent}' (Abilities window, or tools: in its agent.yaml)` },
+        403,
+      );
     }
     const input = await c.req.json().catch(() => ({}));
     const result = await tools.invoke(name, input, {
