@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
-import { AcpTurnTranslator, SomoraToAcp, historyToAcp, toolName } from './translate.ts';
+import { AcpTurnTranslator, SomoraToAcp, SseToAcp, historyToAcp, toolName } from './translate.ts';
 import { initialsBadge, profileByName, profileFor, profileFromCommand } from './profiles.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 
@@ -180,4 +180,41 @@ test('a profile guess from the start command, before the first connection', () =
   assert.equal(profileFromCommand('hermes-acp')?.name, 'hermes');
   assert.equal(profileFromCommand('goose acp'), null);
   assert.equal(profileFromCommand('my-openclaw-wrapper'), null);
+});
+
+test('somora → ACP: a text that stops extending (a stopped turn) adds only what differs, once', () => {
+  const s = new SomoraToAcp();
+  const e = (text: string, kind = 'assistant_delta') => ({ ts: 1, engine: 'x', kind, text }) as NormalizedEvent;
+  const pieces = [
+    ...s.update(e('You said: ans')),
+    ...s.update(e('You said: answer slowly')),
+    ...s.update(e('You said: answer [somora] aborted by user', 'assistant_message')),
+    ...s.update(e('You said: answer [somora] aborted by user', 'assistant_message')),
+  ].map((u) => (u as any).content.text);
+  assert.deepEqual(pieces, ['You said: ans', 'wer slowly', '\n[somora] aborted by user']);
+});
+
+test('live stream → ACP: tools pair by name in order, a trivial success closes at the end, todos become the plan', () => {
+  const tr = new SseToAcp('x');
+  const f = (event: string, data: Record<string, unknown>) => tr.update({ event, data });
+  const out = [
+    ...f('tool', { phase: 'call', tool: 'exec', summary: 'ls' }),
+    ...f('tool', { phase: 'call', tool: 'memory_write', summary: '{}' }),
+    ...f('tool', { phase: 'call', tool: 'exec', summary: 'pwd' }),
+    ...f('tool', { phase: 'result', tool: 'exec', summary: 'a b' }),
+    ...f('tool', { phase: 'error', tool: 'exec', error: 'boom' }),
+    ...f('todo_updated', { todos: [{ content: 'one', status: 'in_progress' }, { content: 'two', status: 'weird', priority: 'high' }] }),
+    ...f('chat', { state: 'delta', text: 'Done' }),
+    ...f('status', { msg: 'error: rate limited' }),
+  ];
+  const calls = out.filter((u) => u.sessionUpdate === 'tool_call') as any[];
+  assert.deepEqual(calls.map((c) => c.title), ['exec: ls', 'memory_write', 'exec: pwd']);
+  const ups = out.filter((u) => u.sessionUpdate === 'tool_call_update') as any[];
+  assert.deepEqual(ups.map((u) => [u.toolCallId, u.status]), [['x1', 'completed'], ['x3', 'failed']]);
+  const plan = out.find((u) => u.sessionUpdate === 'plan') as any;
+  assert.deepEqual(plan.entries, [{ content: 'one', status: 'in_progress', priority: 'medium' }, { content: 'two', status: 'pending', priority: 'high' }]);
+  assert.deepEqual(tr.errors, ['rate limited']);
+  const end = tr.finish({ event: 'agent', data: { phase: 'end', usage: { context_tokens: 900 }, contextWindow: 32000 } }) as any[];
+  assert.deepEqual(end.map((u) => [u.sessionUpdate, u.toolCallId ?? u.used]), [['tool_call_update', 'x2'], ['usage_update', 900]]);
+  assert.equal(tr.lastToolCall?.id, 'x3');
 });

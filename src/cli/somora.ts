@@ -8,6 +8,7 @@
 //   server status
 //   server restart
 //   tui                               launch TUI against running server
+//   acp                               a somora agent over ACP on stdio (docs/acp.md)
 //   update [<version>] [--edge]       install from npm + rebake systemd + restart
 //                                     (see `somora update --help`)
 //   --version | -v
@@ -71,6 +72,8 @@ Usage:
   somora server restart              restart the service
   somora server status               show server status + lockfile info
   somora tui                         launch the TUI against the running server
+  somora acp [--agent <name>]        a somora agent for editors (Zed, JetBrains) over ACP on
+                                     stdin/stdout (docs/acp.md)
   somora skill <subcommand>          list/check/add/update/remove skills
                                      (run \`somora skill\` for sub-help)
   somora key [show|link|rotate]      the login key: print it, a link + QR code that
@@ -710,6 +713,10 @@ async function main(): Promise<number> {
       return await cmdServer(rest);
     case 'tui':
       return await cmdTui();
+    case 'acp': {
+      const { runAcpCli } = await import('./acp.ts');
+      return await runAcpCli(rest);
+    }
     case 'skill': {
       const { runSkillCli } = await import('./skill.ts');
       return await runSkillCli(rest);

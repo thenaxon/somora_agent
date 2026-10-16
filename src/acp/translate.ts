@@ -8,6 +8,9 @@
 //     for `somora acp` (somora as an ACP agent).
 //   historyToAcp      — a stored somora session → the updates
 //     `session/load` replays.
+//   SseToAcp          — the live chat stream a client sees (`chat`,
+//     `thinking`, `tool`, `todo_updated`, `agent`) → ACP updates, for
+//     `somora acp` as a thin client.
 //
 // Pure: no I/O, no process. The engine adapter and `somora acp` feed it.
 
@@ -301,27 +304,47 @@ function resultText(output: unknown): string {
 
 const textBlock = (text: string): ContentBlock => ({ type: 'text', text });
 
+/** What to send for a cumulative text, given what was sent. Usually the
+ *  new suffix. A text that no longer extends the sent one (a stopped turn
+ *  ends as "…partial [somora] aborted by user") sends what differs after
+ *  the common start, on a new line — ACP cannot take sent text back. */
+function nextPiece(sent: string, text: string): [piece: string, sent: string] {
+  if (text.startsWith(sent)) return [text.slice(sent.length), text];
+  if (sent.startsWith(text)) return ['', sent];
+  let i = 0;
+  while (i < sent.length && i < text.length && sent[i] === text[i]) i++;
+  const rest = text.slice(i).trim();
+  return rest ? [`\n${rest}`, sent + `\n${rest}`] : ['', sent];
+}
+
 /**
  * somora events of one turn → ACP updates. The deltas somora streams are
  * cumulative; ACP wants pieces, so each delta becomes the new suffix.
  */
 export class SomoraToAcp {
-  private sentText = 0;
-  private sentThinking = 0;
+  // Sent so far / the last cumulative text received, per stream.
+  private sentText = '';
+  private sentThinking = '';
+  private lastText = '';
+  private lastThinking = '';
   private readonly openTools = new Set<string>();
 
   update(ev: Ev): SessionUpdate[] {
     switch (ev.kind) {
       case 'assistant_delta':
       case 'assistant_message': {
-        const piece = ev.text.length >= this.sentText ? ev.text.slice(this.sentText) : '';
-        this.sentText = Math.max(this.sentText, ev.text.length);
+        if (ev.text === this.lastText) return [];
+        this.lastText = ev.text;
+        const [piece, sent] = nextPiece(this.sentText, ev.text);
+        this.sentText = sent;
         return piece ? [{ sessionUpdate: 'agent_message_chunk', content: textBlock(piece) }] : [];
       }
       case 'thinking_delta':
       case 'thinking_message': {
-        const piece = ev.text.length >= this.sentThinking ? ev.text.slice(this.sentThinking) : '';
-        this.sentThinking = Math.max(this.sentThinking, ev.text.length);
+        if (ev.text === this.lastThinking) return [];
+        this.lastThinking = ev.text;
+        const [piece, sent] = nextPiece(this.sentThinking, ev.text);
+        this.sentThinking = sent;
         return piece ? [{ sessionUpdate: 'agent_thought_chunk', content: textBlock(piece) }] : [];
       }
       case 'tool_call': {
@@ -379,4 +402,115 @@ export function historyToAcp(events: readonly Ev[]): SessionUpdate[] {
     out.push(...turn.update(ev));
   }
   return out;
+}
+
+/** One frame of the live chat stream (GET /chat/stream). */
+export interface SseFrame {
+  event: string;
+  data: Record<string, unknown>;
+}
+
+/**
+ * The live chat stream of one turn → ACP updates. The stream is what
+ * every client reads: text and thinking cumulative, tools pre-formatted
+ * and without a call id — a result belongs to the oldest open call of
+ * the same tool (calls of one tool finish in order), a trivial success
+ * sends no result at all, so whatever is still open at the end closes as
+ * done.
+ */
+export class SseToAcp {
+  private readonly text = new SomoraToAcp();
+  private readonly open: Array<{ id: string; tool: string }> = [];
+  private seq = 0;
+  /** The last tool call — a question asked during a turn names it. */
+  lastToolCall: { id: string; title: string } | null = null;
+  /** `error: …` status lines of the turn, for the stop note. */
+  readonly errors: string[] = [];
+
+  constructor(private readonly idPrefix = 't') {}
+
+  update(f: SseFrame): SessionUpdate[] {
+    const d = f.data;
+    const str = (k: string): string | undefined => (typeof d[k] === 'string' ? (d[k] as string) : undefined);
+    switch (f.event) {
+      case 'chat': {
+        const t = str('text');
+        return t === undefined ? [] : this.text.update({ kind: 'assistant_delta', ts: 0, engine: 'somora', text: t } as Ev);
+      }
+      case 'thinking': {
+        const t = str('text');
+        return t === undefined ? [] : this.text.update({ kind: 'thinking_delta', ts: 0, engine: 'somora', text: t } as Ev);
+      }
+      case 'tool': {
+        const tool = str('tool') ?? 'tool';
+        const phase = str('phase');
+        if (phase === 'call') {
+          const id = `${this.idPrefix}${++this.seq}`;
+          this.open.push({ id, tool });
+          const summary = str('summary');
+          const title = summary && summary !== '{}' ? `${tool}: ${summary}` : tool;
+          this.lastToolCall = { id, title };
+          return [
+            {
+              sessionUpdate: 'tool_call',
+              toolCallId: id,
+              title,
+              kind: acpToolKind(tool),
+              status: 'in_progress',
+              ...(str('details') ? { rawInput: str('details') } : {}),
+            },
+          ];
+        }
+        if (phase === 'result' || phase === 'error') {
+          const at = this.open.findIndex((o) => o.tool === tool);
+          const hit = at >= 0 ? this.open.splice(at, 1)[0]! : this.open.shift();
+          if (!hit) return [];
+          const text = phase === 'error' ? (str('error') ?? 'failed') : [str('summary'), str('details')].filter(Boolean).join('\n');
+          return [
+            {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: hit.id,
+              status: phase === 'error' ? 'failed' : 'completed',
+              ...(text ? { content: [{ type: 'content' as const, content: textBlock(text.slice(0, 20_000)) }] } : {}),
+            },
+          ];
+        }
+        return [];
+      }
+      case 'todo_updated': {
+        const todos = Array.isArray(d.todos) ? (d.todos as Array<{ content?: unknown; status?: unknown; priority?: unknown }>) : [];
+        return [
+          {
+            sessionUpdate: 'plan',
+            entries: todos
+              .filter((t) => typeof t.content === 'string')
+              .map((t) => ({
+                content: t.content as string,
+                status: t.status === 'completed' || t.status === 'in_progress' ? t.status : 'pending',
+                priority: t.priority === 'high' || t.priority === 'low' ? t.priority : 'medium',
+              })),
+          },
+        ];
+      }
+      case 'status': {
+        const msg = str('msg');
+        if (msg?.startsWith('error: ') || msg?.startsWith('turn failed: ')) this.errors.push(msg.replace(/^(error|turn failed): /, ''));
+        return [];
+      }
+      default:
+        return [];
+    }
+  }
+
+  /** The turn ended (`agent` phase end): close what is open, report the
+   *  context fill. */
+  finish(end: SseFrame | null): SessionUpdate[] {
+    const out: SessionUpdate[] = this.open.splice(0).map((o) => ({ sessionUpdate: 'tool_call_update' as const, toolCallId: o.id, status: 'completed' as const }));
+    const usage = end?.data.usage as { context_tokens?: number } | undefined;
+    const size = end?.data.contextWindow;
+    if (typeof usage?.context_tokens === 'number' && typeof size === 'number' && size > 0) {
+      out.push({ sessionUpdate: 'usage_update', used: usage.context_tokens, size });
+    }
+    return out;
+  }
 }
