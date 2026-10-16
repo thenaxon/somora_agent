@@ -84,19 +84,17 @@ test('agent_ask to an external agent with A2A access: its conversation with the 
   assert.equal(seen.find((s) => s.url.startsWith('/chat/send-sync'))!.body.create_session, undefined, 'a named session is not created on its own');
 });
 
-test('agent_ask refusals: no A2A access, a model, images — nothing is sent', async () => {
+test('agent_ask refusals: no A2A access, a model — nothing is sent', async () => {
   seen.length = 0;
   await assert.rejects(agentAsk.handler({ agent: 'chatonly', message: 'x' } as never, ctx), /external agent \(loc\) without A2A access/);
   await assert.rejects(agentAsk.handler({ agent: 'claw', message: 'x', session: 's', create_session: true, model: 'gpt' } as never, ctx), /its model is set on its own system/);
-  await assert.rejects(agentAsk.handler({ agent: 'claw', message: 'x', images: ['/tmp/a.png'] } as never, ctx), /images cannot be handed to an external agent/);
   assert.equal(seen.length, 0);
 });
 
-test('spawn_subagent: an external agent with A2A access is a valid persona; model, maxRounds, images are refused', async () => {
+test('spawn_subagent: an external agent with A2A access is a valid persona; model and maxRounds are refused', async () => {
   await assert.rejects(spawnSubagent.handler({ persona: 'chatonly', task: 'x' } as never, ctx), /without A2A access/);
   await assert.rejects(spawnSubagent.handler({ persona: 'claw', task: 'x', model: 'gpt' } as never, ctx), /its model is set on its own system/);
   await assert.rejects(spawnSubagent.handler({ persona: 'claw', task: 'x', maxRounds: 20 } as never, ctx), /runs its own loop/);
-  await assert.rejects(spawnSubagent.handler({ persona: 'claw', task: 'x', images: ['/tmp/a.png'] } as never, ctx), /images cannot be handed/);
   await assert.rejects(spawnSubagent.handler({ persona: 'nobody', task: 'x' } as never, ctx), /persona 'nobody' not found/);
   seen.length = 0;
   const r = (await spawnSubagent.handler({ persona: 'claw', task: 'look into X' } as never, ctx)) as unknown as Record<string, unknown>;

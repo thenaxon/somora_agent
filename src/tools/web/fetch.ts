@@ -76,7 +76,7 @@ export const fetchTestAllow = new Set<string>();
 /** Before a request (and before every redirect hop): http(s) only, no
  *  internal names, no private address written into the URL. Names are
  *  checked again at connect time, on the addresses they resolve to. */
-function ssrfCheck(targetUrl: URL, allowPrivate: readonly string[]): void {
+export function ssrfCheck(targetUrl: URL, allowPrivate: readonly string[]): void {
   const proto = targetUrl.protocol.toLowerCase();
   if (proto !== 'http:' && proto !== 'https:') {
     throw new Error(`web_fetch: only http/https allowed, got '${proto}'`);
@@ -120,7 +120,7 @@ export function guardedLookup(allowPrivate: readonly string[] = []) {
 }
 
 const guardedAgents = new Map<string, Agent>();
-function getGuardedAgent(allowPrivate: readonly string[]): Agent {
+export function getGuardedAgent(allowPrivate: readonly string[]): Agent {
   const key = allowPrivate.join('\n');
   let agent = guardedAgents.get(key);
   if (!agent) {
@@ -131,7 +131,7 @@ function getGuardedAgent(allowPrivate: readonly string[]): Agent {
 }
 
 /** Why a fetch failed, with the private-address refusal spelled out. */
-function fetchFailure(err: unknown): Error {
+export function fetchFailure(err: unknown): Error {
   let cause: unknown = err;
   while (cause && typeof cause === 'object') {
     const c = cause as { code?: string; message?: string; cause?: unknown };

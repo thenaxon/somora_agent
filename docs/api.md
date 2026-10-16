@@ -3222,7 +3222,8 @@ of `a2a.defaultAgent`.
 { "name": "nova", "description": "…", "version": "2026.1016.8",
   "supportedInterfaces": [{ "url": "https://<host>:18737/a2a/agents/nova", "protocolBinding": "JSONRPC", "protocolVersion": "1.0" }],
   "capabilities": { "streaming": true, "pushNotifications": false },
-  "defaultInputModes": ["text/plain"], "defaultOutputModes": ["text/plain"],
+  "defaultInputModes": ["text/plain", "image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"],
+  "defaultOutputModes": ["text/plain", "image/png", "image/jpeg", "image/webp"],
   "security": [{ "bearer": [] }] }
 ```
 
@@ -3267,6 +3268,19 @@ Renames an agent, somora's own or external
 
 `400` for an invalid name, `404` for an unknown agent, `409` while the
 agent is busy or when the name is taken, with `error` saying why.
+
+### `GET /a2a/files/:token`
+
+One file behind a download link ([A2A](a2a.md#images-and-files)): an
+attachment somora sends to an external agent, or an image in an answer
+to a peer. Open without the login key; the signed token names the file
+and expires after an hour. `404` for a token that is not one, `410` for
+an expired one.
+
+File parts in a task are taken as `{ raw, mediaType, filename }` (bytes,
+base64) or `{ url, mediaType, filename }` (fetched with the `web_fetch`
+guard), in 0.3 as `{ kind: "file", file: { bytes | uri, mimeType, name } }`.
+An answer with an image carries `{ url, mediaType, filename }`.
 
 ### `GET /agents/:agent/a2a` · `PUT /agents/:agent/a2a`
 

@@ -34,7 +34,7 @@ use the same tools for both and need not know the difference.
 | Way of travel | inside the somora server, no network | A2A over the network |
 | Lands in | the target's session (`main`, a named one, or a sub-agent session) | the external agent's session `a2a-<asker>` or a sub-agent session |
 | What the asker gets | the answer, `pending` and a wake when it takes longer | the same |
-| Pictures | yes | not yet |
+| Pictures and files | yes | yes: in the message, or as a download link |
 | Taking it back | the target is told to stop and finishes its turn | the task is stopped, the other side is asked to stop |
 | Guard against waiting in a circle | yes | yes on somora's side, see [Security](#security) |
 
@@ -278,7 +278,7 @@ the Agent Card and uses the best way each system offers.
 | Tool calls visible | no | no |
 | Stop | refused: the task finishes over there | marked as stopped, the turn there runs on |
 | Asking back as an A2A state | no, it says so in its answer | yes |
-| Images and files | no | no |
+| Images and files it receives | not read: OpenClaw drops file parts, so somora sends links | named only ("file x, n bytes"), so somora sends links |
 | Memory of the conversation | its own session per sender and conversation | its live session, same memory as its other chats |
 | Tasks after its own restart | gone | gone, the conversation stays |
 
@@ -304,9 +304,41 @@ it says so in its answer.
 
 ## Images and files
 
-Not yet: `agent_ask` and `spawn_subagent` refuse images for an external
-agent, with a note to describe them in the message. Neither OpenClaw nor
-Hermes reads files sent over A2A today.
+Both directions carry images and files: PNG, JPEG, GIF, WebP, PDF and
+text, the kinds somora keeps as attachments, within the limits under
+`attachments` in `config.yaml`.
+
+**Your agents hand a file over.** `images` in `agent_ask` and
+`spawn_subagent` work for external agents too. somora reads the other
+side's Agent Card (`defaultInputModes`):
+
+- **The card takes the type:** the file goes inside the message, up to
+  8 MB.
+- **Otherwise:** the task starts with a download link for each file,
+  valid for one hour, for example
+  `[Files for this task — download links, valid for one hour: - plan.pdf (application/pdf, 240 KB): https://…/a2a/files/…]`.
+  The other agent fetches it with its own tools.
+
+OpenClaw 2026.10.3 and Hermes 0.22.2 both take only text in a message, so
+they get links. A link needs somora's address from outside:
+`a2a.publicUrl` in `config.yaml` (see
+[Set up somora as a target](#set-up-somora-as-a-target)). Without it a
+task with files is refused with that hint. The session shows how each
+file went (`sent to lobo over A2A with 1 as download link`).
+
+**Another system sends a file.** File parts in a task, as bytes or as a
+URL, become attachments of the turn, as if you had attached them in the
+chat: the agent sees an image, or reads a PDF. A URL is fetched with the
+same guard as `web_fetch`: no internal addresses unless
+`web.fetchAllowPrivate` lists them. At most 5 files per message. A task
+of only files is fine.
+
+**Your agent answers with an image.** An image it makes for a task from
+outside goes back with the answer, as a file part with a download link.
+
+**Download links.** `/a2a/files/<token>` serves one file for one hour.
+The signed token is the key: it opens that file and nothing else, and
+`somora key rotate` ends every link at once.
 
 ## Taking work in
 
@@ -329,6 +361,9 @@ its tools and memory, and the answer goes back to the sender.
   agent's turn.
 - **Questions go back.** When your agent asks with `ask_user`, the
   question goes to the sender, which answers in the same conversation.
+- **Files both ways.** Images and PDFs a sender attaches reach your
+  agent as attachments, and images it makes go back with the answer
+  ([Images and files](#images-and-files)).
 
 ## Set up somora as a target
 

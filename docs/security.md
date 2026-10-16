@@ -487,7 +487,9 @@ seconds and does not follow redirects. The last answer is stored in
   task runs with the agent's tools minus `a2a.tools.deny`, so narrow
   that list for an agent that should not run commands for others. The
   Agent Cards under `/a2a/agents/…` are public by the standard and name
-  the switched-on agents ([A2A](a2a.md#security)).
+  the switched-on agents ([A2A](a2a.md#security)). Download links under
+  `/a2a/files/…` open one file for an hour each; `somora key rotate`
+  ends them all.
 - **A leaked key.** Anyone who has the key and reaches the port has the
   same access as you, including a shell. `somora key rotate` locks them
   out. With `server.auth: off`, reaching the port is enough.

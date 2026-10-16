@@ -311,3 +311,65 @@ test('by default a task from outside sets off no further agent work', () => {
   }
   assert.equal(deny.includes('ask_user'), false, 'its question goes back to the sender');
 });
+
+// ── files ─────────────────────────────────────────────────────────────
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+
+test('files in: bytes in the message reach the turn as an attachment; a file alone is a task', async () => {
+  script = async (args) => ok(`got ${args.attachments?.length ?? 0} file(s): ${args.attachments?.map((a) => `${a.name} ${a.mime}`).join(', ')}`);
+  calls.length = 0;
+  const r = await rpc('ada', 'SendMessage', { message: { messageId: `f-${Math.random()}`, role: 'ROLE_USER', contextId: 'files-1', parts: [{ raw: PNG.toString('base64'), mediaType: 'image/png', filename: 'dot.png' }] } });
+  assert.equal(r.body.result.task.status.state, 'TASK_STATE_COMPLETED', JSON.stringify(r.body));
+  assert.equal(r.body.result.task.artifacts[0].parts[0].text, 'got 1 file(s): dot.png image/png');
+  assert.equal(calls.at(-1)!.text, '(a file is attached)');
+  // 0.3 shape too
+  const old = await rpc('ada', 'message/send', { message: { kind: 'message', messageId: `f03-${Math.random()}`, role: 'user', parts: [{ kind: 'text', text: 'and this' }, { kind: 'file', file: { bytes: PNG.toString('base64'), mimeType: 'image/png', name: 'old.png' } }] } });
+  assert.equal(old.body.result.artifacts[0].parts[0].text, 'got 1 file(s): old.png image/png');
+});
+
+test('files in: a URL is fetched with the guard against internal addresses', async () => {
+  const { createServer } = await import('node:http');
+  const files = createServer((_req, res) => res.writeHead(200, { 'content-type': 'image/png' }).end(PNG));
+  await new Promise<void>((r) => files.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${(files.address() as AddressInfo).port}/dot.png`;
+  try {
+    script = async (args) => ok(`got ${args.attachments?.length ?? 0}`);
+    const refused = await rpc('ada', 'SendMessage', msg('look', { contextId: 'files-2', parts: [{ text: 'look' }, { url, mediaType: 'image/png', filename: 'dot.png' }] }));
+    assert.equal(refused.body.error.code, -32602);
+    assert.match(refused.body.error.message, /a file could not be taken: dot\.png: .*private/);
+    setConfig(ConfigSchema.parse({ providers: {}, a2a: { peers: { hermes: { token: TOKEN } } }, web: { fetchAllowPrivate: ['127.0.0.1'] } }));
+    const taken = await rpc('ada', 'SendMessage', { message: { messageId: `u-${Math.random()}`, role: 'ROLE_USER', contextId: 'files-3', parts: [{ text: 'look' }, { url, mediaType: 'image/png', filename: 'dot.png' }] } });
+    assert.equal(taken.body.result.task.artifacts[0].parts[0].text, 'got 1');
+  } finally {
+    files.close();
+    configure({ peers: { hermes: { token: TOKEN }, narrow: { token: OTHER, agents: ['cleo'] } } });
+  }
+});
+
+test('files out: an image the agent made comes back as a download link that serves it', async () => {
+  const imgPath = join(home, 'made.png');
+  writeFileSync(imgPath, PNG);
+  script = async () => ({ ...ok('here is the picture'), media: [{ type: 'image', id: 'm1', path: imgPath, filename: 'made.png', mime: 'image/png', prompt: 'p', url: '/media/m1/file' }] }) as ChatTurnResult;
+  const r = await rpc('ada', 'SendMessage', msg('draw something', { contextId: 'files-4' }));
+  const parts = r.body.result.task.artifacts[0].parts;
+  assert.equal(parts[0].text, 'here is the picture');
+  assert.equal(parts[1].mediaType, 'image/png');
+  assert.equal(parts[1].filename, 'made.png');
+  assert.match(parts[1].url, new RegExp(`^${base}/a2a/files/[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$`));
+  const got = await fetch(parts[1].url);
+  assert.equal(got.status, 200, 'open without the login key: the token is the key');
+  assert.equal(got.headers.get('content-type'), 'image/png');
+  assert.equal(Buffer.from(await got.arrayBuffer()).equals(PNG), true);
+  const tampered = parts[1].url.replace(/.$/, (ch: string) => (ch === 'A' ? 'B' : 'A'));
+  assert.equal((await fetch(tampered)).status, 404);
+  assert.equal(isA2APublicPath('GET', new URL(parts[1].url).pathname), true);
+  assert.equal(isA2APublicPath('GET', '/a2a/files/../../etc'), false);
+});
+
+test('download links expire after an hour', async () => {
+  const { fileLinkToken, verifyFileLink } = await import('./files.ts');
+  const f = { hash: 'a'.repeat(64), name: 'x.png', mime: 'image/png', size: 1 };
+  const tok = fileLinkToken(f, 1_000);
+  assert.deepEqual(verifyFileLink(tok, 1_000 + 59 * 60_000), { hash: f.hash, mime: 'image/png', name: 'x.png' });
+  assert.deepEqual(verifyFileLink(tok, 1_000 + 61 * 60_000), { error: 'this link has expired' });
+});

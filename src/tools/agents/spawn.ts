@@ -455,9 +455,6 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
     }
     if (task.model) throw new Error(`spawn_subagent: '${targetPersona}' is an external agent; its model is set on its own system — leave 'model' out`);
     if (task.maxRounds) throw new Error(`spawn_subagent: '${targetPersona}' is an external agent; it runs its own loop — leave 'maxRounds' out`);
-    if (task.images && task.images.length > 0) {
-      throw new Error(`spawn_subagent: images cannot be handed to an external agent over A2A yet — describe what matters in the task`);
-    }
   }
   // Validate a model override BEFORE creating the session + reserving a
   // slot: an invented name ("myprovider/model-that-does-not-exist") otherwise fails

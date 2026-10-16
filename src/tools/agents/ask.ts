@@ -347,11 +347,6 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     if (external && input.model) {
       throw new Error(`agent_ask: '${targetAgent}' is an external agent; its model is set on its own system — leave 'model' out.`);
     }
-    if (external && input.images && input.images.length > 0) {
-      throw new Error(
-        `agent_ask: images cannot be handed to an external agent over A2A yet — describe what matters in the message.`,
-      );
-    }
 
     if (targetAgent === ctx.agent) {
       throw new Error(

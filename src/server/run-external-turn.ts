@@ -39,9 +39,6 @@ export async function runExternalChatTurn(args: RunChatTurnArgs, ext: ExternalAg
         `the person can chat with it in its own window (to allow it: external.systems.${ext.system}.agents.${agent}.a2a in config.yaml, docs/a2a.md)`,
     );
   }
-  if (delegated && (args.attachments?.length ?? 0) > 0) {
-    throw new Error(`images and files cannot be handed to an external agent over A2A yet; describe them in the message instead`);
-  }
 
   // Work agents hand each other carries no unread dot (like a sub-agent's
   // session); set before anything is published.
@@ -55,10 +52,12 @@ export async function runExternalChatTurn(args: RunChatTurnArgs, ext: ExternalAg
     logger.warn({ msg: 'session.heal_failed', agent, session, err: (err as Error).message });
   }
 
-  // Images go along when the agent takes them; anything else is refused
-  // before the turn, like for a somora model without that capability.
+  // Chat (ACP): images go along when the agent takes them; anything else
+  // is refused before the turn, like for a somora model without that
+  // capability. Work over A2A takes every attachment kind somora stores
+  // (in the message or as a download link, src/a2a/files.ts).
   const images: Array<{ mimeType: string; data: string }> = [];
-  for (const a of args.attachments ?? []) {
+  for (const a of delegated ? [] : (args.attachments ?? [])) {
     const r = await resolveAttachmentForModel({ hash: a.hash, expectedMime: a.mime, maxImageEdge: deps.config.attachments.maxImageEdge });
     if (r.mime.kind !== 'image') throw new Error(`${agent} is an external agent and takes only images as attachments (${a.name} is ${r.mime.kind})`);
     images.push({ mimeType: r.mime.mimeType, data: (await readFile(r.path)).toString('base64') });
@@ -135,6 +134,7 @@ export async function runExternalChatTurn(args: RunChatTurnArgs, ext: ExternalAg
           ext,
           session,
           text: await introduced(text, args, deps.config.external.a2a.introduce),
+          ...(args.attachments && args.attachments.length > 0 ? { attachments: args.attachments } : {}),
           ...(signal ? { signal } : {}),
           metaStore: deps.sessionMetaStore,
           config: () => liveConfig,

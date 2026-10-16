@@ -30,6 +30,9 @@ import { SOMORA_VERSION } from '../version.ts';
 import type { SseEvent } from '../types/events.ts';
 import type { TurnOrigin } from '../types/turn-origin.ts';
 import { takeDailyCall } from './limits.ts';
+import { answerFileParts, fileLinkUrl, incomingFiles, registerA2AFileRoutes, type AttachmentRef } from './files.ts';
+import { createReadStream } from 'node:fs';
+import { storeAttachment } from '../attachments/store.ts';
 import { type A2AMessage, type A2APart, type ProtocolVersion, type TaskState, PAUSED_STATES, TERMINAL_STATES, partsText } from './protocol.ts';
 
 export interface InboundTask {
@@ -50,6 +53,10 @@ export interface InboundTask {
   lockAbort: AbortController;
   running: boolean;
   listeners: Set<(t: InboundTask, change: TaskChange) => void>;
+  /** somora's own address as the peer reached it, for download links. */
+  base: string;
+  /** Files the answer carries (images the agent made), as links. */
+  files: Array<{ url: string; mediaType: string; filename: string }>;
 }
 
 type TaskChange = { kind: 'state' } | { kind: 'text'; piece: string; replace: boolean } | { kind: 'note'; text: string };
@@ -141,8 +148,9 @@ export function agentCard(persona: PersonaInfo, base: string): Record<string, un
     protocolVersion: '1.0',
     preferredTransport: 'JSONRPC',
     capabilities: { streaming: true, pushNotifications: false, extendedAgentCard: false },
-    defaultInputModes: ['text/plain'],
-    defaultOutputModes: ['text/plain'],
+    // What somora's attachments take (docs/a2a.md#images-and-files).
+    defaultInputModes: ['text/plain', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf'],
+    defaultOutputModes: ['text/plain', 'image/png', 'image/jpeg', 'image/webp'],
     skills: [{ id: persona.name, name: persona.name, description, tags: ['somora'] }],
     securitySchemes: { bearer: { httpAuthSecurityScheme: { scheme: 'bearer' } } },
     security: [{ bearer: [] }],
@@ -190,7 +198,9 @@ function taskView(v: ProtocolVersion, t: InboundTask): Record<string, unknown> {
     id: t.id,
     contextId: t.contextId,
     status: statusOf(v, t),
-    ...(t.state === 'completed' && t.answer ? { artifacts: [{ artifactId: `${t.id}-answer`, name: 'answer', parts: [textPart(v, t.answer)] }] } : {}),
+    ...(t.state === 'completed' && (t.answer || t.files.length > 0)
+      ? { artifacts: [{ artifactId: `${t.id}-answer`, name: 'answer', parts: [...(t.answer ? [textPart(v, t.answer)] : []), ...answerFileParts(v, t.files)] }] }
+      : {}),
   };
 }
 
@@ -259,7 +269,7 @@ async function framing(peer: string): Promise<string> {
   );
 }
 
-async function runInbound(t: InboundTask, text: string): Promise<void> {
+async function runInbound(t: InboundTask, text: string, attachments: AttachmentRef[]): Promise<void> {
   const origin: TurnOrigin = { kind: 'peer', peer: t.peer, contextId: t.contextId, taskId: t.id };
   openWork({ id: t.id, origin, target: { agent: t.agent, session: t.session }, text, waiting: false, wake: 'never' });
   const started = Date.now();
@@ -317,13 +327,16 @@ async function runInbound(t: InboundTask, text: string): Promise<void> {
       turnPrefix: await framing(t.peer),
       lockSignal: t.lockAbort.signal,
       publish: sink,
+      ...(attachments.length > 0 ? { attachments } : {}),
     });
     if (!result) setState(t, 'canceled', 'stopped before it started');
     else if (result.error === STOPPED_BY_USER) setState(t, 'canceled', 'stopped');
     else if (result.outcome === 'failed') setState(t, 'failed', result.error ?? 'the turn failed');
     else {
       t.answer = result.finalText || t.answer;
-      setState(t, t.answer.trim() ? 'completed' : 'failed', t.answer.trim() ? '' : 'the agent gave no answer');
+      t.files = await answerFiles(result.media ?? [], t.base);
+      const any = t.answer.trim() || t.files.length > 0;
+      setState(t, any ? 'completed' : 'failed', any ? '' : 'the agent gave no answer');
     }
   } catch (err) {
     setState(t, t.lockAbort.signal.aborted ? 'canceled' : 'failed', t.lockAbort.signal.aborted ? 'stopped before it started' : (err as Error).message);
@@ -332,6 +345,23 @@ async function runInbound(t: InboundTask, text: string): Promise<void> {
     t.running = false;
     logger.info({ msg: 'a2a.inbound', peer: t.peer, agent: t.agent, session: t.session, task: t.id, state: t.state, ms: Date.now() - started, answerLen: t.answer.length });
   }
+}
+
+/** Images the agent made for the task, as download links for the peer.
+ *  Videos stay out (somora's attachments take images, PDFs and text);
+ *  the answer text names them. */
+async function answerFiles(media: Array<{ type: string; path: string; filename: string; mime: string }>, base: string): Promise<InboundTask['files']> {
+  const out: InboundTask['files'] = [];
+  for (const m of media) {
+    if (m.type !== 'image') continue;
+    try {
+      const s = await storeAttachment({ body: createReadStream(m.path), name: m.filename, config: config.attachments });
+      out.push({ url: fileLinkUrl(base, { hash: s.hash, name: s.name, mime: s.mime.mimeType, size: s.size }), mediaType: s.mime.mimeType, filename: s.name });
+    } catch (err) {
+      logger.warn({ msg: 'a2a.answer_file_failed', file: m.filename, err: (err as Error).message });
+    }
+  }
+  return out;
 }
 
 /** Wait until the task ends or pauses, or `ms` pass. */
@@ -365,16 +395,19 @@ async function accept(
   agent: string,
   params: { message?: A2AMessage & { parts?: A2APart[] } },
   deps: InboundDeps,
+  base: string,
 ): Promise<{ task: InboundTask } | { error: [number, string] }> {
   const msg = params?.message;
   if (!msg || !Array.isArray(msg.parts)) return { error: [-32602, 'params.message with parts is required'] };
-  const text = partsText(msg.parts).trim();
-  if (!text) return { error: [-32602, 'the message has no text'] };
-  if (text.length > config.a2a.maxMessageChars) return { error: [-32602, `the message is longer than ${config.a2a.maxMessageChars} characters`] };
   const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
   if (messageId) {
     for (const t of tasks.values()) if (t.peer === peer && t.messageIds.has(messageId)) return { task: t };
   }
+  // Text and data parts are the task; file parts become attachments.
+  const isFile = (p: A2APart) => typeof p.raw === 'string' || typeof p.url === 'string' || Boolean(p.file?.bytes || p.file?.uri);
+  let text = partsText(msg.parts.filter((p) => !isFile(p))).trim();
+  if (text.length > config.a2a.maxMessageChars) return { error: [-32602, `the message is longer than ${config.a2a.maxMessageChars} characters`] };
+  if (!text && !msg.parts.some(isFile)) return { error: [-32602, 'the message has no text'] };
   if (typeof msg.taskId === 'string' && msg.taskId) {
     const t = tasks.get(msg.taskId);
     if (!t || t.peer !== peer) return { error: [-32001, `task '${msg.taskId}' not found`] };
@@ -396,6 +429,9 @@ async function accept(
   }
 
   if (rateLimited(peer)) return { error: [-32051, `rate limit: more than ${config.a2a.rateLimitPerMinute} requests a minute`] };
+  const incoming = await incomingFiles(msg.parts, { attachments: config.attachments, allowPrivate: config.web?.fetchAllowPrivate ?? [] });
+  if ('error' in incoming) return { error: [-32602, `a file could not be taken: ${incoming.error}`] };
+  if (!text) text = incoming.files.length === 1 ? '(a file is attached)' : '(files are attached)';
   const daily = takeDailyCall(config.a2a.maxTasksPerDay, `peer-${peer}`);
   if (!daily.ok) return { error: [-32051, `daily limit reached (${config.a2a.maxTasksPerDay} tasks)`] };
 
@@ -418,15 +454,17 @@ async function accept(
     lockAbort: new AbortController(),
     running: false,
     listeners: new Set(),
+    base,
+    files: [],
   };
   tasks.set(t.id, t);
-  logger.info({ msg: 'a2a.inbound_accepted', peer, agent, session, task: t.id, contextId, chars: text.length, today: daily.count });
+  logger.info({ msg: 'a2a.inbound_accepted', peer, agent, session, task: t.id, contextId, chars: text.length, files: incoming.files.length, today: daily.count });
   try {
     deps.notify?.(peer, agent, daily.count);
   } catch {
     /* the inbox must not stop a task */
   }
-  void runInbound(t, text);
+  void runInbound(t, text, incoming.files);
   return { task: t };
 }
 
@@ -446,6 +484,8 @@ function cancel(t: InboundTask): boolean {
  *  endpoint, which checks the peer tokens itself. */
 export function isA2APublicPath(method: string, path: string): boolean {
   if (method === 'GET' && (path === '/.well-known/agent-card.json' || path === '/.well-known/agent.json')) return true;
+  // Download links: the signed token is the key (src/a2a/files.ts).
+  if (method === 'GET' && /^\/a2a\/files\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(path)) return true;
   const m = /^\/a2a\/agents\/[^/]+(\/\.well-known\/agent(-card)?\.json)?$/.exec(path);
   if (!m) return false;
   return m[1] ? method === 'GET' : method === 'POST';
@@ -453,6 +493,7 @@ export function isA2APublicPath(method: string, path: string): boolean {
 
 export function registerA2AInboundRoutes(app: Hono, deps: InboundDeps = {}): void {
   const enabled = () => Object.keys(config.a2a.peers).length > 0;
+  registerA2AFileRoutes(app);
 
   const cardRoute = async (c: Context, agent: string | undefined) => {
     if (!enabled() || !agent) return c.json({ error: 'not found' }, 404);
@@ -515,7 +556,7 @@ export function registerA2AInboundRoutes(app: Hono, deps: InboundDeps = {}): voi
       return c.json(rpcResult(id, { tasks: list.map((t) => taskView(v, t)) }));
     }
 
-    const accepted = await accept(peer, agent, params as { message?: A2AMessage }, deps);
+    const accepted = await accept(peer, agent, params as { message?: A2AMessage }, deps, baseUrl(c));
     if ('error' in accepted) {
       const [code, message] = accepted.error;
       return c.json(rpcError(id, code, message), code === -32051 ? 429 : 200);
@@ -558,6 +599,9 @@ function streamTask(c: Context, v: ProtocolVersion, id: RpcId, t: InboundTask, f
         if (end && x.state === 'completed' && !artifactStarted && x.answer) {
           artifactStarted = true;
           push(() => send(wrap('artifactUpdate', { taskId: x.id, contextId: x.contextId, artifact: { artifactId: `${x.id}-answer`, name: 'answer', parts: [textPart(v, x.answer)] }, append: false, lastChunk: true })));
+        }
+        if (end && x.state === 'completed' && x.files.length > 0) {
+          push(() => send(wrap('artifactUpdate', { taskId: x.id, contextId: x.contextId, artifact: { artifactId: `${x.id}-files`, name: 'files', parts: answerFileParts(v, x.files) }, append: false, lastChunk: true })));
         }
         push(() => send(status(end)));
         if (end) finished = true;

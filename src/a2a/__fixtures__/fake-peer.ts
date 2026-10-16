@@ -31,6 +31,8 @@ export interface FakePeerOptions {
   failGets?: number;
   /** Stream text in this many pieces. */
   pieces?: number;
+  /** The card's defaultInputModes. Default: text only. */
+  inputModes?: string[];
 }
 
 export interface FakePeer {
@@ -100,7 +102,7 @@ export async function startFakePeer(options: FakePeerOptions = {}): Promise<Fake
       const card: any =
         v() === '0.3'
           ? { name: 'fake', url: `${base}/rpc`, protocolVersion: '0.3.0', capabilities: { streaming: !!opts.streaming } }
-          : { name: 'fake', supportedInterfaces: [{ url: `${base}/rpc`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }], capabilities: { streaming: !!opts.streaming } };
+          : { name: 'fake', supportedInterfaces: [{ url: `${base}/rpc`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }], capabilities: { streaming: !!opts.streaming }, defaultInputModes: opts.inputModes ?? ['text/plain'] };
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(card));
       return;
     }

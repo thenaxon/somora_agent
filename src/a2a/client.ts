@@ -120,11 +120,11 @@ export async function rpc<T>(endpoint: string, method: string, params: unknown, 
 }
 
 /** A message in the version the peer speaks. */
-export function buildMessage(version: ProtocolVersion, text: string, ids: { messageId: string; contextId?: string; taskId?: string }): A2AMessage & Record<string, unknown> {
+export function buildMessage(version: ProtocolVersion, text: string, ids: { messageId: string; contextId?: string; taskId?: string }, extraParts: A2APart[] = []): A2AMessage & Record<string, unknown> {
   if (version === '0.3') {
-    return { kind: 'message', messageId: ids.messageId, role: 'user', parts: [{ kind: 'text', text }], ...(ids.contextId ? { contextId: ids.contextId } : {}), ...(ids.taskId ? { taskId: ids.taskId } : {}) };
+    return { kind: 'message', messageId: ids.messageId, role: 'user', parts: [{ kind: 'text', text }, ...extraParts], ...(ids.contextId ? { contextId: ids.contextId } : {}), ...(ids.taskId ? { taskId: ids.taskId } : {}) };
   }
-  return { messageId: ids.messageId, role: 'ROLE_USER', parts: [{ text }], ...(ids.contextId ? { contextId: ids.contextId } : {}), ...(ids.taskId ? { taskId: ids.taskId } : {}) };
+  return { messageId: ids.messageId, role: 'ROLE_USER', parts: [{ text }, ...extraParts], ...(ids.contextId ? { contextId: ids.contextId } : {}), ...(ids.taskId ? { taskId: ids.taskId } : {}) };
 }
 
 /** The task inside a SendMessage / GetTask result (v1.0 wraps it in
@@ -152,6 +152,8 @@ export interface RunTaskInput {
   card: ResolvedCard;
   token?: string;
   text: string;
+  /** File parts to send along (built for the card's version). */
+  parts?: A2APart[];
   contextId?: string;
   signal?: AbortSignal;
   /** Give up after this long (the task may go on over there). */
@@ -172,7 +174,7 @@ export async function runTask(input: RunTaskInput): Promise<TaskOutcome> {
   const deadline = Date.now() + input.maxMs;
   let version = card.version;
   const methods = () => METHODS[version];
-  const message = () => buildMessage(version, input.text, { messageId, ...(input.contextId ? { contextId: input.contextId } : {}) });
+  const message = () => buildMessage(version, input.text, { messageId, ...(input.contextId ? { contextId: input.contextId } : {}) }, input.parts ?? []);
   let taskId: string | undefined;
   let contextId = input.contextId;
   let lastState: TaskState | undefined;

@@ -229,7 +229,8 @@ More parameters:
 - **External agents.** `agent_ask` and `spawn_subagent` also reach an
   [external agent](external-agents.md) that has A2A access. Without
   `session`, `agent_ask` goes to its conversation with the asker,
-  `a2a-<asker>`. `model`, `maxRounds` and `images` are refused for it.
+  `a2a-<asker>`. `model` and `maxRounds` are refused for it; `images`
+  go along as files or download links ([A2A](a2a.md#images-and-files)).
   [A2A](a2a.md) explains the rest.
 - **Builders.** `builder_dispatch` may omit `builder` when exactly one
   builder exists. A project folder another builder is working in is

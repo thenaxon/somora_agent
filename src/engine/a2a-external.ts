@@ -13,6 +13,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { Config } from '../config/types.ts';
 import { A2AError, getCard, runTask, type TaskOutcome } from '../a2a/client.ts';
 import { acquireSlot, takeDailyCall } from '../a2a/limits.ts';
+import { outgoingFiles, type AttachmentRef } from '../a2a/files.ts';
 import { A2A_ENGINE, type TaskState } from '../a2a/protocol.ts';
 import type { ExternalAgent } from '../external/registry.ts';
 import { logger } from '../server/logger.ts';
@@ -26,6 +27,8 @@ export interface A2ATurnInput {
   /** somora session id. */
   session: string;
   text: string;
+  /** Images and files to hand over (somora attachments). */
+  attachments?: AttachmentRef[];
   signal?: AbortSignal;
   metaStore: SessionMetaStore;
   config: () => Config;
@@ -103,11 +106,19 @@ export async function* runA2ATurn(input: A2ATurnInput): AsyncGenerator<Normalize
   try {
     const card = await getCard(a2a.url, { ...(a2a.token ? { token: a2a.token } : {}), maxAgeMs: cfg.cardRefreshMinutes * 60_000, ...(input.signal ? { signal: input.signal } : {}) });
     const contextId = await contextIdFor(metaStore, ext.name, session);
-    yield meta(`sent to ${ext.name} over A2A${card.streaming ? '' : ' — it does not stream, somora checks its progress'}`, { contextId, endpoint: card.endpoint });
+    // Files go in the message where the card takes their type, else as
+    // download links in the text (docs/a2a.md#images-and-files).
+    const files = await outgoingFiles(input.attachments ?? [], card.card, card.version, input.config().a2a.publicUrl);
+    const fileNote =
+      files.inline + files.links > 0
+        ? ` with ${[files.inline > 0 ? `${files.inline} file${files.inline === 1 ? '' : 's'} in the message` : '', files.links > 0 ? `${files.links} as download link${files.links === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ')}`
+        : '';
+    yield meta(`sent to ${ext.name} over A2A${fileNote}${card.streaming ? '' : ' — it does not stream, somora checks its progress'}`, { contextId, endpoint: card.endpoint });
     const run = runTask({
       card,
       ...(a2a.token ? { token: a2a.token } : {}),
-      text: input.text,
+      text: files.note + input.text,
+      ...(files.parts.length > 0 ? { parts: files.parts } : {}),
       contextId,
       ...(input.signal ? { signal: input.signal } : {}),
       maxMs: cfg.maxTaskMinutes * 60_000,

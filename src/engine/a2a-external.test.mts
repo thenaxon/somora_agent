@@ -149,7 +149,7 @@ test('a sub-agent spawn goes over A2A too, named as a sub-task', async () => {
   assert.match(p.requests[0]!.params.message.parts[0].text, /^\[a sub-task from ada/);
 });
 
-test('refused with a reason: no A2A access, images', async () => {
+test('refused with a reason: no A2A access', async () => {
   const p = await peer();
   configure(p.url);
   const sid = await createSession('chatonly', 'x');
@@ -157,8 +157,52 @@ test('refused with a reason: no A2A access, images', async () => {
     runChatTurn({ agent: 'chatonly', session: sid, text: 'hi', fromAgent: 'ada', origin: { kind: 'agent', from: { agent: 'ada' } }, deps: { config, sessionMetaStore, tools: undefined as never, onActivity: () => {} } }),
     /without A2A access.*external\.systems\.loc\.agents\.chatonly\.a2a/,
   );
-  await assert.rejects(ask('img', 'look', { attachments: [{ hash: 'h', name: 'a.png', mime: 'image/png', size: 1 }] }), /images and files cannot be handed/);
   assert.equal(p.requests.length, 0, 'nothing reached the peer');
+});
+
+// A 1×1 PNG, stored as a somora attachment.
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+async function pngAttachment() {
+  const { storeAttachment } = await import('../attachments/store.ts');
+  const { Readable } = await import('node:stream');
+  const s = await storeAttachment({ body: Readable.from(PNG), name: 'dot.png', config: config.attachments });
+  return { hash: s.hash, name: s.name, mime: s.mime.mimeType, size: s.size };
+}
+
+test('files: a peer that takes images gets the file in the message', async () => {
+  const p = await peer({ inputModes: ['text/plain', 'image/*'] });
+  configure(p.url, { introduce: false });
+  const att = await pngAttachment();
+  const { result, history } = await ask('f-in', 'what is on it?', { attachments: [att] });
+  assert.equal(result.outcome, 'completed');
+  const parts = p.requests[0]!.params.message.parts;
+  assert.equal(parts[0].text, 'what is on it?');
+  assert.deepEqual({ ...parts[1], raw: parts[1].raw.length > 0 }, { raw: true, mediaType: 'image/png', filename: 'dot.png' });
+  assert.equal(Buffer.from(parts[1].raw, 'base64').equals(PNG), true);
+  assert.ok(history.some((e) => e.kind === 'engine_meta' && /with 1 file in the message/.test(String((e as { payload?: { text?: string } }).payload?.text))));
+});
+
+test('files: a peer that takes text only gets a download link, valid for an hour', async () => {
+  const p = await peer();
+  configure(p.url, { introduce: false });
+  config = ConfigSchema.parse({ ...JSON.parse(JSON.stringify(config)), a2a: { publicUrl: 'https://somora.example:18737' } });
+  setConfig(config);
+  const att = await pngAttachment();
+  const { result } = await ask('f-link', 'look at this', { attachments: [att] });
+  assert.equal(result.outcome, 'completed');
+  const text = p.requests[0]!.params.message.parts[0].text as string;
+  assert.match(text, /^\[Files for this task — download links, valid for one hour:\n- dot\.png \(image\/png, 1 KB\): https:\/\/somora\.example:18737\/a2a\/files\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\]\n\nlook at this$/);
+  assert.equal(p.requests[0]!.params.message.parts.length, 1, 'no file part');
+});
+
+test('files: a link without a2a.publicUrl is refused with what to set', async () => {
+  const p = await peer();
+  configure(p.url);
+  const att = await pngAttachment();
+  const { result } = await ask('f-none', 'look', { attachments: [att] });
+  assert.equal(result.outcome, 'failed');
+  assert.match(result.error ?? '', /set a2a\.publicUrl in config\.yaml/);
+  assert.equal(p.requests.length, 0);
 });
 
 test('a question back: the answer says so and how to reply', async () => {
