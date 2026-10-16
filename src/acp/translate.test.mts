@@ -227,3 +227,10 @@ test('a stopped turn ends with the text so far and the marker every engine uses'
   const empty = new AcpTurnTranslator('t', 'acp', () => 1).finish('cancelled').find((e) => e.kind === 'assistant_message') as { text: string };
   assert.equal(empty.text, '[somora] aborted by user');
 });
+
+test('somora → ACP: blank lines a stream starts with are not sent, and a trimmed final text adds nothing', () => {
+  const s = new SomoraToAcp();
+  const e = (text: string, kind = 'assistant_delta') => ({ ts: 1, engine: 'x', kind, text }) as NormalizedEvent;
+  const pieces = [...s.update(e('\n\nPO')), ...s.update(e('\n\nPONG')), ...s.update(e('PONG', 'assistant_message'))].map((u) => (u as any).content.text);
+  assert.deepEqual(pieces, ['PO', 'NG']);
+});

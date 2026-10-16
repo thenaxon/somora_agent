@@ -314,8 +314,12 @@ const textBlock = (text: string): ContentBlock => ({ type: 'text', text });
 /** What to send for a cumulative text, given what was sent. Usually the
  *  new suffix. A text that no longer extends the sent one (a stopped turn
  *  ends as "…partial [somora] aborted by user") sends what differs after
- *  the common start, on a new line — ACP cannot take sent text back. */
-function nextPiece(sent: string, text: string): [piece: string, sent: string] {
+ *  the common start, on a new line — ACP cannot take sent text back.
+ *  Leading whitespace is never sent. */
+function nextPiece(sent: string, raw: string): [piece: string, sent: string] {
+  // Leading blank lines carry nothing, and a model's final text often
+  // drops the ones its stream started with.
+  const text = raw.trimStart();
   if (text.startsWith(sent)) return [text.slice(sent.length), text];
   if (sent.startsWith(text)) return ['', sent];
   let i = 0;
