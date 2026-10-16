@@ -12,6 +12,7 @@ import { checkWriteAllowed, expandHome } from '../../tools/file/policy.ts';
 import { registerAskCall } from '../ask-calls.ts';
 import { claimOfSession, describeClaim, listWorkdirClaims, workdirClaimedBy } from '../builder-busy.ts';
 import { answerQuestion, askQuestion, pendingQuestion } from '../builder-questions.ts';
+import { CHAT_QUESTION_TIMEOUT_MS, TURN_ATTENDED_KEY } from '../ask-attended.ts';
 import { type BuilderMode, type BuilderPhase, DEFAULT_PLAN_FILE, type TodoItem, archiveNameFor, patchBuilderState, readBuilderState } from '../builder-session.ts';
 import { logger } from '../logger.ts';
 import { config } from '../server-state.ts';
@@ -317,6 +318,15 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
       .filter((o): o is { label: string; description?: string } => o !== null)
       .slice(0, 6);
     if (options.length < 2) return c.json({ error: 'at least two options with a label' }, 400);
+    // A chat agent asks only in a turn a person started (ask-attended.ts).
+    // The tool is not offered otherwise; this catches a call that slips
+    // through (an old tool list, a direct HTTP call) before it waits.
+    if (r.persona.kind !== 'builder') {
+      const meta = (await sessionMetaStore.get(r.agent, r.session)) as Record<string, unknown>;
+      if (meta[TURN_ATTENDED_KEY] !== true) {
+        return c.json({ answered: false, answers: [], text: 'nobody is watching this turn — decide yourself and say what you decided' });
+      }
+    }
     const answer = await askQuestion(
       {
         agent: r.agent,
@@ -325,7 +335,9 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
         ...(typeof body.header === 'string' && body.header.trim() ? { header: body.header.trim().slice(0, 40) } : {}),
         options,
         multiple: body.multiple === true,
-        ...(typeof body.timeout_ms === 'number' ? { timeoutMs: body.timeout_ms } : {}),
+        // A builder's question may wait 30 minutes; a chat agent's turn
+        // holds the conversation, so 10 unless it asks for another time.
+        ...(typeof body.timeout_ms === 'number' ? { timeoutMs: body.timeout_ms } : r.persona.kind !== 'builder' ? { timeoutMs: CHAT_QUESTION_TIMEOUT_MS } : {}),
       },
       (q) => {
         void publish(r.agent, r.session, {

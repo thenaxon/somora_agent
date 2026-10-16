@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
 import { DEFAULT_QUESTION_TIMEOUT_MS, MAX_QUESTION_TIMEOUT_MS } from '../../server/builder-questions.ts';
+import { CHAT_QUESTION_TIMEOUT_MS } from '../../server/ask-attended.ts';
 import type { ToolDefinition } from '../types.ts';
 
 function baseUrl(): string {
@@ -126,13 +127,15 @@ const AskInput = z
       .min(10_000)
       .max(MAX_QUESTION_TIMEOUT_MS)
       .optional()
-      .describe(`How long to wait for the person (default ${DEFAULT_QUESTION_TIMEOUT_MS / 60000} min).`),
+      .describe(`How long to wait for the person (default ${DEFAULT_QUESTION_TIMEOUT_MS / 60000} min for a builder, ${CHAT_QUESTION_TIMEOUT_MS / 60000} min for other agents).`),
   })
   .strict();
 
 export const askUser: ToolDefinition<z.infer<typeof AskInput>> = {
   name: 'ask_user',
-  toolset: 'builder',
+  // Every agent's, not only a builder's: asking the person is talking,
+  // like agent_ask. Offered only while someone watches (sessionOffersAsk).
+  toolset: 'agents',
   description:
     'Ask the person watching this session a question with options; the call waits for the answer (or a ' +
     'timeout) and returns it. Use it for a real fork in the road you cannot decide from the code or the ' +
@@ -158,7 +161,7 @@ export const askUser: ToolDefinition<z.infer<typeof AskInput>> = {
         },
       },
       multiple: { type: 'boolean', description: 'Allow more than one choice.' },
-      timeout_ms: { type: 'integer', description: 'Wait time in ms (default 30 min).' },
+      timeout_ms: { type: 'integer', description: 'Wait time in ms (default 30 min for a builder, 10 min for other agents).' },
     },
     required: ['question', 'options'],
     additionalProperties: false,

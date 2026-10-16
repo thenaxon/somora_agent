@@ -107,7 +107,8 @@ import { findBinary, LSP_SERVERS } from '../lsp/registry.ts';
 import { configureModelAvailability, listUnavailableModels } from '../engine/model-availability.ts';
 import { Inbox } from './inbox.ts';
 import { inboxFromLog, inboxFromState } from './inbox-sources.ts';
-import { builderSessionAllows, readBuilderState } from './builder-session.ts';
+import { readBuilderState } from './builder-session.ts';
+import { sessionToolAllows } from './ask-attended.ts';
 import { configureStartTurn, startTurn } from './start-turn.ts';
 import type { TurnOrigin } from './turn-origin-kind.ts';
 import { VoiceCallManager } from '../voice/realtime/manager.ts';
@@ -747,7 +748,7 @@ export async function nextTurnPrompt(
   const previewBuilderState = persona.kind === 'builder' ? readBuilderState(sessionMeta as Record<string, unknown>) : null;
   const previewGating = withSessionDeny(persona.toolGating, sessionToolDeny(config, sessionMeta));
   const available = (await tools.listAvailable(toolCtx)).filter(
-    (t) => isToolAllowed(t.name, t.toolset, previewGating) && builderSessionAllows(previewBuilderState, t.name),
+    (t) => isToolAllowed(t.name, t.toolset, previewGating) && sessionToolAllows(persona.kind, previewBuilderState, sessionMeta as Record<string, unknown>, t.name),
   );
   const assembled = await assembleSystemPrompt({
     agent,

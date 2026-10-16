@@ -1522,8 +1522,8 @@ every client edits the same way. Body:
 
 Returns `{ok: true, gating}` with the rules now in `agent.yaml`. Only
 the named entries change state. `400` for a wrong body, an unknown
-name, or a builder-only tool (`todo_write`, `ask_user`, `plan_write`)
-for a chat agent. `409` with `lockedBy: "dreams"` for a tool that
+name, or a builder-only tool (`todo_write`, `plan_write`) for a chat
+agent. `409` with `lockedBy: "dreams"` for a tool that
 follows the dreams switch. `404` for an unknown agent. Clicks on one agent run
 one after another, and each write keeps the previous `agent.yaml` as a
 backup (the newest five stay).
@@ -1785,7 +1785,10 @@ that had already ended are skipped. `404` for an unknown id.
 Agents of kind `builder` keep a mode, a phase, a plan file and a task
 list per session, and at most one open question to the person. The web
 client's task panel uses these routes, and so do the builder's own
-tools `todo_write`, `ask_user` and `plan_write`.
+tools `todo_write` and `plan_write`. `POST …/ask` (the `ask_user` tool)
+serves every agent: a chat agent's question outside a turn a person
+started returns `{answered: false}` at once, and waits 10 minutes by
+default instead of 30.
 
 ### `GET /agents/:agent/sessions/:session/builder`
 

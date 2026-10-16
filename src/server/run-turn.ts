@@ -46,7 +46,8 @@ import { runTurnWithFallback } from './run-turn-fallback.ts';
 import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
 import { drainSteer, frameSteerMessage, markSteerable, requeueSteer, unmarkSteerable } from './steer-inbox.ts';
 import { BUILDER_LOOP_DEFAULTS } from './builder-prompt.ts';
-import { builderSessionAllows, ensureBuilderState, type BuilderSessionState } from './builder-session.ts';
+import { ensureBuilderState, type BuilderSessionState } from './builder-session.ts';
+import { TURN_ATTENDED_KEY, isAttendedOrigin, sessionToolAllows } from './ask-attended.ts';
 import { builderToolDescription } from '../tools/builder/short-descriptions.ts';
 import { workdirFromMeta } from './session-workdir.ts';
 import { claimWorkdir, describeClaim, noteToolCall, workdirClaimedBy } from './builder-busy.ts';
@@ -972,9 +973,21 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         throw new Error(`folder busy: ${describeClaim(held)}`);
       }
       claimWorkdir({ agent, session, turnId, workdir: folder });
+    } else {
+      // A chat agent may ask the person (ask_user) only in a turn the
+      // person started. Written before the engine starts: the MCP child
+      // reads it from here (ask-attended.ts).
+      const attended = isAttendedOrigin(origin);
+      if ((sessionMeta as Record<string, unknown>)[TURN_ATTENDED_KEY] !== attended) {
+        sessionMeta = await deps.sessionMetaStore.update(agent, session, (m) => ({ ...m, [TURN_ATTENDED_KEY]: attended }));
+      }
     }
     const availableTools = (await deps.tools.listAvailable(toolCtx))
-      .filter((t) => isToolAllowed(t.name, t.toolset, withSessionDeny(persona.toolGating, subDeny)) && builderSessionAllows(builderState, t.name))
+      .filter(
+        (t) =>
+          isToolAllowed(t.name, t.toolset, withSessionDeny(persona.toolGating, subDeny)) &&
+          sessionToolAllows(persona.kind, builderState, sessionMeta as Record<string, unknown>, t.name),
+      )
       // A builder's model sees the short descriptions (its harness prompt
       // carries the policy); the registry and every chat agent keep the
       // long ones.

@@ -30,7 +30,8 @@ import { mcpInputSchemaFor } from './tool-schema.ts';
 import { loadPersona } from '../persona/loader.ts';
 import { logger } from '../server/logger.ts';
 import { isToolAllowed, sessionToolDeny, withSessionDeny } from '../tools/gating.ts';
-import { builderSessionAllows, readBuilderState } from '../server/builder-session.ts';
+import { readBuilderState } from '../server/builder-session.ts';
+import { sessionToolAllows } from '../server/ask-attended.ts';
 import { killRunningLocalExecs } from '../tools/exec/local.ts';
 import { builderToolDescription } from '../tools/builder/short-descriptions.ts';
 import { sessionMetaStore } from '../storage/sessions.ts';
@@ -267,10 +268,9 @@ async function main(): Promise<void> {
   const toolGating = withSessionDeny(persona?.toolGating, subDeny);
   // Builder sessions: mode and phase hide tools too (builder-session.ts),
   // the same way run-turn hides them for the openai-compatible engine.
-  const builderState =
-    persona?.kind === 'builder' && session
-      ? readBuilderState((await sessionMetaStore.get(agent, session)) as Record<string, unknown>)
-      : null;
+  // Any session: whether ask_user is offered (ask-attended.ts).
+  const sessionMeta = session ? ((await sessionMetaStore.get(agent, session)) as Record<string, unknown>) : {};
+  const builderState = persona?.kind === 'builder' && session ? readBuilderState(sessionMeta) : null;
 
   // ...and the same availability probe, for the same reason. run-turn
   // builds the model's list from listAvailable(ctx); this used to walk
@@ -286,7 +286,7 @@ async function main(): Promise<void> {
   // passes SOMORA_ACTIVE_MODEL per turn — so this tracks config
   // changes at the same rate the openai-compatible path does.
   for (const tool of await registry.listAvailable(ctx)) {
-    if (!isToolAllowed(tool.name, tool.toolset, toolGating) || !builderSessionAllows(builderState, tool.name)) {
+    if (!isToolAllowed(tool.name, tool.toolset, toolGating) || !sessionToolAllows(persona?.kind, builderState, sessionMeta, tool.name)) {
       logger.debug({ msg: 'mcp.tool_gated', agent, tool: tool.name });
       continue;
     }

@@ -173,6 +173,7 @@ Toolset `agents`.
 | `session_list` | Lists chat sessions: the agent's own, another agent's with `agent`, everyone's with `"*"`. |
 | `session_model` | Switches the model of an existing session, or clears the override with `clear:true`. |
 | `builder_dispatch` | Hands a build order to a builder agent and returns a `call_id`. |
+| `ask_user` | Asks you a question with options and waits for your answer. |
 
 A sub-agent session does not get the tools in `subagents.tools.deny`,
 by default `agent_ask`, `agent_ask_result` and `agent_ask_cancel`: its
@@ -291,11 +292,9 @@ Toolset `builder`.
 | Tool | What it does |
 |---|---|
 | `todo_write` | Keeps the session's task list shown in the task panel. |
-| `ask_user` | Asks the person watching a question and waits for the answer. |
 | `plan_write` | Writes the plan file. It is the one write allowed in the plan phase. |
 
-`ask_user` is offered only while the session is attended. In the plan
-phase a builder does not get `file_write`, `file_patch`, `process`,
+In the plan phase a builder does not get `file_write`, `file_patch`, `process`,
 `spawn_subagent` and `subagent_result`.
 
 ### Tools from MCP servers
@@ -395,9 +394,27 @@ from it. In the Abilities window a builder shows two groups: its own
 list, and every other tool under "more", off until you switch one on.
 Tools added later stay off for a builder.
 
-The three `builder` tools, `todo_write`, `ask_user` and `plan_write`,
-belong to builders only. A chat agent never gets them, whatever its
-`agent.yaml` says, and the window does not offer them.
+The two `builder` tools, `todo_write` and `plan_write`, belong to
+builders only. A chat agent never gets them, whatever its `agent.yaml`
+says, and the window does not offer them.
+
+### Questions to you
+
+`ask_user` lets an agent ask you a question with two to six options,
+each with a short explanation, and wait for your answer. The question
+appears as a card above the input in the web client and on the phone,
+and with numbered options in the TUI. It is offered only while someone
+watches:
+
+| Agent | Offered when |
+|---|---|
+| Chat agent | The turn was started by you, typed or spoken. Never in a turn from Sentinel, another agent or a sub-agent: nobody would answer. |
+| Builder | The session is attended (see [Builder agents](builder.md)). |
+
+A chat agent's question waits 10 minutes, a builder's 30, unless the
+agent asks for another time. Without an answer the agent decides
+itself and says what it decided. Like any tool, `tools.deny:
+[ask_user]` in `agent.yaml` keeps an agent from it.
 
 ## How a tool reaches the model
 

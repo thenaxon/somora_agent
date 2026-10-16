@@ -371,9 +371,9 @@ What a builder is offered by default. Everything else is off until
 |---|---|
 | Files | `file_read`, `file_write`, `file_patch`, `file_search`, `file_list`, `analyze_file` |
 | Shell | `exec`, `process` |
-| Builder | `todo_write`, `ask_user`, `plan_write` |
+| Builder | `todo_write`, `plan_write` |
 | Helpers | `spawn_subagent`, `subagent_result`, `subagent_cancel` |
-| Colleagues | `agent_ask`, `agent_ask_result` |
+| Colleagues and you | `agent_ask`, `agent_ask_result`, `ask_user` (offered while the session is attended; [every agent](tools.md#questions-to-you) has it) |
 | Skills | `skill`, `skill_list` |
 | Web | `web_fetch`, `web_search` |
 | Projects | `project_get`, `project_list`, `project_create`, `project_focus` |
