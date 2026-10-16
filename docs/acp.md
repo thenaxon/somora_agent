@@ -182,8 +182,9 @@ never writes to (its health check) leaves nothing behind.
   conversation released it. Use bindings in OpenClaw's own channels, and
   `sessions_spawn` from a chat that runs through somora.
 - **Late results.** A result OpenClaw delivers after the turn (a
-  `sessions_spawn` sub-task that finishes) appears in somora's chat with
-  the OpenClaw agent as its own message, marked "sent on its own", see
+  `sessions_spawn` sub-task that finishes) does not reach somora's chat
+  on its own: OpenClaw's ACP bridge sends nothing between turns. The
+  OpenClaw agent reports it with your next message, see
   [External agents](external-agents.md#messages-it-sends-on-its-own).
 
 Hermes has no counterpart to acpx: it uses ACP only to run Copilot as a

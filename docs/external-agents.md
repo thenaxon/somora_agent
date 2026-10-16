@@ -157,10 +157,10 @@ closes the card in all of them. In the TUI, type the option's number.
 
 ## Messages it sends on its own
 
-An agent can write again after it has answered: OpenClaw reports a
-sub-task it started with `sessions_spawn` when the sub-task finishes,
-and other systems push reminders or late results the same way. somora
-listens on the open connection between turns too:
+An agent can write again after it has answered, for example with the
+result of a sub-task, a reminder or a late result. somora listens on the
+open connection between turns too, so whatever the agent system sends
+then is shown:
 
 - What arrives is collected until the agent has been quiet for two
   seconds. Then it appears in the chat as its own message, with the note
@@ -177,6 +177,11 @@ somora hears the agent only while the connection is open. It closes
 after a while without use, see `external.idleMinutes` in
 [Settings for all systems](#settings-for-all-systems). Anything the agent
 sends after that, it repeats from its own history when you write next.
+
+OpenClaw (tested with 2026.10.3) sends nothing between turns: its ACP
+bridge drops updates when no prompt is running. A sub-task started with
+`sessions_spawn` finishes on the OpenClaw side, and the agent tells you
+the result with your next message.
 
 ## Let your agents hand it work
 
@@ -216,7 +221,7 @@ Nothing changes on the other system: its sessions there go on as before.
 | A note that the earlier session was gone | The other side no longer had the conversation, for example after its own restart. The chat continues in a new one there. |
 | The tile shows initials instead of 🦞 or ☤ | somora did not recognise the system from the command. It does after the first message, or set `profile` or `badge`. |
 | The model menu is missing | Expected: the agent's model is set on its own system. |
-| A result the agent finishes later, after its turn, is missing | somora shows what the agent sends on its own while the connection is open, see [Messages it sends on its own](#messages-it-sends-on-its-own). After the connection closed for being unused, the agent tells you with your next message. |
+| A result the agent finishes later, after its turn, is missing | somora shows what the agent sends on its own while the connection is open, see [Messages it sends on its own](#messages-it-sends-on-its-own). OpenClaw sends nothing between turns, and no agent can after the connection closed for being unused: the agent tells you with your next message. |
 
 The server log names every turn with `external.turn`, including the
 time it took, the tool calls and the stop reason.
