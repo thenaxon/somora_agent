@@ -66,6 +66,7 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
   // External agents over ACP (docs/external-agents.md).
   acp: {
     external_session_new: 'new session over there',
+    external_unprompted: 'sent on its own',
   },
   // External agents over A2A (docs/a2a.md): how a task handed over is
   // getting on — sent, waiting for a free slot, working, stopped.
@@ -148,7 +149,7 @@ export function summariseEngineMeta(
     const p = payload as { text?: unknown } | null | undefined;
     return typeof p?.text === 'string' ? p.text : undefined;
   }
-  if ((engine === 'a2a' && itemType === 'a2a_task') || (engine === 'acp' && itemType === 'external_session_new')) {
+  if ((engine === 'a2a' && itemType === 'a2a_task') || (engine === 'acp' && (itemType === 'external_session_new' || itemType === 'external_unprompted'))) {
     const p = payload as { text?: unknown; message?: unknown } | null | undefined;
     return typeof p?.text === 'string' ? p.text : typeof p?.message === 'string' ? p.message : undefined;
   }

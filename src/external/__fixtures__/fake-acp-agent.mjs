@@ -6,6 +6,9 @@
 //   "crash"      exits in the middle of the turn
 //   "remember X" / "recall"  session memory across turns
 //   images       the reply counts the image blocks
+//   "later"      replies "on it", then — after the turn — a straggler at
+//                once and, FAKE_LATER_MS later, a result on its own
+//                (a tool call and a reply in pieces)
 // Env: FAKE_AGENT_NAME (agentInfo.name), FAKE_NO_RESUME=1 (offer load only),
 //      FAKE_STDERR (written to stderr at start), FAKE_FAIL_INIT=1.
 import { Readable, Writable } from 'node:stream';
@@ -77,6 +80,16 @@ new AgentSideConnection((conn) => {
       };
       await update(sid, { sessionUpdate: 'agent_thought_chunk', content: text(`thinking about: ${t.slice(0, 40)}`) });
 
+      if (t.includes('later')) {
+        await say('on it');
+        setTimeout(() => void update(sid, { sessionUpdate: 'agent_message_chunk', content: text('straggler') }), 30);
+        setTimeout(async () => {
+          await update(sid, { sessionUpdate: 'tool_call', toolCallId: 'late1', title: 'exec: make report', kind: 'execute', status: 'in_progress', rawInput: { command: 'make report' } });
+          await update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'late1', status: 'completed', content: [{ type: 'content', content: text('built') }] });
+          for (const piece of ['the late ', 'result ', 'is ready']) await update(sid, { sessionUpdate: 'agent_message_chunk', content: text(piece) });
+        }, Number(process.env.FAKE_LATER_MS ?? 600));
+        return { stopReason: 'end_turn' };
+      }
       if (t.includes('crash')) {
         await update(sid, { sessionUpdate: 'agent_message_chunk', content: text('about to') });
         setTimeout(() => process.exit(3), 50);

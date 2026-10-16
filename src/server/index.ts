@@ -156,6 +156,7 @@ import { registerThemeRoutes } from './routes/themes.ts';
 import { registerExternalRoutes } from './routes/external.ts';
 import { archiveIdlePeerSessions, registerA2AInboundRoutes } from '../a2a/server.ts';
 import { closeAllExternal } from '../external/connection.ts';
+import { configureUnprompted } from '../external/unprompted.ts';
 
 type Subscriber = (e: SseEvent) => Promise<void>;
 interface StreamSub {
@@ -1069,6 +1070,9 @@ configureSpawnTools({ chatTurnDeps });
 // timer, woken by a watcher — starts through startTurn from here on:
 // one lock, one abort registration, one turn id, one SSE wiring.
 configureStartTurn({ chatTurnDeps, publish });
+// What an external agent sends on its own between turns (a sub-task's
+// result) is written into its session and shown (src/external/unprompted.ts).
+configureUnprompted({ publish });
 {
   const consult = config.realtimeVoice?.consult;
   if (consult && (consult.lockPatienceMs !== undefined || consult.answerPatienceMs !== undefined)) {

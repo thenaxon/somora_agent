@@ -15,6 +15,7 @@ import { runExternalTurn } from '../engine/acp-external.ts';
 import { getResolvedTeam } from '../team/store.ts';
 import { A2A_QUIET_KEY } from '../tools/gating.ts';
 import type { ExternalAgent } from '../external/registry.ts';
+import { flushUnprompted } from '../external/unprompted.ts';
 import { appendEvent, getHistory } from '../storage/sessions.ts';
 import { askQuestion, dropQuestions } from './builder-questions.ts';
 import { healOrphanToolCalls } from './heal-session.ts';
@@ -45,6 +46,9 @@ export async function runExternalChatTurn(args: RunChatTurnArgs, ext: ExternalAg
   if (delegated) {
     await deps.sessionMetaStore.update(agent, session, (m) => (m[A2A_QUIET_KEY] === true ? m : { ...m, [A2A_QUIET_KEY]: true }));
   }
+
+  // What the agent sent on its own since its last turn goes in first.
+  await flushUnprompted(agent, session);
 
   try {
     await healOrphanToolCalls({ agent, session, history: await getHistory(agent, session), metaStore: deps.sessionMetaStore, fallbackEngine: ACP_ENGINE });

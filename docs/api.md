@@ -869,7 +869,7 @@ All events:
 | `turn_dequeued` | A waiting entry was removed with `DELETE /chat/queue/:id` | `{turnId, workId}` |
 | `steer_queued` | A steered message was accepted for the running turn | `{steerId, text, ts, turnId, origin}` |
 | `turn_started` | The engine opened the turn | `{turnId}` |
-| `agent` | The model call starts and ends | `{phase: "start"\|"end", usage?, contextWindow?, provider?, model?, thinking?, fallback?, external?}`. `external: {system}` marks an external agent's turn. |
+| `agent` | The model call starts and ends | `{phase: "start"\|"end", usage?, contextWindow?, provider?, model?, thinking?, fallback?, external?}`. `external: {system}` marks an external agent's turn; `external.unprompted: true` a message it sent on its own, outside a turn. |
 | `memory` | After `agent` start: what recall put into the turn | `{count, topScore?, refs, fullText}` |
 | `thinking` | The model's reasoning text | `{state: "delta"\|"final", text, truncated?}` |
 | `chat` | The reply text | `{state: "delta"\|"final", text}` |
@@ -3307,6 +3307,14 @@ sub-agent). In its session, the turn's `agent` start and end events carry
 `payload.state` such as `working`). Taking a running `agent_ask` back
 (`DELETE /chat/queue/:id` with `withdraw_running`) stops the task and
 answers `stopped: true`.
+
+A message the agent sends on its own between turns
+([Messages it sends on its own](external-agents.md#messages-it-sends-on-its-own))
+arrives on the session's stream like a turn nobody started: an `agent`
+start with `external.unprompted: true`, an `engine_meta` with engine
+`acp` and `itemType: "external_unprompted"` (`payload.text` says who
+wrote), its tool calls and `chat` events, and an `agent` end. History
+stores it between `turn_start` and `turn_end` like any answer.
 
 ### `GET /external`
 

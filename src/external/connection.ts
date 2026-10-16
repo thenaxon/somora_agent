@@ -68,8 +68,26 @@ function fingerprint(ext: ExternalAgent): string {
   return JSON.stringify([ext.systemConfig.transport, ext.agent.command, ext.agent.cwd ?? '', ext.systemConfig.profile ?? '']);
 }
 
+/** Where updates go that arrive between turns: something the agent sends
+ *  on its own (a sub-task's result, a reminder). Set by the server
+ *  (src/external/unprompted.ts); without it they are dropped as before. */
+type UnpromptedSink = (ext: ExternalAgent, session: string, update: SessionUpdate) => void;
+let unpromptedSink: UnpromptedSink | null = null;
+export function setUnpromptedSink(sink: UnpromptedSink | null, opts: { graceMs?: number } = {}): void {
+  unpromptedSink = sink;
+  afterTurnGraceMs = opts.graceMs ?? AFTER_TURN_GRACE_MS;
+}
+
+/** Updates in the first moments after a turn belong to that turn (Hermes
+ *  sends a last piece after a cancel), not to a new message. */
+const AFTER_TURN_GRACE_MS = 3_000;
+let afterTurnGraceMs = AFTER_TURN_GRACE_MS;
+
 export class ExternalConnection {
   private handlers: PromptHandlers | null = null;
+  private turnEndedAt = 0;
+  /** The somora session this connection serves. */
+  somoraSession = '';
   /** While `session/load` replays history, its updates are not a turn. */
   private replaying = false;
   private dead: string | null = null;
@@ -111,7 +129,13 @@ export class ExternalConnection {
         sessionUpdate: async (p) => {
           if (!self || self.replaying) return;
           if (self.sessionId && p.sessionId !== self.sessionId) return;
-          self.handlers?.onUpdate(p.update);
+          if (self.handlers) {
+            self.handlers.onUpdate(p.update);
+            return;
+          }
+          if (Date.now() - self.turnEndedAt < afterTurnGraceMs || !self.somoraSession) return;
+          self.lastUsed = Date.now();
+          unpromptedSink?.(self.ext, self.somoraSession, p.update);
         },
         requestPermission: async (p) => {
           if (!self?.handlers) return { outcome: { outcome: 'cancelled' } };
@@ -231,6 +255,7 @@ export class ExternalConnection {
     } finally {
       signal?.removeEventListener('abort', onAbort);
       this.handlers = null;
+      this.turnEndedAt = Date.now();
       this.lastUsed = Date.now();
     }
   }
@@ -276,6 +301,7 @@ export async function connectionFor(ext: ExternalAgent, session: string, config:
   if (pending) return pending;
   const p = ExternalConnection.open(ext, config())
     .then((c) => {
+      c.somoraSession = session;
       connections.set(k, c);
       return c;
     })

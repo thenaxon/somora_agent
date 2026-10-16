@@ -473,8 +473,9 @@ export type SseEvent =
         thinking?: { level: 'off' | 'low' | 'medium' | 'high'; active: boolean };
         /** Set on phase:'end' when the turn was answered by the fallback model. */
         fallback?: ModelFallbackInfo;
-        /** An external agent's turn (docs/external-agents.md): its system. */
-        external?: { system: string };
+        /** An external agent's turn (docs/external-agents.md): its system;
+         *  `unprompted` when the agent wrote on its own, outside a turn. */
+        external?: { system: string; unprompted?: boolean };
       };
     }
   | { event: 'model_fallback'; data: ModelFallbackInfo }
