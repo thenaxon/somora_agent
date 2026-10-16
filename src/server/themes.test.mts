@@ -158,6 +158,16 @@ test('no themes folder: an empty list, not an error', async () => {
   assert.deepEqual(await listThemes(join(root(), 'does-not-exist')), { themes: [], invalid: [] });
 });
 
+test('a wallpaper that is not the image its name says makes the theme invalid when listed', async () => {
+  const dir = root();
+  theme(dir, 'fake', { dark: { wallpaper: 'w.png' } }, { 'w.png': 'not a png' });
+  theme(dir, 'swapped', { dark: { wallpaper: 'w.png' } }, { 'w.png': JPG });
+  const { themes, invalid } = await listThemes(dir);
+  assert.deepEqual(themes.map((t) => t.id), []);
+  assert.match(invalid.find((t) => t.id === 'fake')!.error, /"w.png" is not a PNG image/);
+  assert.match(invalid.find((t) => t.id === 'swapped')!.error, /is not a PNG image/);
+});
+
 test('a missing wallpaper file makes the theme invalid', async () => {
   const dir = root();
   theme(dir, 'nopic', { dark: { wallpaper: 'gone.jpg' } });

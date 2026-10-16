@@ -288,17 +288,10 @@ Window shapes, blur, shadows, fonts and icons are not part of a theme.
 Terminal and tmux windows stay dark. Themes are for the web client
 only.
 
-Example themes to copy lie in `docs/themes/` of the somora checkout or
-install:
-
-| Folder | Theme |
-|---|---|
-| `ocean` | Deep blue at night, sky blue by day. Both versions, no grid. |
-| `sepia-paper` | Warm paper tones. Light only. |
-| `luzudemca` | Near black with a vivid purple accent and grid. Dark only. |
-| `loops` | A dark wallpaper with purple arcs. Dark only. |
-
-Copy a folder into `~/.somora/themes/` and pick it in the screen menu:
+An example theme to copy lies in `docs/themes/ocean/` of the somora
+checkout or install: deep blue at night, sky blue by day, with both
+versions, recoloured glows and no grid. Copy it into
+`~/.somora/themes/` and pick it in the screen menu:
 
 ```bash
 cp -r "$(npm root -g)/somora/docs/themes/ocean" ~/.somora/themes/

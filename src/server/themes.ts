@@ -11,7 +11,7 @@
 
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
-import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { lstat, open, readdir, readFile, realpath, stat } from 'node:fs/promises';
 
 /** Colour tokens a theme may set (web/src/styles/tokens.css). */
 export const THEME_COLOR_TOKENS = [
@@ -323,6 +323,12 @@ export async function loadTheme(id: string, root = themesDir()): Promise<Theme |
     if (v.wallpaper) {
       const found = await insideFolder(dir, v.wallpaper);
       if ('error' in found) return { id, error: found.error };
+      // The image type on the bytes already here, not only when served:
+      // a theme listed as valid must not leave the desktop blank when picked.
+      const type = WALLPAPER_TYPES[extension(v.wallpaper)]!;
+      if (!looksLike(type, await headBytes(found.path))) {
+        return { id, error: `wallpaper "${v.wallpaper}" is not a ${type.slice(6).toUpperCase()} image` };
+      }
       wallpaperMtimeMs = Math.floor((await stat(found.path)).mtimeMs);
     }
     versions[base] = {
@@ -347,6 +353,18 @@ export async function listThemes(root = themesDir()): Promise<{ themes: Theme[];
     else themes.push(t);
   }
   return { themes, invalid };
+}
+
+/** The first bytes of a file, enough for looksLike. */
+async function headBytes(path: string): Promise<Buffer> {
+  const fh = await open(path, 'r');
+  try {
+    const buf = Buffer.alloc(12);
+    const { bytesRead } = await fh.read(buf, 0, 12, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await fh.close();
+  }
 }
 
 function looksLike(type: string, bytes: Buffer): boolean {
