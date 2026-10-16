@@ -958,7 +958,7 @@ providers:
 #   replyTimeoutSeconds: 300            # a waiting request returns "working" after this
 #   archiveAfterDays: 7                 # quiet conversations with peers are archived
 #   tools:
-#     deny: [agent_ask, agent_ask_result, agent_ask_cancel, spawn_subagent, spawn_subagents, builder_dispatch, session_model]
+#     deny: [agent_ask, agent_ask_result, agent_ask_cancel, spawn_subagent, spawn_subagents, builder_dispatch, session_model, sentinel]
 
 # Web-tools credentials. Per-provider keys — tools whose provider isn't
 # configured are hidden from the agent (the `available()` probe on the

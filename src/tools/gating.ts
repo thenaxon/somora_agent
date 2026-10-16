@@ -233,9 +233,10 @@ export function sessionToolDeny(
  *  gating has no config import. Same as config/types.ts. A task from
  *  another system sets off no further agent work: no asking colleagues,
  *  no sub-agents (they could carry another agent's persona), no builder
- *  orders, no switching another session's model. Found missing in the
- *  live test of 2026.1016.8, where only the agent_ask family was denied. */
-export const DEFAULT_A2A_INBOUND_TOOL_DENY: readonly string[] = ['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'spawn_subagent', 'spawn_subagents', 'builder_dispatch', 'session_model'];
+ *  orders, no switching another session's model, no Sentinel triggers
+ *  (they wake agents, and an outside system should not leave schedules
+ *  behind). Found missing in the live tests of 2026.1016.8 and .9. */
+export const DEFAULT_A2A_INBOUND_TOOL_DENY: readonly string[] = ['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'spawn_subagent', 'spawn_subagents', 'builder_dispatch', 'session_model', 'sentinel'];
 
 /** The agent's gating with a session's own rules on top. */
 export function withSessionDeny(gating: ToolGating | undefined, deny: readonly string[]): ToolGating | undefined {

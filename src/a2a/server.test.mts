@@ -306,7 +306,7 @@ test('wrong tokens slow down their own address only, not the peers with the righ
 test('by default a task from outside sets off no further agent work', () => {
   const meta = { a2aPeer: { peer: 'hermes', contextId: 'c' } };
   const deny = sessionToolDeny(ConfigSchema.parse({ providers: {} }), meta);
-  for (const t of ['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'spawn_subagent', 'spawn_subagents', 'builder_dispatch', 'session_model']) {
+  for (const t of ['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'spawn_subagent', 'spawn_subagents', 'builder_dispatch', 'session_model', 'sentinel']) {
     assert.ok(deny.includes(t), t);
   }
   assert.equal(deny.includes('ask_user'), false, 'its question goes back to the sender');
