@@ -28,6 +28,7 @@ function chartLines(team: ResolvedTeam, self: string): string[] {
       const a = team.agents[name]!;
       lines.push(
         `${prefix}${last ? '└── ' : '├── '}${name} — ${a.title}` +
+          (a.external ? ` (external · ${a.external.label})` : '') +
           (a.active ? '' : ' (currently inactive)') +
           (name === self ? '  ← you' : ''),
       );
@@ -44,9 +45,30 @@ export const BUILDER_HANDOVER_HINT =
   'what to build, what done means, where the report goes) and wait for the report; no interim check-ins, no ' +
   'corrections into running work — a correction is a new message into its session.';
 
+/** What every colleague is told about an external agent that takes work
+ *  (docs/a2a.md). */
+export function externalHandoverHint(label: string): string {
+  return (
+    `External agent (${label}) — another system with its own memory and tools and no access to ours: hand it a ` +
+    'self-contained task with agent_ask or spawn_subagent (sent over A2A) and give it all the context it needs; ' +
+    'text only, slower than a colleague here, and a stop may not reach its side.'
+  );
+}
+
+/** …and about one that does not: the principal chats with it directly. */
+export function externalChatOnlyHint(label: string): string {
+  return `External agent (${label}) for chatting with the principal only — it takes no work from agents; do not involve it.`;
+}
+
+/** An external agent agents cannot hand work to. */
+function chatOnly(a: { external?: { a2a: boolean } | undefined }): boolean {
+  return a.external !== undefined && !a.external.a2a;
+}
+
 function involveLine(a: ResolvedTeamAgent): string | null {
   const parts: string[] = [];
   if (a.kind === 'builder') parts.push(BUILDER_HANDOVER_HINT);
+  if (a.external) parts.push(externalHandoverHint(a.external.label));
   if (a.involveFor.length > 0) parts.push(joinPhrases(a.involveFor) + '.');
   if (a.notFor.length > 0) parts.push(`Not for: ${joinPhrases(a.notFor)}.`);
   if (a.notes) parts.push(a.notes.replace(/\s+/g, ' ').trim());
@@ -61,14 +83,21 @@ function involveLine(a: ResolvedTeamAgent): string | null {
  * specialty (see src/server/builder-prompt.ts).
  */
 export function renderTeamBlockCompact(team: ResolvedTeam, self: string): string | null {
-  const colleagues = team.order.filter((n) => n !== self && team.agents[n]!.active);
+  const colleagues = team.order.filter((n) => n !== self && team.agents[n]!.active && !chatOnly(team.agents[n]!));
   if (colleagues.length === 0 && team.rules.length === 0) return null;
   const out: string[] = ['# Your team', '', `Principal (human): ${team.principal.name}${team.principal.title ? `, ${team.principal.title}` : ''}.`];
   if (colleagues.length > 0) {
     out.push(
       'Colleagues you can consult with agent_ask — a question in their specialty, not a hand-off; the agent or person who gave you the task is your client:',
     );
-    out.push(colleagues.map((n) => `${n} (${team.agents[n]!.title})`).join(', ') + '.');
+    out.push(
+      colleagues
+        .map((n) => {
+          const a = team.agents[n]!;
+          return a.external ? `${n} (${a.title}; external · ${a.external.label}, over A2A — self-contained tasks, full context)` : `${n} (${a.title})`;
+        })
+        .join(', ') + '.',
+    );
   }
   if (team.rules.length > 0) {
     out.push('', 'Rules:');
@@ -92,7 +121,9 @@ export function renderTeamBlock(team: ResolvedTeam, self: string): string | null
     const list = team.unlisted.map((u) => (u.name === self ? `${u.name} (${u.title}) ← you` : `${u.name} (${u.title})`));
     out.push(`Not in the org chart yet: ${list.join(', ')}.`);
     for (const u of team.unlisted) {
-      if (u.kind === 'builder' && u.name !== self) out.push(`- ${u.name}: ${BUILDER_HANDOVER_HINT}`);
+      if (u.name === self) continue;
+      if (u.kind === 'builder') out.push(`- ${u.name}: ${BUILDER_HANDOVER_HINT}`);
+      if (u.external) out.push(`- ${u.name}: ${u.external.a2a ? externalHandoverHint(u.external.label) : externalChatOnlyHint(u.external.label)}`);
     }
   }
   out.push('');
@@ -124,8 +155,9 @@ export function renderTeamBlock(team: ResolvedTeam, self: string): string | null
   }
   out.push('');
 
-  const colleagues = team.order.filter((n) => n !== self && team.agents[n]!.active);
+  const colleagues = team.order.filter((n) => n !== self && team.agents[n]!.active && !chatOnly(team.agents[n]!));
   const inactive = team.order.filter((n) => n !== self && !team.agents[n]!.active);
+  const chatOnlyAgents = team.order.filter((n) => n !== self && team.agents[n]!.active && chatOnly(team.agents[n]!));
   if (colleagues.length > 0) {
     out.push('Who to involve — via agent_ask; their reply comes back to your session:');
     const plain: string[] = [];
@@ -139,7 +171,8 @@ export function renderTeamBlock(team: ResolvedTeam, self: string): string | null
   if (inactive.length > 0) {
     out.push(`Currently inactive — do not involve: ${inactive.join(', ')}. Go one level up instead.`);
   }
-  if (colleagues.length > 0 || inactive.length > 0) out.push('');
+  for (const n of chatOnlyAgents) out.push(`- ${n} (${team.agents[n]!.title}): ${externalChatOnlyHint(team.agents[n]!.external!.label)}`);
+  if (colleagues.length > 0 || inactive.length > 0 || chatOnlyAgents.length > 0) out.push('');
 
   if (team.rules.length > 0) {
     out.push('Rules:');

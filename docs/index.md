@@ -46,6 +46,7 @@ takes about ten minutes. [Setup](setup.md) explains each step.
 | have agents make images or video | [Image generation](imagegen.md) and [Video generation](videogen.md) |
 | have agents act on a schedule or when something happens | [Sentinel](sentinel.md) |
 | chat with agents of other systems (OpenClaw, Hermes) | [External agents](external-agents.md) |
+| have my agents hand work to OpenClaw or Hermes | [A2A](a2a.md) |
 | use my agents from an editor such as Zed | [ACP](acp.md) |
 | let a model judge items for scripts and checks | [Decision models](decisions.md) |
 | know what is exposed and to whom | [Security](security.md) |
@@ -65,6 +66,7 @@ takes about ten minutes. [Setup](setup.md) explains each step.
 | **project** | A working set of paths and notes pinned to a session, shown to the agent in every turn. |
 | **resource** | Another machine reached over SSH. File, shell and tmux tools can target it. |
 | **external agent** | An agent of another agent system (OpenClaw, Hermes, …) you chat with from somora. It keeps its own model, tools and memory. |
+| **A2A** | The Agent2Agent standard. somora agents use it to hand external agents work. Between somora's own agents, `agent_ask` needs no standard. |
 | **skill** | A Markdown how-to the agent loads when the situation calls for it. |
 | **tool** | Something an agent can call: read a file, run a command, search the web, ask another agent. |
 | **sentinel** | A trigger that starts an agent turn on a schedule, or when a small check script sees that something happened. |
@@ -109,6 +111,7 @@ takes about ten minutes. [Setup](setup.md) explains each step.
 | [Projects](projects.md) | Concept and workflow | Pinning a working set to a session |
 | [Sentinel](sentinel.md) | Trigger runtime | Waking agents on a schedule or when a check script sees a change |
 | [External agents](external-agents.md) | Agents of other systems | Chatting with OpenClaw, Hermes and other ACP agents from somora |
+| [A2A](a2a.md) | Work for other systems | Your agents ask external agents or send them off as sub-agents, over the A2A standard |
 | [ACP](acp.md) | somora in an editor | `somora acp` for Zed, JetBrains and other ACP clients, locally or over SSH |
 
 ### Memory

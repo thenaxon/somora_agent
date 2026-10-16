@@ -47,6 +47,8 @@ export interface ExternalAgentMark {
   badgeImage: string | null;
   /** The agent's version, once somora has talked to it. */
   version: string | null;
+  /** Takes work from agents over A2A (docs/a2a.md); else chat only. */
+  a2a?: boolean;
 }
 
 /** An open question of a session (GET …/question). */

@@ -23,6 +23,24 @@ type Selected = 'principal' | string | null;
 // ── pure helpers (exported for the render smoke) ──────────────────────
 
 /** Names in a stable pre-order walk: parent before children, file order among siblings. */
+/** The small mark beside an external agent: its system, and "chat only"
+ *  when it takes no work from agents. */
+function ExternalTag({ info }: { info: AgentInfo | undefined }) {
+  if (!info?.external) return null;
+  const x = info.external;
+  return (
+    <span
+      data-testid={`team-external-${info.name}`}
+      title={x.a2a ? `External agent (${x.label}) — colleagues hand it work over A2A` : `External agent (${x.label}) — chat only, takes no work from agents`}
+      style={{ fontSize: 10, padding: '0 5px', borderRadius: 4, border: '1px solid var(--line)', color: 'var(--text-2)', whiteSpace: 'nowrap' }}
+    >
+      {x.badgeImage ? '' : `${x.badge} `}
+      {x.label}
+      {x.a2a ? '' : ' · chat only'}
+    </span>
+  );
+}
+
 export function chartOrder(agents: Record<string, TeamAgentDto>): Array<{ name: string; depth: number }> {
   const names = Object.keys(agents);
   const out: Array<{ name: string; depth: number }> = [];
@@ -170,13 +188,15 @@ export function TeamWindow() {
     try {
       const [t, a] = await Promise.all([api.teamGet(), api.agents()]);
       setServer(t);
-      // The team is somora's own agents; external agents are not on the chart.
-      setAgents(a.filter((x) => x.kind !== 'external'));
+      // External agents are placed like anyone (docs/a2a.md); they have no
+      // team block of their own, so the preview shows somora's agents only.
+      setAgents(a);
+      const externalNames = new Set(a.filter((x) => x.kind === 'external').map((x) => x.name));
       if (t.file) {
         const f = clone(t.file);
         setDraft(f);
         setSaved(JSON.stringify(f));
-        setPreviewAgent((p) => p ?? Object.keys(f.agents)[0] ?? null);
+        setPreviewAgent((p) => p ?? Object.keys(f.agents).find((n) => !externalNames.has(n)) ?? null);
       } else {
         setDraft(null);
         setSaved('');
@@ -287,7 +307,7 @@ export function TeamWindow() {
         onDragEnd={() => setDragging(null)}
         onDragOver={(e) => { const from = draggingRef.current; if (from && from !== name && !isSelfOrDescendant(draft.agents, from, name)) e.preventDefault(); }}
         onDrop={(e) => { e.preventDefault(); onDrop(name); }}
-        onClick={() => { setSelected(name); setPreviewAgent(name); }}
+        onClick={() => { setSelected(name); if (info?.kind !== 'external') setPreviewAgent(name); }}
         style={{
           marginLeft: 14 + depth * 22, marginBottom: 6, padding: '6px 8px', borderRadius: 8, cursor: 'pointer',
           display: 'flex', alignItems: 'center', gap: 8, opacity: inactive ? 0.5 : 1,
@@ -306,6 +326,7 @@ export function TeamWindow() {
         <span style={{ fontSize: 16 }}>{info?.icon ?? '🤖'}</span>
         <span style={{ fontWeight: 600, color: 'var(--text-0)' }}>{name}</span>
         <span style={{ color: 'var(--text-2)', fontSize: 12 }}>{a.title ?? info?.role ?? ''}</span>
+        <ExternalTag info={info} />
         {inactive && <span style={{ ...mono, fontSize: 10, color: 'var(--warn)', marginLeft: 'auto' }}>INACTIVE</span>}
       </div>
     );
@@ -357,10 +378,11 @@ export function TeamWindow() {
               <div style={label}>Not in the chart</div>
               {unlisted.map((a) => (
                 <div key={a.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', color: 'var(--text-2)', fontSize: 13 }}>
-                  <span>{a.icon ?? '🤖'}</span><span>{a.name}</span><span style={{ fontSize: 11 }}>{a.role ?? ''}</span>
+                  <span>{a.icon ?? '🤖'}</span><span>{a.name}</span><span style={{ fontSize: 11 }}>{a.kind === 'external' ? '' : a.role ?? ''}</span>
+                  <ExternalTag info={a} />
                   <button
                     type="button" data-testid={`team-add-${a.name}`} style={{ ...btn(), marginLeft: 'auto', padding: '2px 8px' }}
-                    onClick={() => { update((f) => ({ ...f, agents: { ...f.agents, [a.name]: { reports_to: 'principal', ...(a.role ? { title: a.role } : {}) } } })); setSelected(a.name); setPreviewAgent(a.name); }}
+                    onClick={() => { update((f) => ({ ...f, agents: { ...f.agents, [a.name]: { reports_to: 'principal', ...(a.role && a.kind !== 'external' ? { title: a.role } : {}) } } })); setSelected(a.name); if (a.kind !== 'external') setPreviewAgent(a.name); }}
                   >
                     <UserPlus size={12} /> add
                   </button>
@@ -402,6 +424,13 @@ export function TeamWindow() {
                   <div>
                     <div style={{ fontWeight: 700, color: 'var(--text-0)' }}>{sel}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-2)' }}>{agentByName.get(sel)?.description}</div>
+                    {agentByName.get(sel)?.external && (
+                      <div data-testid="team-external-note" style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4 }}>
+                        {agentByName.get(sel)!.external!.a2a
+                          ? 'External agent: it gets no team block itself; colleagues are told to hand it self-contained tasks over A2A.'
+                          : 'External agent without A2A access: colleagues are told it is for chatting with you only.'}
+                      </div>
+                    )}
                   </div>
                   <span style={{ flex: 1 }} />
                   <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-1)', cursor: 'pointer' }} title="Off = temporarily out of the team: stays in the chart greyed out, colleagues are told not to involve it">
@@ -443,7 +472,7 @@ export function TeamWindow() {
               <Eye size={13} style={{ color: 'var(--text-2)' }} />
               <span style={{ ...label, marginBottom: 0 }}>Preview — what</span>
               <select data-testid="team-preview-agent" value={previewAgent ?? ''} onChange={(e) => setPreviewAgent(e.target.value)} style={{ ...input, width: 'auto', padding: '2px 6px', fontSize: 12 }}>
-                {[...Object.keys(draft.agents), ...unlisted.map((a) => a.name)].map((n) => <option key={n} value={n}>{n}</option>)}
+                {[...Object.keys(draft.agents), ...unlisted.map((a) => a.name)].filter((n) => agentByName.get(n)?.kind !== 'external').map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
               <span style={{ ...label, marginBottom: 0 }}>sees{dirty ? ' (draft)' : ''}</span>
               <span style={{ flex: 1 }} />

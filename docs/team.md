@@ -135,6 +135,7 @@ disturb prompt caching.
 |---|---|
 | An agent folder exists, but the agent is not in the file | It appears in every block under `Not in the org chart yet`. Its own block tells it to treat the principal as its superior. |
 | The file names an agent that has no folder | It is skipped with a warning. Its reports attach to the nearest superior that exists. |
+| The file names an [external agent](external-agents.md) | It is placed like any agent and marked `(external · <system>)`. |
 
 ### Taking an agent out for a while
 
@@ -143,6 +144,21 @@ Set `active: false`. The agent stays in the chart, marked
 list, and a `do not involve` line tells them to go one level up
 instead. Its own block says that it is marked inactive and should not
 pull colleagues in unless asked.
+
+### External agents
+
+[External agents](external-agents.md) are placed like any agent. What
+colleagues read about one depends on whether it takes work:
+
+- **With A2A access**, it is listed under "Who to involve" with how to
+  hand it work: a self-contained task over `agent_ask` or
+  `spawn_subagent`, all the context it needs, text only. Its
+  `involve_for` and `not_for` phrases follow.
+- **Without A2A access**, it is named as for chatting with the
+  principal only, with `do not involve it`.
+
+An external agent gets no block itself, because somora's prompt does
+not reach it. [A2A](a2a.md#in-the-team) has the details.
 
 ### Builders
 
@@ -306,6 +322,8 @@ contains old team text. See
 `notes`, or raise `promptBudgets.teamBlockChars`.
 
 ## See also
+
+- [A2A](a2a.md): external agents in the team, and handing them work
 
 - [Agents](agents.md): persona files and the Agent window
 - [Builder](builder.md): the coding agent and its compact team block

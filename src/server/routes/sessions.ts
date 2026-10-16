@@ -2,6 +2,8 @@
 // where these routes stood, so the registration order is the same.
 // Names index.ts shares come in through `routeDeps`.
 
+import { A2A_CONTEXT_KEY } from '../../engine/a2a-external.ts';
+import { A2A_QUIET_KEY } from '../../tools/gating.ts';
 import { agentKnown, getExternalAgent, isExternalAgent, listExternalAgents } from '../../external/registry.ts';
 import { closeExternal } from '../../external/connection.ts';
 import { externalBadge } from './external.ts';
@@ -401,10 +403,12 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
         result = await resetSession(agent, session);
         closeExternal(agent, session);
         // The old conversation on the other side is gone with the reset:
-        // drop its id (or the next turn would resume it) and its title.
+        // drop its id (or the next turn would resume it), its title and
+        // its A2A conversation (the next task starts a new one). A
+        // session agents hand work through stays without unread dot.
         await sessionMetaStore.update(agent, session, (m) => {
-          const { externalSessionId: _id, externalTitle: _title, ...rest } = m as Record<string, unknown>;
-          return { ...rest, externalGeneration: gen + 1 };
+          const { externalSessionId: _id, externalTitle: _title, [A2A_CONTEXT_KEY]: _ctx, ...rest } = m as Record<string, unknown>;
+          return { ...rest, externalGeneration: gen + 1, ...(before[A2A_QUIET_KEY] === true ? { [A2A_QUIET_KEY]: true } : {}) };
         });
       } finally {
         release();

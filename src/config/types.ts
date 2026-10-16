@@ -911,6 +911,19 @@ export const ExternalAgentSchema = z.object({
   description: z.string().max(300).optional(),
   /** Tile icon (an emoji). The badge in the tile corner names the system. */
   icon: z.string().min(1).max(16).optional(),
+  /** A2A access (docs/a2a.md): lets somora agents hand this agent work
+   *  with agent_ask and spawn_subagent. Chat keeps using ACP. Without it
+   *  the agent is for chatting only. */
+  a2a: z
+    .object({
+      /** Base URL of the agent's A2A side; its Agent Card is read from
+       *  `<url>/.well-known/agent-card.json`, which names the endpoint. */
+      url: z.string().url(),
+      /** Bearer token the other side expects from somora. */
+      token: z.string().min(1).optional(),
+    })
+    .strict()
+    .optional(),
 });
 export type ExternalAgentConfig = z.infer<typeof ExternalAgentSchema>;
 
@@ -940,7 +953,28 @@ export const ExternalConfigSchema = z
     /** Minutes an external agent's question (e.g. "may I run this?") waits
      *  for an answer before it counts as rejected. */
     questionTimeoutMinutes: z.number().positive().default(10),
-    systems: z.record(z.string().regex(/^[A-Za-z0-9_-]+$/, 'system name must match [A-Za-z0-9_-]+'), ExternalSystemSchema).default({}),
+    /** Handing external agents work over A2A (docs/a2a.md). */
+    a2a: z
+      .object({
+        /** Tasks one external agent works on at the same time; more wait. */
+        maxConcurrentPerAgent: z.number().int().positive().default(2),
+        /** Tasks to all external agents per day (local midnight to midnight). */
+        maxCallsPerDay: z.number().int().positive().default(200),
+        /** Minutes somora keeps following a task after it was sent; then
+         *  it gives up and reports the task as failed. */
+        maxTaskMinutes: z.number().positive().default(60),
+        /** Seconds between status checks while a task runs, for agents that
+         *  do not stream. Starts at 2 s, grows to this value. */
+        pollMaxSeconds: z.number().positive().default(10),
+        /** Minutes an Agent Card is kept before it is read again. */
+        cardRefreshMinutes: z.number().positive().default(10),
+        /** Start each task with one line naming the asking agent and the
+         *  team it belongs to, so the other side knows who asks. */
+        introduce: z.boolean().default(true),
+      })
+      .strict()
+      .default({ maxConcurrentPerAgent: 2, maxCallsPerDay: 200, maxTaskMinutes: 60, pollMaxSeconds: 10, cardRefreshMinutes: 10, introduce: true }),
+    systems:z.record(z.string().regex(/^[A-Za-z0-9_-]+$/, 'system name must match [A-Za-z0-9_-]+'), ExternalSystemSchema).default({}),
   })
   .superRefine((ext, ctx) => {
     const seen = new Map<string, string>();
@@ -954,7 +988,12 @@ export const ExternalConfigSchema = z
       }
     }
   })
-  .default({ idleMinutes: 10, questionTimeoutMinutes: 10, systems: {} });
+  .default({
+    idleMinutes: 10,
+    questionTimeoutMinutes: 10,
+    a2a: { maxConcurrentPerAgent: 2, maxCallsPerDay: 200, maxTaskMinutes: 60, pollMaxSeconds: 10, cardRefreshMinutes: 10, introduce: true },
+    systems: {},
+  });
 export type ExternalConfig = z.infer<typeof ExternalConfigSchema>;
 
 // Web tools — provider credentials. Each tool reads its own slice; if a

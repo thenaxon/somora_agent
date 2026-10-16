@@ -63,6 +63,15 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
   // engine the call stamps them with — filed under openai-compatible
   // until 2026-09-12, where they never resolved and every client outside
   // the web window showed the raw item type.
+  // External agents over ACP (docs/external-agents.md).
+  acp: {
+    external_session_new: 'new session over there',
+  },
+  // External agents over A2A (docs/a2a.md): how a task handed over is
+  // getting on — sent, waiting for a free slot, working, stopped.
+  a2a: {
+    a2a_task: 'A2A task',
+  },
   // Rows somora itself writes, independent of any engine.
   somora: {
     // An agent switched (or cleared) this session's model.
@@ -138,6 +147,10 @@ export function summariseEngineMeta(
   if (engine === 'somora' && itemType === 'session_model') {
     const p = payload as { text?: unknown } | null | undefined;
     return typeof p?.text === 'string' ? p.text : undefined;
+  }
+  if ((engine === 'a2a' && itemType === 'a2a_task') || (engine === 'acp' && itemType === 'external_session_new')) {
+    const p = payload as { text?: unknown; message?: unknown } | null | undefined;
+    return typeof p?.text === 'string' ? p.text : typeof p?.message === 'string' ? p.message : undefined;
   }
   if (itemType === 'voice_spoken' || itemType === 'voice_handover') {
     const p = payload as { text?: unknown } | null | undefined;

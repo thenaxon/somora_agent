@@ -3214,6 +3214,16 @@ model, thinking level or sampling, and compaction, answer `409` for
 them. Their `GET …/model`, `…/thinking` and `…/sampling` return
 `source: "external"`.
 
+Their entry in `GET /agents` carries `external.a2a: true` when the agent
+takes work from agents over [A2A](a2a.md). Such work arrives through
+the usual routes (`/chat/send-sync` for `agent_ask`, `/spawn-async` for a
+sub-agent). In its session, the turn's `agent` start and end events carry
+`external.via: "a2a"`, and `engine_meta` rows with engine `a2a` and
+`itemType: "a2a_task"` report the task's progress (`payload.text`, and
+`payload.state` such as `working`). Taking a running `agent_ask` back
+(`DELETE /chat/queue/:id` with `withdraw_running`) stops the task and
+answers `stopped: true`.
+
 ### `GET /external`
 
 The configured systems, their agents and open connections.

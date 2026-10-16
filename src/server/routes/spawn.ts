@@ -3,6 +3,7 @@
 // Names index.ts shares come in through `routeDeps`.
 
 import type { Hono } from 'hono';
+import { getExternalAgent } from '../../external/registry.ts';
 import { loadPersona } from '../../persona/loader.ts';
 import { createSession, resolveSessionId } from '../../storage/sessions.ts';
 import { releaseSpawnSlot, reserveSpawnSlot } from '../../tools/agents/spawn.ts';
@@ -40,7 +41,7 @@ export function registerSpawnRoutes(app: Hono): void {
     if (!agent || !sessionRef) {
       return c.json({ error: 'agent + session required' }, 400);
     }
-    if (!(await loadPersona(agent))) {
+    if (!(await loadPersona(agent)) && !getExternalAgent(agent)?.agent.a2a) {
       return c.json({ error: `agent '${agent}' not found` }, 404);
     }
 

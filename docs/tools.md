@@ -195,7 +195,8 @@ What an agent should know about waiting:
   when the answer lands. `wait: false` returns `pending` at once.
 - **Cancelling a question never aborts the target's turn.** A queued
   call is `removed`. A running one is `withdrawn`, and `steered` says
-  whether the stop message reached the turn.
+  whether the stop message reached the turn. For an external agent the
+  task is stopped instead ([A2A](a2a.md#stopping-a-task)).
 - **Waits cannot deadlock.** A call that would close a circle of agents
   waiting on each other is refused with an explanation.
 
@@ -225,6 +226,11 @@ More parameters:
 - **Limits.** One agent runs at most 4 sub-agents at a time, 16 across
   the instance. Subs started by a sub count against the parent, and the
   last slot is kept for top-level spawns.
+- **External agents.** `agent_ask` and `spawn_subagent` also reach an
+  [external agent](external-agents.md) that has A2A access. Without
+  `session`, `agent_ask` goes to its conversation with the asker,
+  `a2a-<asker>`. `model`, `maxRounds` and `images` are refused for it.
+  [A2A](a2a.md) explains the rest.
 - **Builders.** `builder_dispatch` may omit `builder` when exactly one
   builder exists. A project folder another builder is working in is
   refused.

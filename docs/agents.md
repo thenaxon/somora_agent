@@ -255,6 +255,9 @@ agent_ask({ agent: "<other-agent>", session: "project-a", create_session: true, 
 agent_ask({ agent: "<other-agent>", message: "…", images: ["/abs/path.png"], timeout_ms: 120000 })
 ```
 
+An [external agent](external-agents.md) with A2A access is asked the
+same way. Its answer comes from its own system ([A2A](a2a.md)).
+
 The target sees the header `[Message from agent <name>, session <slug>]`
 in front of the message. The header is a frame around the turn. The
 stored text is the message itself, so the target's memory is built from

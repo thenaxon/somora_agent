@@ -63,7 +63,20 @@ export const agentAskCancel: ToolDefinition<z.infer<typeof Input>, CancelResult>
       return { call_id: input.call_id, state: 'already_started', hint: 'The target is already answering; wait for it with agent_ask_result, or ask the user to stop it.' };
     }
     if (res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { state?: string; steered?: boolean; ranMs?: number | null };
+      const body = (await res.json().catch(() => ({}))) as { state?: string; steered?: boolean; stopped?: boolean; ranMs?: number | null };
+      if (body.state === 'withdrawn' && body.stopped !== undefined) {
+        // An external agent's task over A2A (docs/a2a.md): the turn was
+        // stopped here, and somora asked the other side to stop too.
+        logger.info({ msg: 'agent_ask_cancel.withdrawn', agent: ctx.agent, call_id: input.call_id, external: true, stopped: body.stopped });
+        return {
+          call_id: input.call_id,
+          state: 'withdrawn',
+          steered: false,
+          hint: body.stopped
+            ? 'Taken back: the task to the external agent was stopped here, and its system was asked to stop too (it may still finish over there). Its outcome will not wake you.'
+            : 'Taken back: its outcome will not wake you; the task had already ended.',
+        };
+      }
       if (body.state === 'withdrawn') {
         logger.info({ msg: 'agent_ask_cancel.withdrawn', agent: ctx.agent, call_id: input.call_id, steered: body.steered === true });
         return body.steered

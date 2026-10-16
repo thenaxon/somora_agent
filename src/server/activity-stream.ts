@@ -37,7 +37,7 @@
 
 import { sessionMetaStore } from '../storage/sessions.ts';
 import { logger } from './logger.ts';
-import { isSubagentSession } from '../tools/gating.ts';
+import { isQuietSession } from '../tools/gating.ts';
 import type { SseEvent } from '../types/events.ts';
 
 export type ActivityEvent =
@@ -111,7 +111,7 @@ export async function tapPublish(
     if (isUnreadCandidate(event)) {
       // A sub-agent's session marks nothing: its answer reaches the
       // person through the asking agent's conversation.
-      if (isSubagentSession(await sessionMetaStore.get(agent, session))) return;
+      if (isQuietSession(await sessionMetaStore.get(agent, session))) return;
       const unreadAt = new Date().toISOString();
       await persistUnreadAt(agent, session, unreadAt);
       await broadcast({ event: 'turn', data: { agent, session, unreadAt } });

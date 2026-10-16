@@ -40,7 +40,8 @@ somora:
   refuses to change them;
 - compaction is its own system's business;
 - it does not dream: REM does not read its conversations;
-- somora agents cannot hand it work with `agent_ask` yet;
+- somora agents hand it work only when it has A2A access, see
+  [Let your agents hand it work](#let-your-agents-hand-it-work);
 - it gets no access to somora's files or terminal.
 
 ## Set it up
@@ -150,6 +151,25 @@ input shows the question, how long it still waits, and the options as
 buttons: green for allowing, red for rejecting. Answering in one client
 closes the card in all of them. In the TUI, type the option's number.
 
+## Let your agents hand it work
+
+Chat is yours. For your agents to ask an external agent, or send it off
+as a sub-agent, the other system needs A2A switched on and the agent an
+`a2a` block in `config.yaml`:
+
+```yaml
+        claw:
+          command: openclaw acp --session agent:main:somora-{session}
+          a2a:
+            url: https://<machine>.<tailnet>.ts.net
+            token: <token>
+```
+
+Chat keeps using ACP. Work from your agents travels over A2A, the
+standard for agents giving each other tasks. [A2A](a2a.md) explains how
+to switch it on in OpenClaw and Hermes, what each can do, and the
+brakes.
+
 ## Troubleshooting
 
 | You see | Meaning |
@@ -177,6 +197,7 @@ time it took, the tool calls and the stop reason.
 ## See also
 
 - [Resources](resources.md): adding the machine the agent system runs on
+- [A2A](a2a.md): letting your agents hand external agents work
 - [ACP](acp.md): the other direction, somora's agents in an editor
 - [Web client](web.md), [Mobile app](mobile.md), [TUI display](display.md)
 - [HTTP API](api.md#external-agents): `GET /external` and the question routes

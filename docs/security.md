@@ -479,6 +479,10 @@ seconds and does not follow redirects. The last answer is stored in
   [external agent](external-agents.md) runs with the rights of the SSH
   user somora logs in as. Its own system decides what it does there.
   somora gives it no access to somora's files or terminal.
+- **What an external agent gets in a task.** Work your agents hand an
+  external agent over [A2A](a2a.md) leaves your machine as text, with
+  the token for that system. somora does not take tasks from other
+  systems over A2A.
 - **A leaked key.** Anyone who has the key and reaches the port has the
   same access as you, including a shell. `somora key rotate` locks them
   out. With `server.auth: off`, reaching the port is enough.

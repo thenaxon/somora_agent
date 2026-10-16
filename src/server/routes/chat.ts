@@ -6,7 +6,7 @@
 import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
 import { listAllModels, resolveAnyRef } from '../../config/types.ts';
-import { agentKnown } from '../../external/registry.ts';
+import { agentKnown, isExternalAgent } from '../../external/registry.ts';
 import { createSession, getHistory, listSessions, resolveSessionId, sessionMetaStore } from '../../storage/sessions.ts';
 import { markSeen, subscribeActivity } from '../activity-stream.ts';
 import { completeAskCall, failAskCall, getAskCall, markAskCallPending, markAskCallRunning, registerAskCall, waitForAskCall } from '../ask-calls.ts';
@@ -349,6 +349,24 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
         }
         if (w.status === 'withdrawn') {
           const { agent, session } = w.item.target;
+          // An external agent's turn is a task over A2A (docs/a2a.md): no
+          // steer inbox to read, so taking it back stops the turn, which
+          // sends CancelTask to the other side.
+          if (isExternalAgent(agent)) {
+            const stopped = triggerChatAbort(agent, session).aborted;
+            logger.info({ msg: 'chat.withdraw_external', agent, session, withdraw: id, stopped });
+            return c.json({
+              ok: true,
+              state: 'withdrawn',
+              id,
+              turnId: w.item.turnId ?? null,
+              agent,
+              session,
+              steered: false,
+              stopped,
+              ranMs: w.item.startedAt ? Date.now() - w.item.startedAt : null,
+            });
+          }
           const running = steerableTurn(agent, session);
           const steerable = !!running && (!w.item.turnId || running.turnId === w.item.turnId);
           let steerId: string | undefined;

@@ -72,14 +72,27 @@ export interface TeamAgentInfo {
   name: string;
   role?: string | undefined;
   description?: string | undefined;
-  /** agent.yaml `kind` — a builder is handed complete orders, not consulted. */
-  kind?: 'chat' | 'builder' | undefined;
+  /** agent.yaml `kind` — a builder is handed complete orders, not
+   *  consulted; `external` is another system's agent (config.yaml). */
+  kind?: TeamAgentKind | undefined;
+  /** Only for external agents: its system and whether it takes work. */
+  external?: TeamExternalInfo | undefined;
+}
+
+export type TeamAgentKind = 'chat' | 'builder' | 'external';
+
+export interface TeamExternalInfo {
+  /** OpenClaw, Hermes, … */
+  label: string;
+  /** Takes work over A2A (agent_ask, spawn_subagent); else chat only. */
+  a2a: boolean;
 }
 
 export interface ResolvedTeamAgent {
   name: string;
   title: string;
-  kind?: 'chat' | 'builder' | undefined;
+  kind?: TeamAgentKind | undefined;
+  external?: TeamExternalInfo | undefined;
   /** 'principal' or an agent name. */
   reportsTo: string;
   involveFor: string[];
@@ -99,7 +112,7 @@ export interface ResolvedTeam {
   /** Pre-order walk of the tree from the principal — the rendering order. */
   order: string[];
   /** Agents that exist on disk but are not in the file. */
-  unlisted: Array<{ name: string; title: string; kind?: 'chat' | 'builder' | undefined }>;
+  unlisted: Array<{ name: string; title: string; kind?: TeamAgentKind | undefined; external?: TeamExternalInfo | undefined }>;
   /** Agents in the file that do not exist on disk (skipped). */
   missing: string[];
   warnings: string[];

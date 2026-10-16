@@ -913,15 +913,28 @@ providers:
 # ssh, login shell) or locally. {session} = the somora session id (gains
 # -r1, -r2 after resets), {agent} = the name in somora. See
 # docs/external-agents.md.
+# a2a: lets somora agents hand the agent work (agent_ask, spawn_subagent)
+# over the A2A standard, straight over the network; chat stays on ACP.
+# See docs/a2a.md for switching A2A on in OpenClaw and Hermes.
 # external:
 #   idleMinutes: 10                     # close an idle connection
 #   questionTimeoutMinutes: 10          # unanswered question = rejected
+#   a2a:                                # brakes for work over A2A
+#     maxConcurrentPerAgent: 2          # tasks one agent works on at once
+#     maxCallsPerDay: 200               # tasks to all external agents a day
+#     maxTaskMinutes: 60                # stop following a task after this
+#     pollMaxSeconds: 10                # longest gap between status checks
+#     cardRefreshMinutes: 10            # re-read the Agent Card after this
+#     introduce: true                   # first line names the asking agent
 #   systems:
 #     openclaw:
 #       transport: { resource: agents-vm }
 #       agents:
 #         claw:
 #           command: openclaw acp --session agent:main:somora-{session}
+#           a2a:
+#             url: https://<machine>.<tailnet>.ts.net
+#             token: <token>            # the token OpenClaw has for "somora"
 #     hermes:
 #       transport: { resource: agents-vm }
 #       # badge: ☤                       # tile-corner sign or image path

@@ -65,7 +65,7 @@ export function resolveTeam(file: TeamFile, onDisk: TeamAgentInfo[]): ResolvedTe
   const infoByName = new Map(onDisk.map((a) => [a.name, a]));
   const warnings: string[] = [];
   const missing = Object.keys(file.agents).filter((n) => !infoByName.has(n));
-  for (const m of missing) warnings.push(`agents.${m}: no such agent directory — skipped`);
+  for (const m of missing) warnings.push(`agents.${m}: no such agent — skipped`);
 
   const existing = Object.keys(file.agents).filter((n) => infoByName.has(n));
   const effectiveParent = (name: string): string => {
@@ -81,6 +81,7 @@ export function resolveTeam(file: TeamFile, onDisk: TeamAgentInfo[]): ResolvedTe
       name,
       title: titleFor(name, a.title, infoByName.get(name)),
       ...(infoByName.get(name)?.kind ? { kind: infoByName.get(name)!.kind } : {}),
+      ...(infoByName.get(name)?.external ? { external: infoByName.get(name)!.external } : {}),
       reportsTo: effectiveParent(name),
       involveFor: a.involve_for ?? [],
       notFor: a.not_for ?? [],
@@ -107,7 +108,7 @@ export function resolveTeam(file: TeamFile, onDisk: TeamAgentInfo[]): ResolvedTe
 
   const unlisted = onDisk
     .filter((a) => !(a.name in file.agents))
-    .map((a) => ({ name: a.name, title: titleFor(a.name, undefined, a), ...(a.kind ? { kind: a.kind } : {}) }));
+    .map((a) => ({ name: a.name, title: titleFor(a.name, undefined, a), ...(a.kind ? { kind: a.kind } : {}), ...(a.external ? { external: a.external } : {}) }));
   for (const u of unlisted) warnings.push(`${u.name} exists but is not in team.yaml — shown under "Not in the org chart"`);
 
   return {

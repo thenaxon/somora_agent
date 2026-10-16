@@ -19,9 +19,9 @@ import { createSession, sessionMetaStore } from '../storage/sessions.ts';
 import type { BuilderSessionState } from './builder-session.ts';
 
 const home = process.env.SOMORA_HOME!;
-mkdirSync(join(home, 'agents', 'hans'), { recursive: true });
-writeFileSync(join(home, 'agents', 'hans', 'AGENTS.md'), '# hans\n');
-writeFileSync(join(home, 'agents', 'hans', 'agent.yaml'), 'model: x\n');
+mkdirSync(join(home, 'agents', 'ada'), { recursive: true });
+writeFileSync(join(home, 'agents', 'ada', 'AGENTS.md'), '# ada\n');
+writeFileSync(join(home, 'agents', 'ada', 'agent.yaml'), 'model: x\n');
 setConfig(ConfigSchema.parse({ providers: {} }));
 
 test('ask_user is no longer builder-only; the task list and the plan file still are', () => {
@@ -37,7 +37,7 @@ test('who counts as watching: a person typing or speaking, nobody else', () => {
   assert.equal(isAttendedOrigin({ kind: 'human', via: 'chat' }), true);
   assert.equal(isAttendedOrigin({ kind: 'human', via: 'voice-stt' }), true);
   assert.equal(isAttendedOrigin({ kind: 'sentinel', triggerId: 't', taskId: 'x' }), false);
-  assert.equal(isAttendedOrigin({ kind: 'agent', from: { agent: 'lisa' } }), false);
+  assert.equal(isAttendedOrigin({ kind: 'agent', from: { agent: 'bea' } }), false);
   assert.equal(isAttendedOrigin({ kind: 'subagent', depth: 1 }), false);
   assert.equal(isAttendedOrigin({ kind: 'wake', about: 'a2a', ref: 'c1' }), false);
   assert.equal(isAttendedOrigin(undefined), false, 'unknown origin: nobody is watching');
@@ -56,36 +56,36 @@ test('the offer per session: a chat agent by the turn, a builder by its switch',
 const app = new Hono();
 registerBuilderRoutes(app, { publish: (async () => {}) as never });
 const ask = (session: string) =>
-  app.request(`/agents/hans/sessions/${session}/ask`, {
+  app.request(`/agents/ada/sessions/${session}/ask`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ question: 'A or B?', options: [{ label: 'A' }, { label: 'B' }] }),
   });
 
 test("the route: a chat agent's question outside a person's turn returns at once", async () => {
-  const id = await createSession('hans', 'auto');
-  await sessionMetaStore.update('hans', id, (m) => ({ ...m, [TURN_ATTENDED_KEY]: false }));
+  const id = await createSession('ada', 'auto');
+  await sessionMetaStore.update('ada', id, (m) => ({ ...m, [TURN_ATTENDED_KEY]: false }));
   const t = Date.now();
   const body = (await (await ask(id)).json()) as { answered: boolean; text?: string };
   assert.equal(body.answered, false);
   assert.match(body.text ?? '', /decide yourself/);
   assert.ok(Date.now() - t < 2000);
-  assert.equal(pendingQuestion('hans', id), null);
+  assert.equal(pendingQuestion('ada', id), null);
 });
 
 test("the route: in a person's turn the question waits for the answer, 10 minutes by default", async () => {
-  const id = await createSession('hans', 'talk');
-  await sessionMetaStore.update('hans', id, (m) => ({ ...m, [TURN_ATTENDED_KEY]: true }));
+  const id = await createSession('ada', 'talk');
+  await sessionMetaStore.update('ada', id, (m) => ({ ...m, [TURN_ATTENDED_KEY]: true }));
   const pending = ask(id);
   let q = null;
   for (let i = 0; i < 50 && !q; i++) {
     await new Promise((r) => setTimeout(r, 20));
-    q = pendingQuestion('hans', id);
+    q = pendingQuestion('ada', id);
   }
   assert.ok(q, 'the question is open');
   const wait = q!.expiresAt - q!.askedAt;
   assert.ok(Math.abs(wait - CHAT_QUESTION_TIMEOUT_MS) < 1000, `waits ${wait} ms`);
-  assert.equal(answerQuestion('hans', id, q!.id, { answers: ['B'] }), true);
+  assert.equal(answerQuestion('ada', id, q!.id, { answers: ['B'] }), true);
   const body = (await (await pending).json()) as { answered: boolean; answers: string[] };
   assert.deepEqual(body, { answered: true, answers: ['B'] });
 });

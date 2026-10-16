@@ -9,7 +9,11 @@ import type { RequestPermissionRequest, RequestPermissionResponse } from '@agent
 import { readFile } from 'node:fs/promises';
 import { resolveAttachmentForModel } from '../attachments/store.ts';
 import { ACP_ENGINE } from '../acp/translate.ts';
+import { A2A_ENGINE } from '../a2a/protocol.ts';
+import { runA2ATurn } from '../engine/a2a-external.ts';
 import { runExternalTurn } from '../engine/acp-external.ts';
+import { getResolvedTeam } from '../team/store.ts';
+import { A2A_QUIET_KEY } from '../tools/gating.ts';
 import type { ExternalAgent } from '../external/registry.ts';
 import { appendEvent, getHistory } from '../storage/sessions.ts';
 import { askQuestion, dropQuestions } from './builder-questions.ts';
@@ -25,10 +29,24 @@ export async function runExternalChatTurn(args: RunChatTurnArgs, ext: ExternalAg
   const provider = 'external';
   const model = `${ext.system}/${ext.name}`;
 
-  if (args.fromAgent) {
-    // Agents asking external agents comes with A2A (a later step): no
-    // wait graph across systems yet, no loop or cost brake.
-    throw new Error(`'${agent}' is an external agent (${ext.system}); somora agents cannot ask it yet`);
+  // Work handed over by a somora agent (agent_ask, a sub-agent spawn,
+  // anything not typed by a person) goes over A2A (docs/a2a.md); the
+  // person's chat goes over ACP.
+  const delegated = Boolean(args.fromAgent) || (args.origin !== undefined && args.origin.kind !== 'human');
+  if (delegated && !ext.agent.a2a) {
+    throw new Error(
+      `'${agent}' is an external agent (${ext.system}) without A2A access, so somora agents cannot hand it work — ` +
+        `the person can chat with it in its own window (to allow it: external.systems.${ext.system}.agents.${agent}.a2a in config.yaml, docs/a2a.md)`,
+    );
+  }
+  if (delegated && (args.attachments?.length ?? 0) > 0) {
+    throw new Error(`images and files cannot be handed to an external agent over A2A yet; describe them in the message instead`);
+  }
+
+  // Work agents hand each other carries no unread dot (like a sub-agent's
+  // session); set before anything is published.
+  if (delegated) {
+    await deps.sessionMetaStore.update(agent, session, (m) => (m[A2A_QUIET_KEY] === true ? m : { ...m, [A2A_QUIET_KEY]: true }));
   }
 
   try {
@@ -46,17 +64,25 @@ export async function runExternalChatTurn(args: RunChatTurnArgs, ext: ExternalAg
     images.push({ mimeType: r.mime.mimeType, data: (await readFile(r.path)).toString('base64') });
   }
 
+  // Who handed the work over, as on every other agent's session.
+  const from = {
+    ...(args.fromAgent ? { from_agent: args.fromAgent } : {}),
+    ...(args.fromAgent && args.fromSession ? { from_session: args.fromSession } : {}),
+    ...(args.fromSystem ? { from_system: args.fromSystem } : {}),
+    ...(args.agentAskCallId ? { agent_ask_call_id: args.agentAskCallId } : {}),
+  };
   await appendEvent(agent, session, {
     kind: 'user_message',
     ts: Date.now(),
-    engine: ACP_ENGINE,
+    engine: delegated ? A2A_ENGINE : ACP_ENGINE,
     text,
+    ...from,
     ...(args.origin ? { origin: args.origin } : {}),
     ...(args.attachments && args.attachments.length > 0 ? { attachments: args.attachments } : {}),
   });
   if (publishSse) {
-    await publishSse({ event: 'user_message', data: { text, ts: Date.now(), turnId, ...(args.origin ? { origin: args.origin } : {}) } });
-    await publishSse({ event: 'agent', data: { phase: 'start', provider, model, external: { system: ext.system } } });
+    await publishSse({ event: 'user_message', data: { text, ts: Date.now(), turnId, ...from, ...(args.origin ? { origin: args.origin } : {}) } });
+    await publishSse({ event: 'agent', data: { phase: 'start', provider, model, external: { system: ext.system, ...(delegated ? { via: 'a2a' } : {}) } } });
   }
 
   const onPermission = async (req: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
@@ -104,16 +130,26 @@ export async function runExternalChatTurn(args: RunChatTurnArgs, ext: ExternalAg
   let sawTurnEnd = false;
   let degraded: string | undefined;
   try {
-    for await (const ev of runExternalTurn({
-      ext,
-      session,
-      text,
-      ...(images.length > 0 ? { images } : {}),
-      ...(signal ? { signal } : {}),
-      metaStore: deps.sessionMetaStore,
-      config: () => liveConfig,
-      onPermission,
-    })) {
+    const events = delegated
+      ? runA2ATurn({
+          ext,
+          session,
+          text: await introduced(text, args, deps.config.external.a2a.introduce),
+          ...(signal ? { signal } : {}),
+          metaStore: deps.sessionMetaStore,
+          config: () => liveConfig,
+        })
+      : runExternalTurn({
+          ext,
+          session,
+          text,
+          ...(images.length > 0 ? { images } : {}),
+          ...(signal ? { signal } : {}),
+          metaStore: deps.sessionMetaStore,
+          config: () => liveConfig,
+          onPermission,
+        });
+    for await (const ev of events) {
       if (ev.kind === 'thinking_delta' || ev.kind === 'thinking_message') {
         if (!deps.config.thinkingContent.capture) continue;
         if (ev.kind === 'thinking_message' && ev.text.length > deps.config.thinkingContent.maxChars) {
@@ -146,19 +182,19 @@ export async function runExternalChatTurn(args: RunChatTurnArgs, ext: ExternalAg
   } catch (err) {
     errorMessage = (err as Error).message;
     logger.error({ msg: 'external.turn_failed', turnId, agent, session, err: errorMessage });
-    await appendEvent(agent, session, { kind: 'error', ts: Date.now(), engine: ACP_ENGINE, message: errorMessage, providerError: true });
-    if (publishSse) await publishSse({ event: 'turn_error', data: { ...(streamTurnId ? { turnId: streamTurnId } : {}), message: errorMessage, engine: ACP_ENGINE } });
+    await appendEvent(agent, session, { kind: 'error', ts: Date.now(), engine: delegated ? A2A_ENGINE : ACP_ENGINE, message: errorMessage, providerError: true });
+    if (publishSse) await publishSse({ event: 'turn_error', data: { ...(streamTurnId ? { turnId: streamTurnId } : {}), message: errorMessage, engine: delegated ? A2A_ENGINE : ACP_ENGINE } });
   } finally {
     dropQuestions(agent, session);
   }
   if (!sawTurnEnd) {
-    await appendEvent(agent, session, { kind: 'turn_end', ts: Date.now(), engine: ACP_ENGINE, turnId: streamTurnId ?? `t-${Date.now()}`, model: `${provider}/${model}` });
+    await appendEvent(agent, session, { kind: 'turn_end', ts: Date.now(), engine: delegated ? A2A_ENGINE : ACP_ENGINE, turnId: streamTurnId ?? `t-${Date.now()}`, model: `${provider}/${model}` });
   }
   const contextWindow = lastUsage?.context_window ?? 0;
   if (publishSse) {
-    await publishSse({ event: 'agent', data: { phase: 'end', ...(lastUsage ? { usage: lastUsage } : {}), contextWindow, provider, model, external: { system: ext.system } } });
+    await publishSse({ event: 'agent', data: { phase: 'end', ...(lastUsage ? { usage: lastUsage } : {}), contextWindow, provider, model, external: { system: ext.system, ...(delegated ? { via: 'a2a' } : {}) } } });
   }
-  logger.info({ msg: errorMessage ? 'turn.ended_degraded' : 'turn.completed', turnId, agent, session, external: ext.system, ms: Date.now() - start, finalTextLen: finalText.length, ...(errorMessage ? { err: errorMessage } : {}) });
+  logger.info({ msg: errorMessage ? 'turn.ended_degraded' : 'turn.completed', turnId, agent, session, external: ext.system, via: delegated ? 'a2a' : 'acp', ms: Date.now() - start, finalTextLen: finalText.length, ...(errorMessage ? { err: errorMessage } : {}) });
   const outcome = errorMessage ? 'failed' : degraded || !finalText.trim() ? 'degraded' : 'completed';
   return {
     finalText,
@@ -173,6 +209,27 @@ export async function runExternalChatTurn(args: RunChatTurnArgs, ext: ExternalAg
     ms: Date.now() - start,
     ...(errorMessage ? { error: errorMessage } : {}),
   };
+}
+
+/** The task as sent: one line first naming who asks and the team, so the
+ *  other side knows who it works for (external.a2a.introduce). */
+async function introduced(text: string, args: RunChatTurnArgs, enabled: boolean): Promise<string> {
+  if (!enabled) return text;
+  const o = args.origin;
+  const asker = args.fromAgent ?? (o?.kind === 'agent' ? o.from.agent : o?.kind === 'subagent' ? o.parent?.agent : undefined);
+  if (!asker) return text;
+  let who = asker;
+  let principal: string | undefined;
+  try {
+    const team = await getResolvedTeam();
+    const title = team?.agents[asker]?.title ?? team?.unlisted.find((u) => u.name === asker)?.title;
+    if (title) who = `${asker} (${title})`;
+    principal = team?.principal.name;
+  } catch {
+    /* no team: the name alone */
+  }
+  const role = o?.kind === 'subagent' ? 'a sub-task' : 'a task';
+  return `[${role} from ${who}, an agent of ${principal ? `${principal}'s` : 'a'} somora team, sent over A2A]\n\n${text}`;
 }
 
 function describeToolCall(tc: RequestPermissionRequest['toolCall']): string {

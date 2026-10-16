@@ -37,7 +37,7 @@
 // pointing at spawn_subagent (sealed self-clone) as the right tool.
 
 import { getFreshConfig } from '../../config/loader.ts';
-import { isExternalAgent } from '../../external/registry.ts';
+import { getExternalAgent } from '../../external/registry.ts';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { logger } from '../../server/logger.ts';
@@ -159,7 +159,7 @@ interface AskDoneResult {
   };
 }
 
-export type RoutingReason = 'explicit' | 'reply_to_origin' | 'default_main';
+export type RoutingReason = 'explicit' | 'reply_to_origin' | 'default_main' | 'external_conversation';
 
 /**
  * Say where the message went and why. A left-out `session` means
@@ -178,8 +178,11 @@ export function describeRouting(args: {
   inferred: boolean;
   callerSession: string | undefined;
   targetAgent: string;
+  /** An external agent's own conversation with the caller (a2a-<caller>). */
+  external?: boolean;
 }): { routing_reason: RoutingReason; routing_note?: string } {
   if (args.explicit) return { routing_reason: 'explicit' };
+  if (args.external) return { routing_reason: 'external_conversation' };
   if (args.inferred) return { routing_reason: 'reply_to_origin' };
   if (args.callerSession && args.callerSession !== 'main') {
     return {
@@ -332,10 +335,21 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
   async handler(input, ctx): Promise<AskResult> {
     const targetAgent = input.agent;
 
-    if (isExternalAgent(targetAgent, await getFreshConfig())) {
+    // External agents (docs/a2a.md) take work over A2A when they have
+    // access configured; their model is set on their own system.
+    const external = getExternalAgent(targetAgent, await getFreshConfig());
+    if (external && !external.agent.a2a) {
       throw new Error(
-        `agent_ask: '${targetAgent}' is an external agent (another system's agent, docs/external-agents.md); ` +
-          'somora agents cannot ask it yet. The person can chat with it in its own window.',
+        `agent_ask: '${targetAgent}' is an external agent (${external.system}) without A2A access, so it cannot take ` +
+          'work from agents. The person can chat with it in its own window.',
+      );
+    }
+    if (external && input.model) {
+      throw new Error(`agent_ask: '${targetAgent}' is an external agent; its model is set on its own system — leave 'model' out.`);
+    }
+    if (external && input.images && input.images.length > 0) {
+      throw new Error(
+        `agent_ask: images cannot be handed to an external agent over A2A yet — describe what matters in the message.`,
       );
     }
 
@@ -368,9 +382,13 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
 
     // Reply-back default: no explicit session + this turn was started
     // by the target (A2A inbound or spawning parent) → their session.
-    let targetSession = input.session ?? 'main';
+    // An external agent keeps one conversation per asking agent
+    // (`a2a-<asker>`), so it remembers earlier tasks from the same agent
+    // and nothing of the person's own chats with it.
+    let targetSession = input.session ?? (external ? `a2a-${ctx.agent}` : 'main');
+    const externalDefault = Boolean(external && !input.session);
     let sessionInferred = false;
-    if (!input.session && ctx.session) {
+    if (!input.session && ctx.session && !external) {
       const origin = await lookupTurnOrigin(base, ctx.agent, ctx.session);
       if (origin && origin.agent === targetAgent && origin.session) {
         targetSession = origin.session;
@@ -392,6 +410,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
       inferred: sessionInferred,
       callerSession: ctx.session,
       targetAgent,
+      external: externalDefault,
     });
     if (routing.routing_note) {
       logger.warn({
@@ -457,7 +476,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           // from_session lets the target address a follow-up to the
           // session this question came from (header + reply-back default).
           ...(ctx.session ? { from_session: ctx.session } : {}),
-          ...(input.create_session ? { create_session: true } : {}),
+          ...(input.create_session || externalDefault ? { create_session: true } : {}),
           ...(input.create_session && input.model ? { create_model: input.model } : {}),
           // waiter_* register this turn in the server's A2A wait-graph
           // (circular-wait detection, src/server/ask-wait-graph.ts).

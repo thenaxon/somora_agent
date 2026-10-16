@@ -196,6 +196,17 @@ export function isSubagentSession(meta: unknown): boolean {
   return spawn?.kind === 'sub' || spawn?.kind === 'self-sub';
 }
 
+/** Meta key of a session that carries work agents hand each other over
+ *  A2A (docs/a2a.md) — an external agent's `a2a-<asker>` conversation. */
+export const A2A_QUIET_KEY = 'a2aQuiet';
+
+/** A session nobody needs a dot for: a sub-agent's, or one where agents
+ *  hand each other work over A2A. Its answer reaches the person through
+ *  the asking agent's conversation. */
+export function isQuietSession(meta: unknown): boolean {
+  return isSubagentSession(meta) || (meta as Record<string, unknown> | null | undefined)?.[A2A_QUIET_KEY] === true;
+}
+
 /** The rules a session adds on top of its agent's: `subagents.tools.deny`
  *  for a sub-agent session, nothing otherwise. */
 export function sessionToolDeny(

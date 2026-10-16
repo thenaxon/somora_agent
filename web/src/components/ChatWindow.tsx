@@ -1208,6 +1208,8 @@ export function ChatWindow({
               <Wrench size={10} />
               <span>tools</span>
             </button>
+            {/* External agents get no memory injections: nothing to show or hide. */}
+            {!agent.external && (
             <button
               type="button"
               onClick={() => setShowMemory((v) => !v)}
@@ -1229,6 +1231,7 @@ export function ChatWindow({
               <Brain size={10} />
               <span>memory</span>
             </button>
+            )}
             {ttsAvailable && autoPlayAllowOverride && (
               <button
                 type="button"

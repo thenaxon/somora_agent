@@ -21,6 +21,7 @@
 
 import { z } from 'zod';
 import { describeModelRefs, resolveAnyRef } from '../../config/types.ts';
+import { getExternalAgent } from '../../external/registry.ts';
 import { loadPersona } from '../../persona/loader.ts';
 import { completeTask, failTask, getTask, newTaskId, registerTask, type AsyncTaskEntry, markResultFetched, waitForTaskCompletion } from '../../server/async-tasks.ts';
 import { registerWait } from '../../server/ask-wait-graph.ts';
@@ -439,8 +440,24 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
   const isSelfClone = !task.persona || task.persona === ctx.agent;
   const targetPersona = task.persona ?? ctx.agent;
   const personaCheck = await loadPersona(targetPersona);
-  if (!personaCheck) {
+  // An external agent (docs/a2a.md) can be a sub-agent when it takes work
+  // over A2A: each spawn is a fresh conversation over there. Its model
+  // and its loop are its own system's business.
+  const external = personaCheck ? null : getExternalAgent(targetPersona, ctx.config);
+  if (!personaCheck && !external) {
     throw new Error(`spawn_subagent: persona '${targetPersona}' not found`);
+  }
+  if (external) {
+    if (!external.agent.a2a) {
+      throw new Error(
+        `spawn_subagent: '${targetPersona}' is an external agent (${external.system}) without A2A access, so it cannot take work from agents`,
+      );
+    }
+    if (task.model) throw new Error(`spawn_subagent: '${targetPersona}' is an external agent; its model is set on its own system — leave 'model' out`);
+    if (task.maxRounds) throw new Error(`spawn_subagent: '${targetPersona}' is an external agent; it runs its own loop — leave 'maxRounds' out`);
+    if (task.images && task.images.length > 0) {
+      throw new Error(`spawn_subagent: images cannot be handed to an external agent over A2A yet — describe what matters in the task`);
+    }
   }
   // Validate a model override BEFORE creating the session + reserving a
   // slot: an invented name ("myprovider/model-that-does-not-exist") otherwise fails
@@ -450,7 +467,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
     throw new Error(
       `spawn_subagent: model '${task.model}' is not configured — pass an alias or ` +
         `provider/modelId exactly as listed in config.yaml, or omit \`model\` to use ` +
-        `${targetPersona}'s default (${personaCheck.model ?? 'unset'}). ` +
+        `${targetPersona}'s default (${personaCheck?.model ?? 'unset'}). ` +
         `Available: ${describeModelRefs(ctx.config)}`,
     );
   }
@@ -490,7 +507,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
   // A helper works where its parent works: the pinned project (and its
   // folder) carries over. A builder helper runs unattended and builds —
   // it has a sealed task, nobody to ask, no plan phase of its own.
-  const targetKind = personaCheck.kind;
+  const targetKind = personaCheck?.kind;
   const parentMeta = ctx.session ? ((await sessionMetaStore.get(ctx.agent, ctx.session)) as Record<string, unknown>) : {};
   const inherited: Record<string, unknown> = {};
   if (typeof parentMeta.workdir === 'string') inherited.workdir = parentMeta.workdir;

@@ -8,6 +8,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseYaml } from '../config/yaml.ts';
 import { logger } from '../server/logger.ts';
+import { externalBadge } from '../external/badge.ts';
+import { listExternalAgents } from '../external/registry.ts';
 import { listAgents } from '../persona/loader.ts';
 import { parseTeamFile, resolveTeam } from './resolve.ts';
 import { renderTeamBlock, renderTeamBlockCompact } from './render.ts';
@@ -66,7 +68,19 @@ async function roster(): Promise<{ agents: TeamAgentInfo[]; key: string }> {
   if (rosterCache && now - rosterCache.at < ROSTER_TTL_MS) return rosterCache;
   const list = await listAgents();
   const agents: TeamAgentInfo[] = list.map((a) => ({ name: a.name, role: a.role, description: a.description, kind: a.kind }));
-  const key = agents.map((a) => `${a.name}:${a.role ?? ''}:${a.kind ?? ''}:${a.description}`).join('|');
+  // External agents (docs/external-agents.md) belong to the team too: the
+  // operator places them like anyone else, and colleagues learn whether
+  // they take work (A2A) or are for chatting with the principal only.
+  for (const ext of listExternalAgents()) {
+    const label = externalBadge(ext).label;
+    agents.push({
+      name: ext.name,
+      description: ext.agent.description ?? `${label} agent`,
+      kind: 'external',
+      external: { label, a2a: Boolean(ext.agent.a2a) },
+    });
+  }
+  const key = agents.map((a) => `${a.name}:${a.role ?? ''}:${a.kind ?? ''}:${a.description}:${a.external ? `${a.external.label}/${a.external.a2a}` : ''}`).join('|');
   rosterCache = { at: now, agents, key };
   return rosterCache;
 }
