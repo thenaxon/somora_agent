@@ -66,3 +66,13 @@ export function initialsBadge(label: string): string {
   if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase();
   return (words[0]![0]! + words[1]![0]!).toUpperCase();
 }
+
+/** A guess from the start command, for before the first connection
+ *  (`openclaw acp …` → openclaw). The agent's own introduction wins once
+ *  it is known. */
+export function profileFromCommand(command: string): AcpProfile | null {
+  const c = command.toLowerCase();
+  if (/(^|[\s/])openclaw(\s|$)/.test(c)) return PROFILES.openclaw;
+  if (/(^|[\s/])hermes(-acp)?(\s|$)/.test(c)) return PROFILES.hermes;
+  return null;
+}

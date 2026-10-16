@@ -394,12 +394,12 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
       const release = await acquireSessionLock(agent, session, { priority: 'user' });
       let result: Awaited<ReturnType<typeof resetSession>>;
       try {
+        // The reset writes fresh meta: carry the generation over.
+        const before = (await sessionMetaStore.get(agent, session)) as Record<string, unknown>;
+        const gen = typeof before.externalGeneration === 'number' ? before.externalGeneration : 0;
         result = await resetSession(agent, session);
         closeExternal(agent, session);
-        await sessionMetaStore.update(agent, session, (m) => {
-          const { externalSessionId: _gone, ...rest } = m as Record<string, unknown>;
-          return rest as typeof m;
-        });
+        await sessionMetaStore.update(agent, session, (m) => ({ ...m, externalGeneration: gen + 1 }));
       } finally {
         release();
       }

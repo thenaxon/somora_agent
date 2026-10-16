@@ -9,7 +9,7 @@ import type * as Server from '../index.ts';
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { extname, join } from 'node:path';
-import { initialsBadge, profileByName } from '../../acp/profiles.ts';
+import { initialsBadge, profileByName, profileFromCommand } from '../../acp/profiles.ts';
 import { connectionSnapshot, knownInfo } from '../../external/connection.ts';
 import { externalNameClashes, getExternalAgent, listExternalAgents, type ExternalAgent } from '../../external/registry.ts';
 import { resolveSessionId } from '../../storage/sessions.ts';
@@ -32,7 +32,7 @@ export function badgeIsImage(badge: string | undefined): boolean {
 /** How a client shows where an external agent comes from. */
 export function externalBadge(ext: ExternalAgent): { label: string; badge: string; badgeImage: string | null; version: string | null } {
   const info = knownInfo(ext.name);
-  const profile = ext.systemConfig.profile ? profileByName(ext.systemConfig.profile) : info?.profile ?? null;
+  const profile = ext.systemConfig.profile ? profileByName(ext.systemConfig.profile) : info?.profile ?? profileFromCommand(ext.agent.command);
   const label = profile && profile.name !== 'generic' ? profile.label : (info?.agentInfo?.title || info?.agentInfo?.name || ext.system);
   const set = ext.systemConfig.badge;
   const image = badgeIsImage(set) ? `/external/${encodeURIComponent(ext.system)}/badge` : null;

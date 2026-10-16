@@ -8,7 +8,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { AcpTurnTranslator, SomoraToAcp, historyToAcp, toolName } from './translate.ts';
-import { initialsBadge, profileByName, profileFor } from './profiles.ts';
+import { initialsBadge, profileByName, profileFor, profileFromCommand } from './profiles.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -172,4 +172,12 @@ test('profiles: picked from the self-introduction, with their sign; OpenClaw hid
   assert.equal(hide({ sessionId: 'agent:main:somora-1' }), false);
   assert.equal(initialsBadge('OpenClaw ACP Gateway'), 'OA');
   assert.equal(initialsBadge('goose'), 'GO');
+});
+
+test('a profile guess from the start command, before the first connection', () => {
+  assert.equal(profileFromCommand('openclaw acp --session agent:main:somora-{session}')?.name, 'openclaw');
+  assert.equal(profileFromCommand('/home/u/.local/bin/hermes acp')?.name, 'hermes');
+  assert.equal(profileFromCommand('hermes-acp')?.name, 'hermes');
+  assert.equal(profileFromCommand('goose acp'), null);
+  assert.equal(profileFromCommand('my-openclaw-wrapper'), null);
 });

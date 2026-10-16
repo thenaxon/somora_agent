@@ -55,10 +55,15 @@ export async function* runExternalTurn(input: ExternalTurnInput): AsyncGenerator
 
   let conn: ExternalConnection;
   try {
-    const filled = { ...ext, agent: { ...ext.agent, command: fillCommand(ext.agent.command, { session, agent: ext.name }) } };
+    const meta = await metaStore.get(ext.name, session);
+    // After a reset the somora session keeps its id; the generation makes
+    // `{session}` new, so a system that keys sessions by the command
+    // (OpenClaw's --session) starts a fresh conversation too.
+    const gen = typeof (meta as { externalGeneration?: unknown }).externalGeneration === 'number' ? (meta as { externalGeneration: number }).externalGeneration : 0;
+    const sessionVar = gen > 0 ? `${session}-r${gen}` : session;
+    const filled = { ...ext, agent: { ...ext.agent, command: fillCommand(ext.agent.command, { session: sessionVar, agent: ext.name }) } };
     conn = await connectionFor(filled, session, input.config);
     rememberInfo(ext.name, conn.info);
-    const meta = await metaStore.get(ext.name, session);
     const known = typeof (meta as { externalSessionId?: unknown }).externalSessionId === 'string' ? (meta as { externalSessionId: string }).externalSessionId : undefined;
     const s = await conn.ensureSession(known, input.config());
     if (s.sessionId !== known) {
