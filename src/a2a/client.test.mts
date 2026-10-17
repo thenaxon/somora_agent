@@ -1,13 +1,15 @@
 // The A2A client against a stand-in peer (docs/a2a.md): the card names
 // the endpoint; a task is followed by polling (no stream) or over the
-// stream; 0.3 peers get 0.3 method names; a question, a refusal and a
-// failure come back as outcomes; a stop sends CancelTask and says whether
-// the peer confirmed it; a task that runs too long is given up on; a
-// status check that fails once is retried; a wrong token is an error.
+// stream; 0.3 peers get 0.3 method names, and files in the 0.3 shape
+// when the client falls back; a question, a refusal and a failure come
+// back as outcomes; a stop sends CancelTask and says whether the peer
+// confirmed it; a task that runs too long is given up on; a status check
+// that fails once is retried; a wrong token is an error.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { A2AError, clearCardCache, getCard, runTask } from './client.ts';
 import { normalizeState, partsText, taskAnswer } from './protocol.ts';
+import { filePart } from './files.ts';
 import { startFakePeer, type FakePeer } from './__fixtures__/fake-peer.ts';
 
 const peers: FakePeer[] = [];
@@ -86,6 +88,19 @@ test('a card that says 1.0 but a peer that only knows 0.3 names: falls back once
     p.requests.map((r) => r.method),
     ['SendMessage', 'message/send'],
   );
+});
+
+test('the fall back to 0.3 sends the files in the 0.3 shape too', async () => {
+  const p = await peer({ version: '0.3' });
+  const card = await getCard(p.url, { maxAgeMs: 60_000 });
+  const parts = [filePart('1.0', { raw: 'aGVsbG8=', mediaType: 'image/png', filename: 'a.png' }), filePart('1.0', { url: 'https://files.example/b.pdf', mediaType: 'application/pdf', filename: 'b.pdf' })];
+  const out = await runTask({ card: { ...card, version: '1.0' }, text: 'with files', parts, maxMs: 5_000, pollMaxMs: 50 });
+  assert.equal(out.state, 'completed');
+  const sent = p.requests.find((r) => r.method === 'message/send')!.params.message.parts;
+  assert.deepEqual(sent.slice(1), [
+    { kind: 'file', file: { bytes: 'aGVsbG8=', mimeType: 'image/png', name: 'a.png' } },
+    { kind: 'file', file: { uri: 'https://files.example/b.pdf', mimeType: 'application/pdf', name: 'b.pdf' } },
+  ]);
 });
 
 test('a question, a refusal and a failure are outcomes, with their text', async () => {

@@ -110,6 +110,13 @@ export function cardAccepts(card: AgentCard, mime: string): boolean {
   return modes.includes(type) || modes.includes(`${type.split('/')[0]}/*`) || modes.includes('*/*');
 }
 
+/** A 1.0 file part rebuilt in the 0.3 shape, for a peer that turned out
+ *  to speak 0.3. Other parts stay as they are. */
+export function filePartAs03(p: A2APart): A2APart {
+  if (typeof p.raw !== 'string' && typeof p.url !== 'string') return p;
+  return filePart('0.3', { ...(p.raw ? { raw: p.raw } : { url: p.url! }), mediaType: p.mediaType ?? 'application/octet-stream', filename: p.filename ?? 'file' });
+}
+
 export function filePart(version: ProtocolVersion, p: { raw?: string; url?: string; mediaType: string; filename: string }): A2APart {
   if (version === '0.3') {
     return { kind: 'file', file: { ...(p.raw ? { bytes: p.raw } : { uri: p.url }), mimeType: p.mediaType, name: p.filename } } as A2APart;
@@ -148,14 +155,40 @@ export async function outgoingFiles(
 
 // ── incoming ──────────────────────────────────────────────────────────
 
+const isFilePart = (p: A2APart) => typeof p.raw === 'string' || typeof p.url === 'string' || Boolean(p.file?.bytes || p.file?.uri);
+
+/** Base64 characters for `bytes`, with room for line breaks. */
+const base64Chars = (bytes: number) => Math.ceil(bytes / 3) * 4 + 1024;
+
+/** The biggest request body an A2A peer may send: five files at the
+ *  largest attachment size, as base64, and the longest text (a JSON
+ *  escape takes up to six bytes a character), with room for the rest. */
+export function maxRequestBytes(a: AttachmentsConfig, maxMessageChars: number): number {
+  return MAX_INCOMING_FILES * base64Chars(maxSourceBytes(a)) + maxMessageChars * 6 + 256 * 1024;
+}
+
+/** Why the files of an incoming message cannot be taken, judged without
+ *  decoding or fetching anything: too many, or bytes beyond the limit. */
+export function checkIncomingFiles(parts: A2APart[], a: AttachmentsConfig): string | null {
+  const fileParts = parts.filter(isFilePart);
+  if (fileParts.length > MAX_INCOMING_FILES) return `at most ${MAX_INCOMING_FILES} files in one message`;
+  const max = maxSourceBytes(a);
+  for (const p of fileParts) {
+    const raw = p.raw ?? p.file?.bytes;
+    if (typeof raw === 'string' && raw.length > base64Chars(max)) return `${(p.filename ?? p.file?.name ?? 'file').slice(0, 200)}: the file is larger than ${kb(max)}`;
+  }
+  return null;
+}
+
 /** File parts of an incoming message as somora attachments. */
 export async function incomingFiles(
   parts: A2APart[],
   cfg: { attachments: AttachmentsConfig; allowPrivate: readonly string[] },
 ): Promise<{ files: AttachmentRef[] } | { error: string }> {
-  const fileParts = parts.filter((p) => typeof p.raw === 'string' || typeof p.url === 'string' || p.file?.bytes || p.file?.uri);
+  const fileParts = parts.filter(isFilePart);
   if (fileParts.length === 0) return { files: [] };
-  if (fileParts.length > MAX_INCOMING_FILES) return { error: `at most ${MAX_INCOMING_FILES} files in one message` };
+  const refused = checkIncomingFiles(parts, cfg.attachments);
+  if (refused) return { error: refused };
   const files: AttachmentRef[] = [];
   for (const p of fileParts) {
     const name = (p.filename ?? p.file?.name ?? 'file').slice(0, 200);

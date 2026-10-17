@@ -331,8 +331,10 @@ file went (`sent to lobo over A2A with 1 as download link`).
 URL, become attachments of the turn, as if you had attached them in the
 chat: the agent sees an image, or reads a PDF. A URL is fetched with the
 same guard as `web_fetch`: no internal addresses unless
-`web.fetchAllowPrivate` lists them. At most 5 files per message. A task
-of only files is fine.
+`web.fetchAllowPrivate` lists them. A task of only files is fine.
+
+At most 5 files per message, each within the `attachments` limits. A
+bigger request is refused before somora reads it.
 
 **Your agent answers with an image.** An image it makes for a task from
 outside goes back with the answer, as a file part with a download link.
@@ -399,7 +401,7 @@ curl https://<host>.<tailnet>.ts.net:18737/a2a/agents/<agent>/.well-known/agent-
 | `a2a.defaultAgent` | none | The agent `/.well-known/agent-card.json` describes, for clients that only look there. |
 | `a2a.peers.<name>.token` | required | The token this system sends. At least 16 characters. |
 | `a2a.peers.<name>.agents` | every switched-on agent | The agents this system may reach. |
-| `a2a.rateLimitPerMinute` | `30` | Requests per minute per peer. |
+| `a2a.rateLimitPerMinute` | `30` | Requests per minute per peer. Status requests (`GetTask`, `ListTasks`, `CancelTask`, `SubscribeToTask`) count separately, with four times as many. |
 | `a2a.maxTasksPerDay` | `200` | Tasks per peer per day, from local midnight. |
 | `a2a.replyTimeoutSeconds` | `300` | How long a waiting request waits for the answer before it returns the task as still working. |
 | `a2a.maxMessageChars` | `64000` | Longest task text. |
@@ -500,14 +502,19 @@ curl -X POST https://<host>.<tailnet>.ts.net:18737/a2a/agents/<agent> \
 | `SendMessage` | waits up to `replyTimeoutSeconds` for the answer, or returns at once with `returnImmediately` |
 | `SendStreamingMessage` | streams the state, the answer as it grows, and a note per tool call (`using web_search`) |
 | `GetTask`, `ListTasks` | the task's state and answer; a peer only sees its own tasks |
-| `CancelTask` | stops your agent's turn; a waiting task is taken out of the line |
-| answers a question | the next message in the same conversation is the answer: an option's number or label, or own words |
+| `SubscribeToTask` | streams the task's changes; at most 10 streams per peer at a time |
+| `CancelTask` | stops your agent's turn, also while it is still getting ready; a waiting task is taken out of the line |
+| answers a question | the next message in the same conversation is the answer: an option's number or label, or own words. A message that names the task (`taskId`) answers that task's question. |
+| sends the same message again (same `messageId`) | the task it started; nothing runs twice |
 
 Messages in the same conversation wait for each other, like messages you
 type while the agent works. Tasks in different conversations run side by
-side. somora keeps tasks for 24 hours; after a restart of somora the
-answer is still in the session. Each peer gets one entry a day in the
-web client's inbox, saying how many tasks it sent.
+side. After a restart of somora the answer is still in the session.
+Each peer gets one entry a day in the web client's inbox, saying how
+many tasks it sent.
+
+somora keeps tasks for 24 hours, at most 500. Finished ones make way for
+new ones; while 500 are still open, a new task is refused (HTTP 429).
 
 ## Troubleshooting
 
@@ -523,7 +530,8 @@ web client's inbox, saying how many tasks it sent.
 | An OpenClaw task stays `working` | OpenClaw waits for an approval in its own interface (for example to run a command). Approve it there. |
 | A sender gets HTTP 401 `unauthorized` | Its token is not one of `a2a.peers`. |
 | A sender gets `no A2A agent '<name>' here` | The agent is not switched on, is a builder, or the peer's `agents` list leaves it out. |
-| A sender gets HTTP 429 | `a2a.rateLimitPerMinute` or `a2a.maxTasksPerDay` for that peer. |
+| A sender gets HTTP 429 | `a2a.rateLimitPerMinute` or `a2a.maxTasksPerDay` for that peer, 10 open streams, or 500 open tasks. The message says which. |
+| A sender gets HTTP 413 | The request is bigger than 5 files at the `attachments` limits allow. |
 | The card is not found at all | No peers in `config.yaml`: then nothing is reachable. |
 | Hermes says it has no `a2a_call` | The `a2a` tools are not on for the place it runs, see [From Hermes](#from-hermes). |
 

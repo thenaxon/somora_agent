@@ -101,12 +101,26 @@ export function takeDailyCall(max: number, key = 'external'): { ok: boolean; cou
   const have = u.counts[key] ?? 0;
   if (have >= max) return { ok: false, count: have };
   u.counts[key] = have + 1;
+  writeUsage(u);
+  return { ok: true, count: have + 1 };
+}
+
+function writeUsage(u: Usage): void {
   const p = usagePath();
   mkdirSync(dirname(p), { recursive: true });
   const tmp = `${p}.tmp-${process.pid}`;
   writeFileSync(tmp, JSON.stringify(u) + '\n');
   renameSync(tmp, p);
-  return { ok: true, count: have + 1 };
+}
+
+/** Undo one takeDailyCall for `key`: the task it counted was refused
+ *  after all (a file that could not be taken). */
+export function giveBackDailyCall(key = 'external'): void {
+  const u = readUsage();
+  const have = u.counts[key] ?? 0;
+  if (have <= 0) return;
+  u.counts[key] = have - 1;
+  writeUsage(u);
 }
 
 export function dailyCalls(key = 'external'): number {
