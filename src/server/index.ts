@@ -155,6 +155,7 @@ import { registerAuthRoutes } from './routes/auth.ts';
 import { registerThemeRoutes } from './routes/themes.ts';
 import { registerExternalRoutes } from './routes/external.ts';
 import { archiveIdlePeerSessions, registerA2AInboundRoutes } from '../a2a/server.ts';
+import { renameGuard } from './rename-guard.ts';
 import { closeAllExternal } from '../external/connection.ts';
 import { configureUnprompted } from '../external/unprompted.ts';
 
@@ -628,6 +629,11 @@ app.use('*', async (c, next) => {
     c.res.headers.set('content-security-policy', "sandbox; script-src 'none'; object-src 'none'");
   }
 });
+
+// Mid-rename an agent's folder moves and its files are rewritten: no
+// change to that agent goes through meanwhile (persona, switches,
+// sessions). Reading stays open.
+app.use('/agents/:agent/*', renameGuard);
 
 // The login key (src/server/auth-key.ts, docs/security.md). somora's
 // own children (MCP tool hosts, dream workers) inherit SOMORA_KEY; an
