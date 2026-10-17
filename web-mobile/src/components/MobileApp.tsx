@@ -501,7 +501,7 @@ export function MobileApp() {
             }}
           />
           {question.question && (
-            <QuestionCard agent={activeAgent} session={session.id} question={question.question} onAnswered={question.refresh} />
+            <QuestionCard key={question.question.id} agent={activeAgent} session={session.id} question={question.question} onAnswered={question.refresh} />
           )}
           <MessageInput
             agent={activeAgent}

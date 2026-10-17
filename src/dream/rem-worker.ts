@@ -45,6 +45,9 @@ interface AgentState {
   activeRun: Promise<unknown> | null;
   /** Consecutive self-scheduled retries; reset by real activity. */
   selfHealAttempts: number;
+  /** Counts chat activity. A cycle that sees it change while it picks
+   *  its work stops before a run: activeAbort only covers a run. */
+  activity: number;
 }
 
 export interface RemWorkerDeps {
@@ -135,6 +138,7 @@ export class RemWorker {
       isWorking: false,
       activeRun: null,
       selfHealAttempts: 0,
+      activity: 0,
     };
     this.agents.set(agent, state);
     this.scheduleIdle(state);
@@ -172,6 +176,7 @@ export class RemWorker {
   resetActivity(agent: string): void {
     const state = this.agents.get(agent);
     if (!state) return;
+    state.activity++;
     if (state.activeAbort) {
       logger.info({ msg: 'dream.rem.aborted_by_activity', agent });
       state.activeAbort.abort();
@@ -321,10 +326,23 @@ export class RemWorker {
       return;
     }
     state.isWorking = true;
+    // Picking the work reads the disk. The switch can turn off or the
+    // user come back meanwhile, and no run is there yet to abort: each
+    // run checks this first.
+    const activity = state.activity;
+    const stillWanted = (): boolean => {
+      if (this.shuttingDown || this.agents.get(agent) !== state) return false;
+      if (state.activity !== activity) {
+        logger.info({ msg: 'dream.rem.aborted_by_activity', agent, before: 'run' });
+        return false;
+      }
+      return true;
+    };
 
     try {
       // 1. Resume any paused dream first — don't waste prior progress.
       const paused = await this.findPausedDream(agent);
+      if (paused && !stillWanted()) return;
       if (paused) {
         logger.info({
           msg: 'dream.rem.resume_picked',
@@ -362,6 +380,7 @@ export class RemWorker {
           if (done === 0) logger.debug({ msg: 'dream.rem.no_work', agent });
           break;
         }
+        if (!stillWanted()) break;
         const freshRun = this.runForAgent(state, {
           kind: 'fresh',
           sourceSession: session.id,

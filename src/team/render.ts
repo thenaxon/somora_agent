@@ -52,7 +52,8 @@ export function externalAgentsNote(names: string[]): string {
   return (
     `External agents (${names.join(', ')}) work in other systems, with their own memory and tools and no access to ours: ` +
     'hand them a self-contained task with agent_ask or spawn_subagent (sent over A2A) and all the context it needs; ' +
-    'text only, slower than a colleague here, and a stop may not reach them.'
+    'attach images or files through `images` like with a colleague (never just name a path), ' +
+    'slower than a colleague here, and a stop may not reach them.'
   );
 }
 

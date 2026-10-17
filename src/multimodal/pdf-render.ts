@@ -44,6 +44,8 @@ export interface RenderOptions {
   /** Render scale. 1.0 = native PDF page size; 1.5 = 150% (default,
    *  good balance of legibility vs token cost); 2.0 = retina-grade. */
   scale?: number;
+  /** PNG → JPEG; tests pass one that fails part-way. */
+  toJpeg?: (png: Buffer) => Promise<Buffer>;
 }
 
 export interface RenderResult {
@@ -79,16 +81,21 @@ export async function renderPdfPages(
     );
   }
   const totalPages = document.length;
-  const pages: string[] = [];
+  const convert = options.toJpeg ?? toJpeg;
+  // One type covers every page: once a conversion fails, all pages go
+  // out as PNG — the earlier ones included, so their bytes match it.
+  const pngs: Buffer[] = [];
+  const jpegs: Buffer[] = [];
   let mediaType = PDF_PAGE_MEDIA_TYPE;
-  let pageIdx = 0;
   for await (const buf of document) {
-    if (pageIdx >= maxPages) break;
-    const jpeg = await toJpeg(buf);
+    if (pngs.length >= maxPages) break;
+    pngs.push(buf);
+    if (mediaType === 'image/png') continue;
+    const jpeg = await convert(buf);
     if (jpeg === buf) mediaType = 'image/png';
-    pages.push((mediaType === 'image/png' ? buf : jpeg).toString('base64'));
-    pageIdx++;
+    else jpegs.push(jpeg);
   }
+  const pages = (mediaType === 'image/png' ? pngs : jpegs).map((b) => b.toString('base64'));
   const truncated = totalPages > maxPages;
   const ms = Date.now() - start;
   logger.info({

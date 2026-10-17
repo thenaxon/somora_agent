@@ -1553,7 +1553,7 @@ export function ChatWindow({
       </div>
 
       {pendingQuestion && !isBuilder && (
-        <QuestionCard agent={agent.name} session={sessionId} question={pendingQuestion} onAnswered={refreshQuestion} />
+        <QuestionCard key={pendingQuestion.id} agent={agent.name} session={sessionId} question={pendingQuestion} onAnswered={refreshQuestion} />
       )}
       <AttachmentTray items={pendingAttachments} onRemove={removePendingAttachment} />
 

@@ -44,6 +44,20 @@ test('pages come out as JPEG, with the type to match', async () => {
   assert.ok(first.length < 60_000, `a text page stays small (${first.length} bytes)`);
 });
 
+test('a conversion failing part-way leaves every page PNG, as the type says', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'somora-pdf-pages-')), 'a.pdf');
+  writeFileSync(file, minimalPdf(3));
+  let n = 0;
+  // Page 1 converts, page 2 fails (returns its input, as toJpeg does).
+  const toJpeg = async (png: Buffer) => (++n === 1 ? Buffer.from([0xff, 0xd8, 0xff, 0x00]) : png);
+  const r = await renderPdfPages(file, { toJpeg });
+  assert.equal(r.mediaType, 'image/png');
+  assert.equal(r.pages.length, 3);
+  for (const p of r.pages) {
+    assert.deepEqual([...Buffer.from(p, 'base64').subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], 'PNG magic bytes');
+  }
+});
+
 test('the data URL for a worker carries the page type', () => {
   const parts = pdfPagesToOpenAiContent(['AAAA'], 'read it', undefined, 'image/jpeg');
   assert.equal((parts[1] as { image_url: { url: string } }).image_url.url, 'data:image/jpeg;base64,AAAA');
