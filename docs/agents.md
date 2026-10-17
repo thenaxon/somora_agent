@@ -558,7 +558,8 @@ agent's windows close and the desktop reloads with the new name.
 
 It works the same for [external agents](external-agents.md#renaming-an-external-agent).
 The new name follows the rule for team.yaml and browser profiles:
-lower-case letters, digits, `-` and `_`, at most 64 characters.
+lower-case letters, digits, `-` and `_`, at most 64 characters, and not
+one that YAML reads as a number or true/false (`123`, `1e3`, `true`).
 
 | What | Changes to the new name |
 |---|---|
@@ -587,9 +588,18 @@ What it does not change, and lists afterwards:
 
 The command refuses while the agent is busy: a turn running or waiting,
 open work from or for it, a background command, its browser open, or
-the Lucid review loop. Try again when it is idle. It also refuses a name
-that an agent or folder already has. Settings files are checked before
-anything moves, and the folder is moved back when a later step fails.
+the Lucid review loop. Try again when it is idle. While it runs, nothing
+new starts for the agent: a message sent to it then is refused with
+"is being renamed".
+
+It also refuses a name that an agent, a folder or a browser profile
+already has, and an entry in `config.yaml` or `team.yaml` that comes
+through a YAML anchor or merge key (`<<`): write that entry out under
+its own name first.
+
+Everything is checked before anything moves. If a step still fails,
+every step before it is undone and the agent is back under its old name,
+file for file.
 
 ## What a restart does to running turns
 
