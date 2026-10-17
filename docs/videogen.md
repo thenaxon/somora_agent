@@ -370,7 +370,7 @@ How far each one is tested:
 |---|---|
 | `passthrough` | Verified end to end with real renders against a self-hosted endpoint: create, poll, download, thumbnail, store, wake. |
 | `openai` | Written to the published video API and run against a local stand-in. Never run against a live account. |
-| `veo` | Written from the published shape. Never run. Treat it as prepared, not as working. |
+| `veo` | Verified with real renders against a live endpoint. |
 
 ## Restarts
 

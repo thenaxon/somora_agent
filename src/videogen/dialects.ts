@@ -26,11 +26,8 @@
 //                result arrives IN the poll response, as a GCS URI or
 //                inline bytes — there is no content endpoint at all.
 //
-// ⚠ `veo` is written from Google's published shape and has NOT been
-// run against a live endpoint — somora has had no Vertex access. It is
-// a prepared seam so that adding Veo is a config entry rather than a
-// refactor. Do not describe it as working until someone has watched it
-// work; every other dialect here was measured first.
+// `veo` was written from Google's published shape and has since made
+// real videos against a live endpoint (the operator, 2026-10).
 
 import { Buffer } from 'node:buffer';
 import type { VideoWire } from '../config/types.ts';

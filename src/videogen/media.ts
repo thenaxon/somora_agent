@@ -515,8 +515,7 @@ function itemObject(it: MediaItem, slot: MediaSlot, fps?: number): Record<string
 
 /** Google's predictLongRunning body (Vertex and the Gemini API):
  *  `{instances: [{prompt, image, lastFrame, referenceImages}], parameters}`.
- *  Images go as `{bytesBase64Encoded, mimeType}`. Not yet run against a
- *  live endpoint — see dialects.ts. */
+ *  Images go as `{bytesBase64Encoded, mimeType}` (dialects.ts). */
 function veoBody(
   prompt: string,
   specs: Record<string, unknown>,
