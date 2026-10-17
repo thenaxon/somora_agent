@@ -197,7 +197,9 @@ spin_start() { # spin_start "<label>"
 }
 spin_stop() {
   [ -n "$SPIN_PID" ] || return 0
-  kill "$SPIN_PID" 2>/dev/null; wait "$SPIN_PID" 2>/dev/null; SPIN_PID=""
+  # The spinner dies by the kill, so wait reports 143: under set -e that
+  # ended the installer wherever quiet ran outside an if.
+  kill "$SPIN_PID" 2>/dev/null || true; wait "$SPIN_PID" 2>/dev/null || true; SPIN_PID=""
   printf '\r\033[K'
 }
 quiet() { # quiet "<label>" <command…>
