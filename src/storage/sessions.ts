@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import type { SessionMeta, SessionMetaStore } from '../engine/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import { isQuietSession } from '../tools/gating.ts';
+import { assertNotRenaming } from '../persona/rename-lock.ts';
 
 const EXACT_ID_PATTERN = /^\d{8}-\d{6}_[A-Za-z0-9_-]+$/;
 const VALID_SLUG = /^[A-Za-z0-9_-]+$/;
@@ -49,6 +50,9 @@ function metaPath(agent: string, session: string): string {
 }
 
 async function ensureDir(agent: string): Promise<void> {
+  // Mid-rename the folder is moving: a write here would make the old
+  // one again (or the new one before the move) and strand the session.
+  assertNotRenaming(agent);
   await mkdir(sessionDir(agent), { recursive: true });
 }
 

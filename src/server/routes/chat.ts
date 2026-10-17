@@ -7,6 +7,7 @@ import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
 import { listAllModels, resolveAnyRef } from '../../config/types.ts';
 import { agentKnown, isExternalAgent } from '../../external/registry.ts';
+import { AgentRenamingError, isRenaming } from '../../persona/rename-lock.ts';
 import { createSession, getHistory, listSessions, resolveSessionId, sessionMetaStore } from '../../storage/sessions.ts';
 import { markSeen, subscribeActivity } from '../activity-stream.ts';
 import { completeAskCall, failAskCall, getAskCall, markAskCallPending, markAskCallRunning, registerAskCall, waitForAskCall } from '../ask-calls.ts';
@@ -476,6 +477,8 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
     const subagentDepth =
       typeof body.subagent_depth === 'number' && body.subagent_depth > 0 ? body.subagent_depth : 0;
 
+    // Mid-rename its folder moves; the caller retries in a moment.
+    if (isRenaming(agent)) return c.json({ error: new AgentRenamingError(agent).message }, 409);
     if (!(await agentKnown(agent))) {
       logger.warn({ msg: 'chat.send.unknown_agent', agent });
       return c.json({ error: `agent '${agent}' not found — create ~/.somora/agents/${agent}/AGENTS.md` }, 404);
@@ -1109,7 +1112,7 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
         return c.json({ finalText: '', outcome: 'failed', error: REMOVED_BY_USER, dequeued: true, session_id: session });
       }
       if (agentAskCallId) failAskCall(agentAskCallId, (err as Error).message);
-      return c.json({ error: (err as Error).message }, 500);
+      return c.json({ error: (err as Error).message }, err instanceof AgentRenamingError ? 409 : 500);
     } finally {
       releaseWait?.();
     }

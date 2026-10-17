@@ -25,6 +25,7 @@
 // here — it's up to the caller's own code path to react.
 
 import { logger } from './logger.ts';
+import { assertNotRenaming } from '../persona/rename-lock.ts';
 
 type Priority = 'user' | 'agent';
 
@@ -271,6 +272,8 @@ export async function acquireSessionLock(
     onQueued?: (ahead: number) => void;
   },
 ): Promise<() => void> {
+  // A rename moves the agent's folder: no turn starts meanwhile.
+  assertNotRenaming(agent);
   let lock = locks.get(key(agent, session));
   if (!lock) {
     lock = new SessionLock();

@@ -1069,6 +1069,16 @@ export class BrowserService {
 
   // ── UI / control (stage 3 surfaces; HTTP-testable now) ────────────
 
+  /** Whether a browser of this agent runs or is starting: its own
+   *  profile's process (kept or ephemeral), or its window in a shared
+   *  profile. Renaming an agent moves its profile and rewrites these ids. */
+  agentBrowserActive(agent: string): boolean {
+    const own = `agent:${agent}`;
+    for (const id of this.launching.keys()) if (id === own || id === `${own}:tmp`) return true;
+    for (const b of this.browsers.values()) if (b.id === own || b.id === `${own}:tmp` || b.views.has(agent)) return true;
+    return false;
+  }
+
   /**
    * One entry per open window, not per process: in a shared profile ada
    * and bea are two rows with their own tabs and control state. Stopped

@@ -5,6 +5,7 @@
 
 import { renameAgent } from '../../persona/rename.ts';
 import { writeAgentA2A } from '../../persona/a2a-store.ts';
+import { AgentRenamingError } from '../../persona/rename-lock.ts';
 import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
 import { readPersonaFiles, writePersonaFile } from '../../persona/files.ts';
@@ -115,6 +116,7 @@ export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void
     try {
       await writeAgentA2A(agent, body.on);
     } catch (err) {
+      if (err instanceof AgentRenamingError) return c.json({ error: err.message }, 409);
       return c.json({ error: `could not write agent.yaml: ${(err as Error).message}` }, 500);
     }
     logger.info({ msg: 'agent.a2a_switched', agent, on: body.on });
@@ -135,7 +137,7 @@ export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void
       ...(routeDeps.reloadConfig ? { reloadConfig: routeDeps.reloadConfig } : {}),
     }, { dryRun: body.dryRun === true });
     if (!report.ok) {
-      const status = /^no agent/.test(report.error ?? '') ? 404 : /busy|already exists/.test(report.error ?? '') ? 409 : /not a valid|the new name is the old/.test(report.error ?? '') ? 400 : 500;
+      const status = /^no agent/.test(report.error ?? '') ? 404 : /busy|already exists|being renamed|YAML anchor/.test(report.error ?? '') ? 409 : /not a valid|the new name is the old/.test(report.error ?? '') ? 400 : 500;
       return c.json(report, status);
     }
     return c.json(report);
