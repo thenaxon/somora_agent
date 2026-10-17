@@ -675,10 +675,11 @@ curl -H "Authorization: Bearer $KEY" -X POST "$BASE/chat/abort?agent=<your-agent
 |---|---|---|
 | `agent` | first agent | Agent name. |
 | `session` | `main` | Session reference. |
+| `turnId` | none | Stop only this turn, the `turnId` from `POST /chat/send`. Another turn running on the session is left alone. |
 
 Returns `{agent, session, aborted: true, ms_running}`, or
-`{agent, session, aborted: false}` when nothing was running. Safe to
-call twice.
+`{agent, session, aborted: false}` when nothing was running (or, with
+`turnId`, when that turn is not the one running). Safe to call twice.
 
 - Only the running turn is stopped. Queued turns keep their place.
 - A command the turn runs through `exec` is killed with it. Its result

@@ -656,7 +656,8 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
     }
     const sessionRef = c.req.query('session') ?? 'main';
     const session = (await resolveSessionId(agent, sessionRef)) ?? sessionRef;
-    const result = triggerChatAbort(agent, session);
+    const turnId = c.req.query('turnId') || undefined;
+    const result = triggerChatAbort(agent, session, turnId);
     if (!result.aborted) {
       logger.info({
         msg: 'chat.abort.no_active_turn',

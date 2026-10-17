@@ -24,7 +24,9 @@ somora, see [External agents](external-agents.md).
   editor shows it as the plan.
 - **Questions as the editor's dialog.** When a builder asks you
   something, the editor shows its permission dialog with the options.
-- **Stop.** Cancelling in the editor stops the turn in somora.
+- **Stop.** Cancelling in the editor stops the editor's turn in somora.
+  If that turn still waits behind a turn from another window, it is
+  taken out of the queue, and the other turn keeps running.
 - **Images.** Images you add in the editor reach the agent as
   attachments.
 - **The context fill**, when the agent's model reports it.

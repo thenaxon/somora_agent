@@ -1,8 +1,9 @@
 // `somora acp` against a stand-in somora server: the ACP SDK plays the
 // editor, the server speaks the routes the agent uses (/agents, sessions,
 // /chat/send, /chat/stream, /chat/abort, /chat/history, the question
-// answer). Covers a turn, a turn of another client in between, tools,
-// a question, cancel, load and the refusals.
+// answer, DELETE /chat/queue). Covers a turn, a turn of another client
+// in between, tools, a question, cancel (running, queued behind another
+// client's turn, before the message went out), load and the refusals.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -16,7 +17,14 @@ interface Fake {
   answers: Array<{ id: string; answers: string[] }>;
   sent: Array<Record<string, unknown>>;
   readonly aborts: number;
+  /** The query of every /chat/abort. */
+  abortQueries: URLSearchParams[];
   onAbort: () => void;
+  /** Turn ids waiting in the queue: DELETE /chat/queue/:id takes them out. */
+  queued: Set<string>;
+  dequeued: string[];
+  /** Hold POST …/sessions this long (a session being created). */
+  createDelayMs: number;
 }
 
 /** A somora stand-in. `script(text, turnId)` gives the frames a turn sends. */
@@ -36,7 +44,11 @@ function fakeSomora(script: (text: string, turnId: string, s: Fake) => Promise<v
     get aborts() {
       return aborts;
     },
+    abortQueries: [],
     onAbort: () => {},
+    queued: new Set(),
+    dequeued: [],
+    createDelayMs: 0,
     sessions,
   };
   const server = http.createServer((req, res) => {
@@ -54,7 +66,8 @@ function fakeSomora(script: (text: string, turnId: string, s: Fake) => Promise<v
         const slug = JSON.parse(body).slug as string;
         const row = { id: `id-${slug}`, slug, lastActivity: null as unknown as string };
         sessions.push(row);
-        return json(201, { id: row.id, slug });
+        setTimeout(() => json(201, { id: row.id, slug }), fake.createDelayMs);
+        return;
       }
       if (url.pathname === '/chat/stream') {
         res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -75,8 +88,17 @@ function fakeSomora(script: (text: string, turnId: string, s: Fake) => Promise<v
       }
       if (url.pathname === '/chat/abort') {
         aborts++;
+        fake.abortQueries.push(url.searchParams);
         fake.onAbort();
-        return json(200, { ok: true });
+        return json(200, { ok: true, aborted: true });
+      }
+      const dq = url.pathname.match(/^\/chat\/queue\/([^/]+)$/);
+      if (dq && req.method === 'DELETE') {
+        const id = decodeURIComponent(dq[1]!);
+        if (!fake.queued.delete(id)) return json(409, { ok: false, reason: 'already_started', id, turnId: id });
+        fake.dequeued.push(id);
+        fake.emit({ event: 'turn_dequeued', data: { turnId: id, workId: id } });
+        return json(200, { ok: true, id, turnId: id, kind: 'human' });
       }
       if (url.pathname === '/chat/history') {
         return json(200, {
@@ -233,7 +255,58 @@ test('cancel stops the turn on the server and ends the prompt as cancelled', asy
       const r = await p;
       assert.equal(r.stopReason, 'cancelled');
       assert.equal(fake.aborts, 1);
+      assert.match(String(fake.abortQueries[0]!.get('turnId')), /^turn-1-/, 'only our turn is stopped');
       assert.equal(textOf(updates), 'partial text\n[somora] aborted by user');
+    },
+  );
+});
+
+test('cancel while our prompt waits behind another client\'s turn: ours is taken out of the queue, theirs keeps running', async () => {
+  let webStopped = false;
+  await withServer(
+    (text, turnId, s) => {
+      // A web turn holds the session; ours waits.
+      s.queued.add(turnId);
+      s.emit({ event: 'turn_queued', data: { turnId, ahead: 1 } });
+      s.emit({ event: 'chat', data: { state: 'delta', text: 'the web turn is busy' } });
+      s.onAbort = () => {
+        webStopped = true;
+      };
+    },
+    async (base, fake) => {
+      const { client, updates } = await connect(base);
+      await client.initialize({ protocolVersion: 1, clientCapabilities: {} });
+      const { sessionId } = await client.newSession({ cwd: '/w', mcpServers: [] });
+      const p = client.prompt({ sessionId, prompt: [{ type: 'text', text: 'mine' }] });
+      await new Promise((r) => setTimeout(r, 150));
+      await client.cancel({ sessionId });
+      const r = await p;
+      assert.equal(r.stopReason, 'cancelled');
+      assert.deepEqual(fake.dequeued, ['turn-1-xxxxxxxx'], 'our queued turn was withdrawn');
+      assert.equal(fake.aborts, 0, 'the web turn was not stopped');
+      assert.equal(webStopped, false);
+      assert.equal(textOf(updates), '', 'nothing of the web turn reached the editor');
+    },
+  );
+});
+
+test('cancel before the message went out: nothing is sent', async () => {
+  await withServer(
+    () => {},
+    async (base, fake) => {
+      fake.createDelayMs = 400;
+      const { client } = await connect(base);
+      await client.initialize({ protocolVersion: 1, clientCapabilities: {} });
+      const { sessionId } = await client.newSession({ cwd: '/w', mcpServers: [] });
+      // The session is still being created when the editor cancels.
+      const p = client.prompt({ sessionId, prompt: [{ type: 'text', text: 'never mind' }] });
+      await new Promise((r) => setTimeout(r, 100));
+      await client.cancel({ sessionId });
+      const r = await p;
+      assert.equal(r.stopReason, 'cancelled');
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(fake.sent.length, 0, 'no /chat/send');
+      assert.equal(fake.aborts, 0, 'and no stop of whatever runs there');
     },
   );
 });

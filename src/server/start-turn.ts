@@ -151,7 +151,7 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
     // Registered only once the lock is held: the lock guarantees one
     // turn per session, so the registry's "abort a still-registered
     // prior controller" defence never fires on a live turn.
-    const abort = registerChatAbort(agent, session);
+    const abort = registerChatAbort(agent, session, turnId);
     try {
       const result = await runTurn({
         agent,
