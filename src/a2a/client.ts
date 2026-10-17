@@ -23,6 +23,7 @@ import {
   statusText,
   taskAnswer,
 } from './protocol.ts';
+import { filePartAs03 } from './files.ts';
 
 export class A2AError extends Error {
   constructor(
@@ -228,8 +229,7 @@ export async function runTask(input: RunTaskInput): Promise<TaskOutcome> {
     } catch (err) {
       if (err instanceof A2AError && err.kind === 'aborted') return stopped('aborted');
       if (err instanceof A2AError && err.kind === 'rpc' && err.rpc?.code === ERR_METHOD_NOT_FOUND && version === '1.0') {
-        version = '0.3';
-        return runTask({ ...input, card: { ...card, version: '0.3' } });
+        return runTask(as03(input));
       }
       throw err;
     }
@@ -240,7 +240,7 @@ export async function runTask(input: RunTaskInput): Promise<TaskOutcome> {
     } catch (err) {
       if (err instanceof A2AError && err.kind === 'aborted') return stopped('aborted');
       if (err instanceof A2AError && err.kind === 'rpc' && err.rpc?.code === ERR_METHOD_NOT_FOUND && version === '1.0') {
-        return runTask({ ...input, card: { ...card, version: '0.3' } });
+        return runTask(as03(input));
       }
       throw err;
     }
@@ -277,6 +277,12 @@ export async function runTask(input: RunTaskInput): Promise<TaskOutcome> {
       if (done) return done;
     }
   }
+}
+
+/** The same task for a peer that turned out to speak 0.3: its file
+ *  parts rebuilt in the 0.3 shape. */
+function as03(input: RunTaskInput): RunTaskInput {
+  return { ...input, card: { ...input.card, version: '0.3' }, ...(input.parts ? { parts: input.parts.map(filePartAs03) } : {}) };
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

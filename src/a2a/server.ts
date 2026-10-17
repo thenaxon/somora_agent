@@ -29,8 +29,8 @@ import { remoteOf } from '../server/sse-liveness.ts';
 import { SOMORA_VERSION } from '../version.ts';
 import type { SseEvent } from '../types/events.ts';
 import type { TurnOrigin } from '../types/turn-origin.ts';
-import { takeDailyCall } from './limits.ts';
-import { answerFileParts, fileLinkUrl, incomingFiles, registerA2AFileRoutes, type AttachmentRef } from './files.ts';
+import { giveBackDailyCall, takeDailyCall } from './limits.ts';
+import { answerFileParts, checkIncomingFiles, fileLinkUrl, incomingFiles, maxRequestBytes, registerA2AFileRoutes, type AttachmentRef } from './files.ts';
 import { createReadStream } from 'node:fs';
 import { storeAttachment } from '../attachments/store.ts';
 import { type A2AMessage, type A2APart, type ProtocolVersion, type TaskState, PAUSED_STATES, TERMINAL_STATES, partsText } from './protocol.ts';
@@ -51,7 +51,10 @@ export interface InboundTask {
   updatedAt: number;
   /** The lock wait can be stopped before the turn runs. */
   lockAbort: AbortController;
+  /** The session lock is held: from here a stop goes to the turn. */
   running: boolean;
+  /** A stop came: the turn is stopped as soon as it can be reached. */
+  stopRequested: boolean;
   listeners: Set<(t: InboundTask, change: TaskChange) => void>;
   /** somora's own address as the peer reached it, for download links. */
   base: string;
@@ -64,13 +67,18 @@ type TaskChange = { kind: 'state' } | { kind: 'text'; piece: string; replace: bo
 const tasks = new Map<string, InboundTask>();
 const MAX_TASKS = 500;
 const KEEP_MS = 24 * 60 * 60 * 1000;
+/** Open streams (SendStreamingMessage, SubscribeToTask) per peer. */
+const MAX_STREAMS_PER_PEER = 10;
 
+/** Drop finished tasks after a day, and the oldest finished ones while
+ *  there is no room for one more. A task that is still running, waiting
+ *  in line or waiting for an answer stays: it must stay reachable for a
+ *  stop. */
 function prune(): void {
   const now = Date.now();
   for (const [id, t] of tasks) {
-    if ((TERMINAL_STATES.has(t.state) && now - t.updatedAt > KEEP_MS) || tasks.size > MAX_TASKS) {
-      if (!t.running) tasks.delete(id);
-    }
+    if (!TERMINAL_STATES.has(t.state) || t.running) continue;
+    if (now - t.updatedAt > KEEP_MS || tasks.size >= MAX_TASKS) tasks.delete(id);
   }
 }
 
@@ -78,6 +86,9 @@ function prune(): void {
 export function resetInboundTasks(): void {
   tasks.clear();
   rate.clear();
+  readRate.clear();
+  streams.clear();
+  inflight.clear();
 }
 
 // ── peers, tokens, rate ────────────────────────────────────────────────
@@ -91,18 +102,24 @@ function peerForToken(token: string): string | null {
   return null;
 }
 
+// Every request counts. Status checks (GetTask, ListTasks, CancelTask,
+// SubscribeToTask) have a bucket of their own with four times the room,
+// so a peer that polls its task does not use up the room for new ones.
 const rate = new Map<string, number[]>();
-function rateLimited(peer: string): boolean {
+const readRate = new Map<string, number[]>();
+function rateLimited(peer: string, bucket: Map<string, number[]> = rate, max = config.a2a.rateLimitPerMinute): boolean {
   const now = Date.now();
-  const hits = (rate.get(peer) ?? []).filter((t) => now - t < 60_000);
-  if (hits.length >= config.a2a.rateLimitPerMinute) {
-    rate.set(peer, hits);
+  const hits = (bucket.get(peer) ?? []).filter((t) => now - t < 60_000);
+  if (hits.length >= max) {
+    bucket.set(peer, hits);
     return true;
   }
   hits.push(now);
-  rate.set(peer, hits);
+  bucket.set(peer, hits);
   return false;
 }
+
+const streams = new Map<string, number>();
 
 const misses = new Map<string, number[]>();
 function missBlocked(ip: string): boolean {
@@ -274,14 +291,18 @@ async function runInbound(t: InboundTask, text: string, attachments: AttachmentR
   openWork({ id: t.id, origin, target: { agent: t.agent, session: t.session }, text, waiting: false, wake: 'never' });
   const started = Date.now();
   let lastText = '';
+  let stopForwarded = false;
   const sink = (e: SseEvent) => {
+    // A stop that came between taking the lock and the turn's own abort
+    // controller: the turn's first event reaches it.
+    if (t.stopRequested && !stopForwarded) {
+      stopForwarded = true;
+      triggerChatAbort(t.agent, t.session);
+    }
     const d = (e.data ?? {}) as Record<string, unknown>;
     switch (e.event) {
       case 'agent':
-        if (d.phase === 'start' && t.state === 'submitted') {
-          t.running = true;
-          setState(t, 'working');
-        }
+        if (d.phase === 'start' && t.state === 'submitted') setState(t, 'working');
         break;
       case 'chat': {
         const full = typeof d.text === 'string' ? d.text : '';
@@ -326,6 +347,13 @@ async function runInbound(t: InboundTask, text: string, attachments: AttachmentR
       workId: t.id,
       turnPrefix: await framing(t.peer),
       lockSignal: t.lockAbort.signal,
+      // From here a stop goes to the turn itself; a stop that came while
+      // it waited for the lock skips it.
+      beforeRun: () => {
+        if (t.stopRequested) return false;
+        t.running = true;
+        return true;
+      },
       publish: sink,
       ...(attachments.length > 0 ? { attachments } : {}),
     });
@@ -388,37 +416,78 @@ export interface InboundDeps {
   notify?: (peer: string, agent: string, countToday: number) => void;
 }
 
+type Accepted = { task: InboundTask } | { error: [number, string] };
+
+/** Messages being taken right now, by peer, agent and messageId: a
+ *  retry that arrives while the first is still being taken (files on
+ *  the way, the session being made) gets the same answer. */
+const inflight = new Map<string, Promise<Accepted>>();
+
 /** Accept a message: a new task, the answer to an open question, or a
  *  repeat of a message already taken (same messageId). */
-async function accept(
+function accept(
   peer: string,
   agent: string,
   params: { message?: A2AMessage & { parts?: A2APart[] } },
   deps: InboundDeps,
   base: string,
-): Promise<{ task: InboundTask } | { error: [number, string] }> {
+): Promise<Accepted> {
+  const msg = params?.message;
+  const messageId = typeof msg?.messageId === 'string' ? msg.messageId : '';
+  if (!messageId) return acceptNew(peer, agent, params, deps, base, '');
+  const key = `${peer}\0${agent}\0${messageId}`;
+  const busy = inflight.get(key);
+  if (busy) return busy;
+  for (const t of tasks.values()) if (t.peer === peer && t.agent === agent && t.messageIds.has(messageId)) return Promise.resolve({ task: t });
+  const p = acceptNew(peer, agent, params, deps, base, messageId).finally(() => inflight.delete(key));
+  inflight.set(key, p);
+  return p;
+}
+
+/** One session per peer and conversation, made once even when two
+ *  first messages of a conversation arrive together. */
+const sessionsInMaking = new Map<string, Promise<string>>();
+function sessionFor(agent: string, slug: string): Promise<string> {
+  const key = `${agent}\0${slug}`;
+  const busy = sessionsInMaking.get(key);
+  if (busy) return busy;
+  const p = (async () => (await resolveSessionId(agent, slug)) ?? (await createSession(agent, slug)))().finally(() => sessionsInMaking.delete(key));
+  sessionsInMaking.set(key, p);
+  return p;
+}
+
+async function acceptNew(
+  peer: string,
+  agent: string,
+  params: { message?: A2AMessage & { parts?: A2APart[] } },
+  deps: InboundDeps,
+  base: string,
+  messageId: string,
+): Promise<Accepted> {
   const msg = params?.message;
   if (!msg || !Array.isArray(msg.parts)) return { error: [-32602, 'params.message with parts is required'] };
-  const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
-  if (messageId) {
-    for (const t of tasks.values()) if (t.peer === peer && t.messageIds.has(messageId)) return { task: t };
-  }
   // Text and data parts are the task; file parts become attachments.
   const isFile = (p: A2APart) => typeof p.raw === 'string' || typeof p.url === 'string' || Boolean(p.file?.bytes || p.file?.uri);
   let text = partsText(msg.parts.filter((p) => !isFile(p))).trim();
   if (text.length > config.a2a.maxMessageChars) return { error: [-32602, `the message is longer than ${config.a2a.maxMessageChars} characters`] };
   if (!text && !msg.parts.some(isFile)) return { error: [-32602, 'the message has no text'] };
+  // A reply naming its task: that task's conversation, whatever else the
+  // message says (a peer may leave contextId out, as A2A allows).
+  let asked: InboundTask | undefined;
   if (typeof msg.taskId === 'string' && msg.taskId) {
-    const t = tasks.get(msg.taskId);
-    if (!t || t.peer !== peer) return { error: [-32001, `task '${msg.taskId}' not found`] };
-    if (t.state !== 'input_required') return { error: [-32004, `task '${msg.taskId}' is ${t.state}; send a new message without taskId to continue the conversation`] };
+    asked = tasks.get(msg.taskId);
+    if (!asked || asked.peer !== peer || asked.agent !== agent) return { error: [-32001, `task '${msg.taskId}' not found`] };
+    if (asked.state !== 'input_required') return { error: [-32004, `task '${msg.taskId}' is ${asked.state}; send a new message without taskId to continue the conversation`] };
+    if (typeof msg.contextId === 'string' && msg.contextId && msg.contextId !== asked.contextId) {
+      return { error: [-32602, `task '${msg.taskId}' belongs to conversation '${asked.contextId}', not '${msg.contextId}'`] };
+    }
   }
-  const contextId = typeof msg.contextId === 'string' && msg.contextId ? msg.contextId : `ctx-${randomUUID()}`;
+  const contextId = asked?.contextId ?? (typeof msg.contextId === 'string' && msg.contextId ? msg.contextId : `ctx-${randomUUID()}`);
   if (contextId.length > 200) return { error: [-32602, 'contextId is longer than 200 characters'] };
 
   // An open question in this conversation: the message answers it, and
   // the task that asked goes on.
-  const waiting = [...tasks.values()].find((t) => t.peer === peer && t.agent === agent && t.contextId === contextId && t.state === 'input_required');
+  const waiting = asked ?? [...tasks.values()].find((t) => t.peer === peer && t.agent === agent && t.contextId === contextId && t.state === 'input_required');
   if (waiting) {
     const q = pendingQuestion(waiting.agent, waiting.session);
     if (q && answerQuestion(waiting.agent, waiting.session, q.id, { answers: answerFor(q, text) })) {
@@ -426,19 +495,28 @@ async function accept(
       setState(waiting, 'working', '');
       return { task: waiting };
     }
+    if (asked) return { error: [-32004, `task '${asked.id}' no longer waits for an answer`] };
   }
 
-  if (rateLimited(peer)) return { error: [-32051, `rate limit: more than ${config.a2a.rateLimitPerMinute} requests a minute`] };
-  const incoming = await incomingFiles(msg.parts, { attachments: config.attachments, allowPrivate: config.web?.fetchAllowPrivate ?? [] });
-  if ('error' in incoming) return { error: [-32602, `a file could not be taken: ${incoming.error}`] };
-  if (!text) text = incoming.files.length === 1 ? '(a file is attached)' : '(files are attached)';
+  // Room for one more: finished tasks make way, open ones do not.
+  prune();
+  if (tasks.size >= MAX_TASKS) return { error: [-32051, `too many open tasks (${MAX_TASKS}); try again when some have finished`] };
+  // Checked before anything is fetched or stored: a refused task costs
+  // somora nothing.
+  const sizes = checkIncomingFiles(msg.parts, config.attachments);
+  if (sizes) return { error: [-32602, `a file could not be taken: ${sizes}`] };
   const daily = takeDailyCall(config.a2a.maxTasksPerDay, `peer-${peer}`);
   if (!daily.ok) return { error: [-32051, `daily limit reached (${config.a2a.maxTasksPerDay} tasks)`] };
+  const incoming = await incomingFiles(msg.parts, { attachments: config.attachments, allowPrivate: config.web?.fetchAllowPrivate ?? [] });
+  if ('error' in incoming) {
+    giveBackDailyCall(`peer-${peer}`);
+    return { error: [-32602, `a file could not be taken: ${incoming.error}`] };
+  }
+  if (!text) text = incoming.files.length === 1 ? '(a file is attached)' : '(files are attached)';
 
   const slug = sessionSlug(peer, contextId);
-  const session = (await resolveSessionId(agent, slug)) ?? (await createSession(agent, slug));
+  const session = await sessionFor(agent, slug);
   await sessionMetaStore.update(agent, session, (m) => ({ ...m, [A2A_PEER_KEY]: { peer, contextId }, [A2A_QUIET_KEY]: true }));
-  prune();
   const t: InboundTask = {
     id: `task-${randomUUID()}`,
     peer,
@@ -453,6 +531,7 @@ async function accept(
     updatedAt: Date.now(),
     lockAbort: new AbortController(),
     running: false,
+    stopRequested: false,
     listeners: new Set(),
     base,
     files: [],
@@ -470,11 +549,9 @@ async function accept(
 
 function cancel(t: InboundTask): boolean {
   if (TERMINAL_STATES.has(t.state)) return false;
-  if (t.running) {
-    triggerChatAbort(t.agent, t.session);
-  } else {
-    t.lockAbort.abort();
-  }
+  t.stopRequested = true;
+  if (t.running) triggerChatAbort(t.agent, t.session);
+  else t.lockAbort.abort();
   return true;
 }
 
@@ -524,9 +601,14 @@ export function registerA2AInboundRoutes(app: Hono, deps: InboundDeps = {}): voi
       return c.json(rpcError(null, -32050, 'unauthorized'), 401);
     }
     const agent = c.req.param('agent');
+    // The body is read with a cap before it is parsed: five files at the
+    // attachment limits, as base64, and the longest text (docs/a2a.md).
+    const max = maxRequestBytes(config.attachments, config.a2a.maxMessageChars);
+    const raw = await readCapped(c.req.raw, max);
+    if (raw === 'too-large') return c.json(rpcError(null, -32600, `the request is larger than ${Math.round(max / 1024 / 1024)} MB`), 413);
     let body: { jsonrpc?: string; id?: RpcId; method?: string; params?: Record<string, unknown> };
     try {
-      body = (await c.req.json()) as typeof body;
+      body = JSON.parse(raw) as typeof body;
     } catch {
       return c.json(rpcError(null, -32700, 'parse error'), 400);
     }
@@ -534,10 +616,18 @@ export function registerA2AInboundRoutes(app: Hono, deps: InboundDeps = {}): voi
     if (!body || body.jsonrpc !== '2.0' || typeof body.method !== 'string') return c.json(rpcError(id, -32600, 'invalid request'));
     const route = METHOD[body.method];
     if (!route) return c.json(rpcError(id, -32601, `method not found: ${body.method}`));
+    const reading = route.op !== 'send' && route.op !== 'stream';
+    const perMinute = config.a2a.rateLimitPerMinute * (reading ? 4 : 1);
+    if (rateLimited(peer, reading ? readRate : rate, perMinute)) {
+      return c.json(rpcError(id, -32051, `rate limit: more than ${perMinute} ${reading ? 'status requests' : 'requests'} a minute`), 429);
+    }
     const r = await reachable(agent, peer);
     if ('error' in r) return c.json(rpcError(id, -32001, r.error), 404);
     const v = route.v;
     const params = body.params ?? {};
+    if ((route.op === 'stream' || route.op === 'subscribe') && (streams.get(peer) ?? 0) >= MAX_STREAMS_PER_PEER) {
+      return c.json(rpcError(id, -32051, `too many open streams (${MAX_STREAMS_PER_PEER}); close one or ask with GetTask`), 429);
+    }
 
     if (route.op === 'get' || route.op === 'cancel' || route.op === 'subscribe') {
       const t = typeof params.id === 'string' ? tasks.get(params.id) : undefined;
@@ -548,7 +638,7 @@ export function registerA2AInboundRoutes(app: Hono, deps: InboundDeps = {}): voi
         await settled(t, 10_000);
         return c.json(rpcResult(id, taskView(v, t)));
       }
-      return streamTask(c, v, id, t, false);
+      return streamTask(c, v, id, t, false, peer);
     }
     if (route.op === 'list') {
       const ctx = typeof params.contextId === 'string' ? params.contextId : undefined;
@@ -562,7 +652,7 @@ export function registerA2AInboundRoutes(app: Hono, deps: InboundDeps = {}): voi
       return c.json(rpcError(id, code, message), code === -32051 ? 429 : 200);
     }
     const t = accepted.task;
-    if (route.op === 'stream') return streamTask(c, v, id, t, true);
+    if (route.op === 'stream') return streamTask(c, v, id, t, true, peer);
     const conf = (params.configuration ?? {}) as { returnImmediately?: boolean; blocking?: boolean };
     const immediate = conf.returnImmediately === true || conf.blocking === false;
     if (!immediate) await settled(t, config.a2a.replyTimeoutSeconds * 1000, c.req.raw.signal);
@@ -571,9 +661,36 @@ export function registerA2AInboundRoutes(app: Hono, deps: InboundDeps = {}): voi
   });
 }
 
+/** The request body as text, or 'too-large' as soon as it passes `max`
+ *  bytes (a stated length is believed up front, the rest is counted). */
+async function readCapped(req: Request, max: number): Promise<string | 'too-large'> {
+  if (Number(req.headers.get('content-length') ?? 0) > max) return 'too-large';
+  if (!req.body) return '';
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const reader = req.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return 'too-large';
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 /** SendStreamingMessage / SubscribeToTask: the task, then its changes,
  *  until it ends or pauses. */
-function streamTask(c: Context, v: ProtocolVersion, id: RpcId, t: InboundTask, fresh: boolean): Response {
+function streamTask(c: Context, v: ProtocolVersion, id: RpcId, t: InboundTask, fresh: boolean, peer: string): Response {
+  streams.set(peer, (streams.get(peer) ?? 0) + 1);
+  const uncount = () => {
+    const n = (streams.get(peer) ?? 1) - 1;
+    if (n > 0) streams.set(peer, n);
+    else streams.delete(peer);
+  };
   return streamSSEH2Safe(c, async (stream) => {
     const send = (result: unknown) => stream.writeSSE({ data: JSON.stringify(rpcResult(id, result)) });
     const wrap = (member: 'statusUpdate' | 'artifactUpdate', value: Record<string, unknown>, final = false) =>
@@ -614,7 +731,12 @@ function streamTask(c: Context, v: ProtocolVersion, id: RpcId, t: InboundTask, f
     });
     try {
       await send(v === '0.3' ? taskView(v, t) : { task: taskView(v, t) });
-      if (!fresh && (TERMINAL_STATES.has(t.state) || PAUSED_STATES.has(t.state))) return;
+      // Nothing more will come for a task that has ended or waits for an
+      // answer — also when a repeated message brought back a finished one.
+      if (TERMINAL_STATES.has(t.state) || PAUSED_STATES.has(t.state)) {
+        if (fresh) await send(status(true));
+        return;
+      }
       if (fresh && t.state !== 'submitted') await send(status());
       for (;;) {
         while (queue.length > 0) await queue.shift()!();
@@ -625,6 +747,7 @@ function streamTask(c: Context, v: ProtocolVersion, id: RpcId, t: InboundTask, f
       while (queue.length > 0) await queue.shift()!();
     } finally {
       t.listeners.delete(listener);
+      uncount();
       stream.close();
     }
   });
