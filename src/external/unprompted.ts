@@ -61,11 +61,19 @@ function collect(ext: ExternalAgent, session: string, update: SessionUpdate, qui
 }
 
 /** Write what an agent sent on its own in this session now — before a
- *  turn starts there, so the order in the session stays right. */
-export async function flushUnprompted(agent: string, session: string): Promise<void> {
-  const p = pending.get(key(agent, session));
-  if (p) await flush(p);
-  await writing.get(key(agent, session));
+ *  turn starts there, so the order in the session stays right. Without
+ *  a session: every session of the agent (before a rename moves its
+ *  folder, so what it wrote moves along). */
+export async function flushUnprompted(agent: string, session?: string): Promise<void> {
+  if (session !== undefined) {
+    const p = pending.get(key(agent, session));
+    if (p) await flush(p);
+    await writing.get(key(agent, session));
+    return;
+  }
+  const mine = (k: string) => k.startsWith(`${agent}/`);
+  await Promise.all([...pending].filter(([k]) => mine(k)).map(([, p]) => flush(p)));
+  await Promise.all([...writing].filter(([k]) => mine(k)).map(([, w]) => w));
 }
 
 function flush(p: Pending): Promise<void> {
@@ -119,6 +127,22 @@ async function write(p: Pending): Promise<void> {
   await send({ event: 'agent', data: { phase: 'end', provider: 'external', model: `${p.ext.system}/${p.ext.name}`, contextWindow: 0, external: { system: p.ext.system, unprompted: true } } });
   const text = body.filter((e) => e.kind === 'assistant_message').map((e) => (e as { text: string }).text).join('\n');
   logger.info({ msg: 'external.unprompted', agent: p.ext.name, session: p.session, chars: text.length, events: body.length, ms: ts - p.first });
+}
+
+/** Throw away what was collected and not yet written, for one session or
+ *  every session of the agent, and wait for a write already running. Its
+ *  conversation is over: a reset starts the session afresh, a rename
+ *  moves the agent's folder (a later write would make the old folder
+ *  again). Call it after the connection is closed, so nothing new comes. */
+export async function discardUnprompted(agent: string, session?: string): Promise<void> {
+  const mine = (k: string) => (session === undefined ? k.startsWith(`${agent}/`) : k === key(agent, session));
+  for (const [k, p] of [...pending]) {
+    if (!mine(k)) continue;
+    if (p.timer) clearTimeout(p.timer);
+    pending.delete(k);
+    logger.info({ msg: 'external.unprompted_discarded', agent, session: p.session, events: p.events.length });
+  }
+  await Promise.all([...writing].filter(([k]) => mine(k)).map(([, w]) => w));
 }
 
 /** For tests. */

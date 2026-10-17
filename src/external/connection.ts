@@ -91,9 +91,18 @@ export class ExternalConnection {
   /** While `session/load` replays history, its updates are not a turn. */
   private replaying = false;
   private dead: string | null = null;
+  /** close() was called: what still arrives is not shown. */
+  private closed = false;
+  /** Prompts and session setups running now: the idle sweeper leaves a
+   *  connection in use alone, however long its turn takes. */
+  private busy = 0;
+  /** The session setup running now: the next waits for it (a setup a
+   *  stopped turn left behind still finishes in the background). */
+  private settingUp: Promise<unknown> = Promise.resolve();
   info: ExternalAgentInfo;
   sessionId: string | null = null;
   readonly fingerprint: string;
+  /** Last activity: a turn's end, an update from the agent. */
   lastUsed = Date.now();
 
   private constructor(
@@ -114,6 +123,10 @@ export class ExternalConnection {
     return this.dead === null && !this.conn.signal.aborted;
   }
 
+  get inUse(): boolean {
+    return this.busy > 0;
+  }
+
   get deathReason(): string | null {
     return this.dead ?? (this.conn.signal.aborted ? 'the ACP connection closed' : null);
   }
@@ -127,9 +140,10 @@ export class ExternalConnection {
     const conn = new ClientSideConnection(
       () => ({
         sessionUpdate: async (p) => {
-          if (!self || self.replaying) return;
+          if (!self || self.replaying || self.closed) return;
           if (self.sessionId && p.sessionId !== self.sessionId) return;
           if (self.handlers) {
+            self.lastUsed = Date.now();
             self.handlers.onUpdate(p.update);
             return;
           }
@@ -200,7 +214,22 @@ export class ExternalConnection {
    * or start a new one. Returns the session id and whether it is new.
    */
   async ensureSession(known: string | undefined, config: Config): Promise<{ sessionId: string; started: boolean; lostPrevious: boolean }> {
-    if (this.sessionId && this.sessionId === known) return { sessionId: this.sessionId, started: false, lostPrevious: false };
+    this.busy += 1;
+    const run = this.settingUp.catch(() => {}).then(() => this.setUpSession(known, config));
+    this.settingUp = run;
+    try {
+      return await run;
+    } finally {
+      this.busy -= 1;
+      this.lastUsed = Date.now();
+    }
+  }
+
+  private async setUpSession(known: string | undefined, config: Config): Promise<{ sessionId: string; started: boolean; lostPrevious: boolean }> {
+    // The connection belongs to one somora session (closed on its reset):
+    // the session it has is that one's, also when the id was not stored
+    // yet (a stopped turn's setup finished in the background).
+    if (this.sessionId && (this.sessionId === known || known === undefined)) return { sessionId: this.sessionId, started: false, lostPrevious: false };
     const cwd = await this.defaultCwd(config);
     const caps = this.info.capabilities;
     if (known) {
@@ -230,11 +259,14 @@ export class ExternalConnection {
     return { sessionId: res.sessionId, started: true, lostPrevious: Boolean(known) };
   }
 
-  /** One prompt. `signal` cancels it (ACP `session/cancel`). */
+  /** One prompt. `signal` cancels it (ACP `session/cancel`); a signal
+   *  already aborted sends nothing. */
   async prompt(blocks: ContentBlock[], handlers: PromptHandlers, signal?: AbortSignal): Promise<PromptResponse> {
     if (!this.sessionId) throw new Error('no session');
     if (!this.alive) throw new Error(this.deathReason ?? 'the external agent is gone');
+    if (signal?.aborted) return { stopReason: 'cancelled' };
     this.handlers = handlers;
+    this.busy += 1;
     this.lastUsed = Date.now();
     const sessionId = this.sessionId;
     const onAbort = () => {
@@ -255,12 +287,14 @@ export class ExternalConnection {
     } finally {
       signal?.removeEventListener('abort', onAbort);
       this.handlers = null;
+      this.busy -= 1;
       this.turnEndedAt = Date.now();
       this.lastUsed = Date.now();
     }
   }
 
   close(): void {
+    this.closed = true;
     this.proc.stop();
   }
 }
@@ -274,17 +308,21 @@ let sweeper: NodeJS.Timeout | null = null;
 
 function ensureSweeper(config: () => Config): void {
   if (sweeper) return;
-  sweeper = setInterval(() => {
-    const idleMs = config().external.idleMinutes * 60_000;
-    for (const [k, c] of connections) {
-      if (!c.alive || Date.now() - c.lastUsed > idleMs) {
-        connections.delete(k);
-        logger.info({ msg: 'external.closed', agent: c.ext.name, reason: c.alive ? 'idle' : 'dead' });
-        c.close();
-      }
-    }
-  }, 30_000);
+  sweeper = setInterval(() => sweepExternal(config().external.idleMinutes * 60_000), 30_000);
   sweeper.unref();
+}
+
+/** Close dead connections and those unused for `idleMs`. A connection
+ *  with a turn or a session setup running is in use, not idle: a turn
+ *  may take longer than idleMinutes (a long task, a permission question
+ *  waiting for the person). Exported for tests. */
+export function sweepExternal(idleMs: number, now = Date.now()): void {
+  for (const [k, c] of connections) {
+    if (c.alive && (c.inUse || now - c.lastUsed <= idleMs)) continue;
+    connections.delete(k);
+    logger.info({ msg: 'external.closed', agent: c.ext.name, reason: c.alive ? 'idle' : 'dead' });
+    c.close();
+  }
 }
 
 /** The live connection for this agent and session, opened when needed. */

@@ -37,6 +37,37 @@ export function fillCommand(command: string, vars: { session: string; agent: str
   return command.replace(/\{session\}/g, safe(vars.session)).replace(/\{agent\}/g, safe(vars.agent));
 }
 
+/** Thrown by `unlessStopped` when the turn's signal fires first. */
+class StoppedDuringSetup extends Error {}
+
+/** `p`, or a StoppedDuringSetup as soon as `signal` fires. Whatever `p`
+ *  does goes on in the background (a connection being opened is kept for
+ *  the next turn). */
+function unlessStopped<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return p;
+  if (signal.aborted) {
+    p.catch(() => {});
+    return Promise.reject(new StoppedDuringSetup());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      p.catch(() => {});
+      reject(new StoppedDuringSetup());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(v);
+      },
+      (e: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(e);
+      },
+    );
+  });
+}
+
 export async function* runExternalTurn(input: ExternalTurnInput): AsyncGenerator<NormalizedEvent> {
   const { ext, session, metaStore } = input;
   const turnId = `t-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -62,17 +93,30 @@ export async function* runExternalTurn(input: ExternalTurnInput): AsyncGenerator
     const gen = typeof (meta as { externalGeneration?: unknown }).externalGeneration === 'number' ? (meta as { externalGeneration: number }).externalGeneration : 0;
     const sessionVar = gen > 0 ? `${session}-r${gen}` : session;
     const filled = { ...ext, agent: { ...ext.agent, command: fillCommand(ext.agent.command, { session: sessionVar, agent: ext.name }) } };
-    conn = await connectionFor(filled, session, input.config);
+    // Stop works during the setup too (starting the agent, its session):
+    // the turn ends as stopped at once and the prompt is never sent.
+    conn = await unlessStopped(connectionFor(filled, session, input.config), input.signal);
     rememberInfo(ext.name, conn.info);
     const known = typeof (meta as { externalSessionId?: unknown }).externalSessionId === 'string' ? (meta as { externalSessionId: string }).externalSessionId : undefined;
-    const s = await conn.ensureSession(known, input.config());
-    if (s.sessionId !== known) {
-      await metaStore.update(ext.name, session, (m) => ({ ...m, externalSessionId: s.sessionId, externalSystem: ext.system }));
-    }
+    const c = conn;
+    // The session id is stored even when the turn was stopped meanwhile,
+    // so the next turn continues the session set up here.
+    const setup = c.ensureSession(known, input.config()).then(async (s) => {
+      if (s.sessionId !== known) {
+        await metaStore.update(ext.name, session, (m) => ({ ...m, externalSessionId: s.sessionId, externalSystem: ext.system }));
+      }
+      return s;
+    });
+    const s = await unlessStopped(setup, input.signal);
     if (s.lostPrevious) {
       yield { kind: 'engine_meta', ts: ts(), engine: ACP_ENGINE, itemType: 'external_session_new', payload: { message: `${ext.name} no longer had the earlier session; this continues in a new one on its side.` } };
     }
   } catch (err) {
+    if (err instanceof StoppedDuringSetup) {
+      logger.info({ msg: 'external.turn', agent: ext.name, system: ext.system, session, stopReason: 'cancelled', during: 'setup', ms: Date.now() - started });
+      for (const e of tr.finish('cancelled')) yield e;
+      return;
+    }
     const message = (err as Error).message;
     logger.warn({ msg: 'external.turn_start_failed', agent: ext.name, system: ext.system, session, err: message });
     for (const e of tr.finish('error', undefined, `${ext.name} could not be reached: ${message}`)) yield e;

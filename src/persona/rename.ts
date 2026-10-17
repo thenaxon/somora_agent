@@ -19,6 +19,7 @@ import { configPath } from '../config/loader.ts';
 import type { Config } from '../config/types.ts';
 import { getExternalAgent, listExternalAgents, nativeAgentExists } from '../external/registry.ts';
 import { closeAgentConnections } from '../external/connection.ts';
+import { flushUnprompted } from '../external/unprompted.ts';
 import { evictMemoryManager } from '../memory/registry.ts';
 import { listAgents, loadPersona } from '../persona/loader.ts';
 import { listAllSessionLockStates } from '../server/session-queue.ts';
@@ -300,7 +301,13 @@ export async function renameAgent(from: string, to: string, deps: RenameDeps, op
   }
 
   // ── let go of what the running server holds ───────────────────────
-  if (external) closeAgentConnections(from, to);
+  if (external) {
+    closeAgentConnections(from, to);
+    // What it sent on its own and not yet written goes into its sessions
+    // now, before the folder moves (a later write would make agents/<from>
+    // again).
+    await flushUnprompted(from);
+  }
   if (persona) {
     await evictMemoryManager(from);
     deps.remUnregister?.(from);
