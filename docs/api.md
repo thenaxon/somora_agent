@@ -3261,9 +3261,9 @@ Renames an agent, somora's own or external
 `{ "to": "<new>", "dryRun": true }`; without `dryRun` it renames.
 
 ```json
-{ "ok": true, "from": "claw", "to": "lobo", "kind": "external", "dryRun": false,
-  "changes": ["folder agents/claw → agents/lobo", "team.yaml: agents.claw → lobo",
-              "config.yaml: external.systems.openclaw.agents.claw → lobo"],
+{ "ok": true, "from": "claw", "to": "kai", "kind": "external", "dryRun": false,
+  "changes": ["folder agents/claw → agents/kai", "team.yaml: agents.claw → kai",
+              "config.yaml: external.systems.openclaw.agents.claw → kai"],
   "warnings": [] }
 ```
 

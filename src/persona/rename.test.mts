@@ -175,14 +175,14 @@ test('a somora agent: everything that names it moves to the new name', async () 
 });
 
 test('an external agent: its config entry in place, its sessions, the team', async () => {
-  const r = await run('claw', 'lobo');
+  const r = await run('claw', 'kai');
   assert.equal(r.ok, true, r.error);
   assert.equal(r.kind, 'external');
   const cfg = readFileSync(join(home, 'config.yaml'), 'utf8');
-  assert.match(cfg, /^ {10}# the OpenClaw lab agent\n {10}lobo:\n {12}command: "false"\n {12}description: >-\n {14}A long folded description that must keep its line breaks after\n {14}the rename/m);
-  assert.equal(existsSync(join(agents, 'lobo', 'sessions', 'main.jsonl')), true);
+  assert.match(cfg, /^ {10}# the OpenClaw lab agent\n {10}kai:\n {12}command: "false"\n {12}description: >-\n {14}A long folded description that must keep its line breaks after\n {14}the rename/m);
+  assert.equal(existsSync(join(agents, 'kai', 'sessions', 'main.jsonl')), true);
   assert.equal(existsSync(join(agents, 'claw')), false);
-  assert.match(readFileSync(join(home, 'team.yaml'), 'utf8'), /^ {2}lobo:\n {4}reports_to: 'nova'$/m, 'the quoting kept');
+  assert.match(readFileSync(join(home, 'team.yaml'), 'utf8'), /^ {2}kai:\n {4}reports_to: 'nova'$/m, 'the quoting kept');
 });
 
 test('the route answers with the report; 409 when the name is taken', async () => {

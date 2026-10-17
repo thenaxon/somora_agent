@@ -33,7 +33,7 @@ const cfg: Config = ConfigSchema.parse({
       lab: {
         transport: { local: true },
         agents: {
-          lobo: { command: cmd(400) },
+          kai: { command: cmd(400) },
           slowpoke: { command: cmd(400) },
           resetter: { command: cmd(400) },
           molasses: { command: cmd(200) },
@@ -80,22 +80,22 @@ after(() => {
 });
 
 test('a result after the turn becomes its own message in the session, shown live; a straggler right after the turn is not', async () => {
-  const evs = await turn('lobo', 's1', 'do it later');
+  const evs = await turn('kai', 's1', 'do it later');
   assert.equal((evs.find((e) => e.kind === 'assistant_message') as { text: string }).text, 'on it');
   await sleep(400 + 300 + 400);
-  const h = await getHistory('lobo', 's1');
+  const h = await getHistory('kai', 's1');
   const kinds = h.map((e) => e.kind);
   assert.deepEqual(kinds, ['turn_start', 'engine_meta', 'tool_call', 'tool_result', 'assistant_message', 'turn_end']);
   const note = h[1] as { itemType: string; payload: { text: string } };
   assert.equal(note.itemType, 'external_unprompted');
-  assert.match(note.payload.text, /lobo wrote this on its own/);
+  assert.match(note.payload.text, /kai wrote this on its own/);
   assert.equal((h[4] as { text: string }).text, 'the late result is ready');
   assert.ok(!JSON.stringify(h).includes('straggler'), 'the piece within the grace time is not a message');
-  const live = published.filter((p) => p.agent === 'lobo' && p.session === 's1').map((p) => p.e.event);
+  const live = published.filter((p) => p.agent === 'kai' && p.session === 's1').map((p) => p.e.event);
   assert.equal(live[0], 'agent');
   assert.equal(live.at(-1), 'agent');
   assert.deepEqual(live, ['agent', 'engine_meta', 'tool', 'tool', 'chat', 'chat', 'chat', 'chat', 'agent']);
-  const start = published.find((p) => p.agent === 'lobo' && p.e.event === 'agent')!.e as unknown as { data: { external: { unprompted: boolean } } };
+  const start = published.find((p) => p.agent === 'kai' && p.e.event === 'agent')!.e as unknown as { data: { external: { unprompted: boolean } } };
   assert.equal(start.data.external.unprompted, true);
 });
 

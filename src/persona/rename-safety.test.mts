@@ -190,7 +190,7 @@ test('an entry reached through a YAML anchor or merge key is refused, nothing mo
   );
   try {
     const before = tree();
-    const r = await run('claw', 'lobo');
+    const r = await run('claw', 'kai');
     assert.equal(r.ok, false);
     assert.match(r.error ?? '', /config\.yaml would still name 'claw' at external\.systems\.oc\.agents\.claw: .*merge key/);
     assert.deepEqual(tree(), before);

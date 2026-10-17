@@ -99,7 +99,7 @@ check('plain ls allowed', evaluateExecPolicy('ls -la /tmp', []).allowed);
 check('git chain allowed', evaluateExecPolicy('git pull && npm ci && npm test', []).allowed);
 check(
   'rm on user path allowed',
-  evaluateExecPolicy('rm -rf /home/suspect/scratch', []).allowed,
+  evaluateExecPolicy('rm -rf /home/ada/scratch', []).allowed,
 );
 
 // ── Prefix boundary: sudo must not match pseudo, exact must not over-match ──

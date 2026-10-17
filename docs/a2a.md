@@ -324,7 +324,7 @@ they get links. A link needs somora's address from outside:
 `a2a.publicUrl` in `config.yaml` (see
 [Set up somora as a target](#set-up-somora-as-a-target)). Without it a
 task with files is refused with that hint. The session shows how each
-file went (`sent to lobo over A2A with 1 as download link`).
+file went (`sent to kai over A2A with 1 as download link`).
 
 **Another system sends a file.** File parts in a task, as bytes or as a
 URL, become attachments of the turn, as if you had attached them in the
