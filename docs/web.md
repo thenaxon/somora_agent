@@ -293,7 +293,7 @@ says so. Dark, Light or Auto stays saved for when you switch back.
 
 | Key | Meaning |
 |---|---|
-| `name` | Shown in the menu. Optional, the folder name otherwise. |
+| `name` | Shown in the menu, up to 64 characters. Optional, the folder name otherwise. |
 | `dark`, `light` | The two versions. At least one of them. |
 
 Each version takes these keys:
@@ -301,13 +301,14 @@ Each version takes these keys:
 | Key | Meaning |
 |---|---|
 | `colors` | Colour tokens from the table below. Optional. Every colour a version does not set comes from somora's Dark or Light. |
-| `wallpaper` | A `.png`, `.jpg` or `.webp` file in the theme folder, up to 20 MB. Optional. It takes the place of the background gradient. |
+| `wallpaper` | A `.png`, `.jpg`, `.jpeg` or `.webp` file in the theme folder, up to 20 MB. Optional. It takes the place of the background gradient. |
 | `grid` | `false` hides the grid lines on the desktop. Optional, default `true`. |
 
 Colour values are `#rgb`, `#rrggbb`, `rgb()` or `hsl()`, with or
 without transparency. Nothing else is accepted: no names such as
 `red`, no `url()`, no other keys. The folder name may use letters,
-digits, `-` and `_`.
+digits, `-` and `_`, up to 64 characters. The theme must be a real
+folder, not a link, and `theme.json` at most 64 KB.
 
 | Token | Colours |
 |---|---|

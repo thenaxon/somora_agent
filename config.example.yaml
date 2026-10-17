@@ -17,7 +17,7 @@
 # 'anthropic', 'ollama', 'lmstudio', 'home-gpu', 'pi-edge', etc.
 #
 # Per-model 'alias' lets you reference a model by short nickname anywhere
-# (persona frontmatter, later /model in the CLI). Aliases must be globally
+# (agent.yaml, /model in the clients). Aliases must be globally
 # unique across the whole config — server refuses to start otherwise.
 
 server:
@@ -183,7 +183,7 @@ providers:
 #   maxImageBytes: 5242880                # largest image sent, after scaling
 #   maxImageEdge: 2048                    # longer side in pixels; larger images are scaled down first, 0 = off
 
-# Vision / multimodal worker (Phase Y). Optional. When set, the
+# Vision / multimodal worker. Optional. When set, the
 # `analyze_file` tool dispatches images and PDFs to the worker model
 # and returns its text analysis — useful when the active main model
 # lacks `image` capability or when you want a token-cheap description
@@ -226,7 +226,7 @@ providers:
 # attachment to such a model is described by the worker instead of
 # refusing the turn.
 
-# Speech-to-Text (Phase voice). Optional. When `enabled: true`, the
+# Speech-to-Text. Optional. When `enabled: true`, the
 # web chat input grows a mic button next to send: click → record, click
 # again → transcribe → text lands in the textarea ready to send. Audio
 # is forwarded to an OpenAI-compatible STT endpoint
@@ -774,7 +774,7 @@ providers:
 
 # memory:
 #   embedding:
-#     provider: local                     # 'local' (@huggingface/transformers) | future: openai/gemini/...
+#     provider: local                     # 'local' (@huggingface/transformers)
 #     model: all-MiniLM-L6-v2             # alias OR full HF repo path (e.g. 'Xenova/foo')
 #                                         # known-good aliases: all-MiniLM-L6-v2 (default,
 #                                         # 384 dim, ~30MB), all-mpnet-base-v2 (768 dim,
@@ -932,12 +932,16 @@ providers:
 #       agents:
 #         claw:
 #           command: openclaw acp --session agent:main:somora-{session}
+#           # description: Lab assistant     # shown on the tile and in the team list
+#           # icon: 🦀                        # tile emoji
+#           # cwd: /home/agents/work         # working folder over there (default: its home)
 #           a2a:
 #             url: https://<machine>.<tailnet>.ts.net
 #             token: <token>            # the token OpenClaw has for "somora"
 #     hermes:
 #       transport: { resource: agents-vm }
 #       # badge: ☤                       # tile-corner sign or image path
+#       # profile: hermes                 # openclaw | hermes | generic (default: from its introduction)
 #       agents:
 #         herm:
 #           command: hermes acp
@@ -947,7 +951,8 @@ providers:
 # with its own token (openssl rand -hex 32). No peers = nothing reachable.
 # a2a:
 #   publicUrl: https://<host>.<tailnet>.ts.net:18737   # written into the cards
-#   peers:
+#   # defaultAgent: <your-agent>        # the agent /.well-known/agent-card.json describes
+#   peers:                              # names: lower-case letters, digits, _ . -
 #     hermes:
 #       token: <token Hermes sends>
 #     openclaw:
@@ -956,13 +961,14 @@ providers:
 #   rateLimitPerMinute: 30              # per peer
 #   maxTasksPerDay: 200                 # per peer
 #   replyTimeoutSeconds: 300            # a waiting request returns "working" after this
+#   maxMessageChars: 64000              # longest task text
 #   archiveAfterDays: 7                 # quiet conversations with peers are archived
 #   tools:
 #     deny: [agent_ask, agent_ask_result, agent_ask_cancel, spawn_subagent, spawn_subagents, builder_dispatch, session_model, sentinel]
 
 # Web-tools credentials. Per-provider keys — tools whose provider isn't
 # configured are hidden from the agent (the `available()` probe on the
-# tool returns false). Brave is the only provider today; free tier gives
+# tool returns false). The provider is Brave; its free tier gives
 # 2k requests/month — sign up at https://api-dashboard.search.brave.com/.
 # web:
 #   brave:
@@ -1073,3 +1079,10 @@ providers:
 #       # command: /path/to/typescript-language-server   # instead of ~/.somora/lsp or PATH
 #     pyright:
 #       enabled: true
+
+# More sections, each described on its own page (all optional):
+#   fallback         — model to switch to when one fails (docs/setup.md)
+#   promptBudgets    — size limits of the persona files (docs/team.md, docs/agents.md)
+#   thinkingContent  — show or hide the models' thinking (docs/thinking.md)
+#   mobile           — the phone app (docs/mobile.md)
+#   skills           — skill sources and checks (docs/skills.md)

@@ -100,7 +100,7 @@ OpenClaw drives coding harnesses such as Claude Code or Codex over ACP
 with its `acpx` plugin. The same plugin can drive one of your somora
 agents: OpenClaw starts `somora acp`, your agent works with its own
 tools and memory, and the result goes back to the OpenClaw agent that
-asked. Tested with OpenClaw 2026.10.3 and `@openclaw/acpx` 2026.10.3.
+asked. It needs OpenClaw 2026.10.3 or newer with `@openclaw/acpx`.
 
 For handing an OpenClaw agent's work to somora, [A2A](a2a.md#taking-work-in)
 is the simpler route: no install on the OpenClaw machine and no access
@@ -172,7 +172,7 @@ Each started session is a somora session named `acp-<date>-<time>-…`,
 visible in your clients like any other. A session OpenClaw opens and
 never writes to (its health check) leaves nothing behind.
 
-**What we saw in the tests:**
+**Good to know:**
 
 - **The stop works across the chain.** Stopping the OpenClaw turn
   cancels your somora agent's turn at once, also mid-command.

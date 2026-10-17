@@ -9,7 +9,7 @@
 //   server restart
 //   tui                               launch TUI against running server
 //   acp                               a somora agent over ACP on stdio (docs/acp.md)
-//   update [<version>] [--edge]       install from npm + rebake systemd + restart
+//   update [<version>] [--edge]       install from npm, refresh the service, restart
 //                                     (see `somora update --help`)
 //   --version | -v
 //   --help | -h
@@ -72,12 +72,13 @@ Usage:
   somora server restart              restart the service
   somora server status               show server status + lockfile info
   somora tui                         launch the TUI against the running server
-  somora acp [--agent <name>]        a somora agent for editors (Zed, JetBrains) over ACP on
+  somora acp [--agent <name>] [--session <name>]
+                                     a somora agent for editors (Zed, JetBrains) over ACP on
                                      stdin/stdout (docs/acp.md)
   somora skill <subcommand>          list/check/add/update/remove skills
                                      (run \`somora skill\` for sub-help)
   somora key [show|link|rotate]      the login key: print it, a link + QR code that
-                                     signs a browser in, or a new key
+                                     signs a browser in (link --no-open: no browser), or a new key
   somora claude [args...]            run Claude Code (e.g. \`somora claude login\`,
                                      \`somora claude status\`); somora keeps the login in step with ~/.claude
   somora codex [args...]             run the bundled Codex CLI (e.g. \`somora codex login\`,
@@ -91,10 +92,11 @@ Usage:
   somora lsp status|install [id…]    language servers for builder agents (docs/lsp.md):
                                      what is installed, install with npm into ~/.somora/lsp
   somora wiki migrate [step] [id]    move a grown wiki onto the folder template (docs/wiki.md):
-                                     guided, or plan|judge|status|approve|dry-run|run|undo
+                                     guided, or plan|judge|status|approve|dry-run|run|undo|relink
   somora config check [file]         validate config.yaml exactly as the server does
-  somora telemetry show              what the daily update check sends to somora.ai, and when
-  somora update [<version>|--edge]   install from npm + rebake systemd + restart
+  somora config path                 print the path of config.yaml
+  somora telemetry show [--json]     what the daily update check sends to somora.ai, and when
+  somora update [<version>|--edge]   install from npm, refresh the service, restart
                                      (run \`somora update --help\` for options)
   somora --version                   show version
   somora --help                      this help
@@ -487,7 +489,7 @@ function cmdTui(): Promise<number> {
 const SOMORA_NPM_NAME = 'somora';
 
 function updateUsage(): string {
-  return `somora update — install a new version from npm + rebake systemd + restart
+  return `somora update — install a new version from npm, refresh the service, restart
 
 Usage:
   somora update                latest release (npm dist-tag "latest", default)

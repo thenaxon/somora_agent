@@ -558,8 +558,9 @@ agent's windows close and the desktop reloads with the new name.
 
 It works the same for [external agents](external-agents.md#renaming-an-external-agent).
 The new name follows the rule for team.yaml and browser profiles:
-lower-case letters, digits, `-` and `_`, at most 64 characters, and not
-one that YAML reads as a number or true/false (`123`, `1e3`, `true`).
+lower-case letters, digits, `-` and `_`, starting with a letter or
+digit, at most 64 characters, and not one that YAML reads as something
+other than text (`123`, `1e3`, `true`, `null`).
 
 | What | Changes to the new name |
 |---|---|
@@ -588,9 +589,10 @@ What it does not change, and lists afterwards:
 
 The command refuses while the agent is busy: a turn running or waiting,
 open work from or for it, a background command, its browser open, or
-the Lucid review loop. Try again when it is idle. While it runs, nothing
-new starts for the agent: a message sent to it then is refused with
-"is being renamed".
+the Lucid review loop. Try again when it is idle. While it runs, every
+change for the old or the new name is refused with "is being renamed"
+(HTTP 409): a message, a persona save, a switch, a new session. Reading
+still works.
 
 It also refuses a name that an agent, a folder or a browser profile
 already has, and an entry in `config.yaml` or `team.yaml` that comes
@@ -599,7 +601,8 @@ its own name first.
 
 Everything is checked before anything moves. If a step still fails,
 every step before it is undone and the agent is back under its old name,
-file for file.
+file for file. Should a step not go back, the error names it as "could
+not put back", and the log has an `agent.rename_failed` line.
 
 ## What a restart does to running turns
 
@@ -791,9 +794,9 @@ Deep and Lucid themselves work for the whole install and are set under
 The worker can be a model on `claude-cli`, `codex-cli`, `grok-cli` or
 an `openai-compatible` provider.
 
-> **Note:** A `rem` block needs both `enabled` and `model`, also with
-> `enabled: false`. REM agents are registered when the server starts:
-> restart after you switch REM on or change `idleMinutes`.
+> **Note:** The switch in the Agent window applies at once. After you
+> edit `dreams` or `rem.*` in `agent.yaml` by hand,
+> [reload the config](setup.md#reload-the-config) so REM picks it up.
 
 ### Related settings in config.yaml
 
@@ -843,7 +846,7 @@ agent is there on the next `GET /agents`.
 | `GET /agents/:agent/skills` | The skills with a `visible` flag each. |
 | `PUT /agents/:agent/skills` | Writes `skills` into `agent.yaml`. Body `{deny, allow}`. |
 | `POST /agents/:agent/tools/:name` | Runs a tool directly, for debugging. |
-| `POST /agents/:agent/rename` | Renames the agent. Body `{to, dryRun?}`. Answers the list of changes and warnings; 409 while it is busy or the name is taken. |
+| `POST /agents/:agent/rename` | Renames the agent. Body `{to, dryRun?}`. Answers the list of changes and warnings. On failure the same report with `ok: false` and `error`: 400 for a bad name, 404 for an unknown agent, 409 while it is busy, being renamed, the name is taken or an entry comes through a YAML anchor, 500 when a file would not load or a step failed and was undone. |
 | `GET /agents/:agent/sessions` | Lists sessions. |
 | `POST /agents/:agent/sessions` | Creates a session. Body `{slug}`. 409 when the name is taken. |
 | `POST /agents/:agent/sessions/:session/reset` | Archives the session and starts it fresh. |

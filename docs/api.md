@@ -64,7 +64,8 @@ the turn and returns the reply in the response.
 | Base URL | `https://<your-host>.<your-tailnet>.ts.net:18737` with HTTPS set up, else `http://127.0.0.1:18737`. The web client is under `/web/`, the mobile app under `/mobile/`. |
 | Bodies | JSON in, JSON out (`Content-Type: application/json`), unless a route says otherwise. Uploads are raw bytes or `multipart/form-data`, as noted per route. |
 | Errors | A non-2xx response carries `{ "error": "<message>" }`. The message is written for a person. Some routes add fields, noted per route. |
-| Unknown agent or session | `404` on every route that takes one. |
+| Unknown agent or session | `404` on every route that takes one, except `POST /chat/abort`. |
+| Agent being renamed | `409` with `error: "agent '<name>' is being renamed — try again in a moment"` on every route under `/agents/:agent/` except reads (`GET`), and on `POST /chat/send` and `POST /chat/send-sync`, for the old and the new name. Retry in a moment. |
 | Times | Epoch milliseconds as numbers, or ISO 8601 strings. The examples show which. |
 | Streams | Server-Sent Events with named events. `data` is always JSON. |
 
@@ -550,6 +551,7 @@ and its events arrive on `GET /chat/stream`.
 | `202` | `{ok: true, turnId, steered: false}` when `steer` was set but nothing could take it. The message was queued. |
 | `400` | No agent is configured. |
 | `404` | Unknown agent or session. |
+| `409` | The agent is being renamed. Retry in a moment. |
 
 #### Steering
 
@@ -655,6 +657,7 @@ Other answers:
 | `400` | `{error, known_models}` | `create_model` names an unknown model. Nothing was created. |
 | `404` | `{error, known_sessions: [...]}` | Unknown session. The list holds the target's live session slugs, so a caller can correct itself. |
 | `409` | `{error, circular_wait: true, chain: [...]}` | With `waiter_*`: the target already waits on the caller, directly or through others. |
+| `409` | `{error}` | The agent is being renamed. Retry in a moment. |
 | `500` | `{error}` | The turn could not run. |
 
 A session created through `create_session` is told so beside its first
@@ -680,6 +683,8 @@ curl -H "Authorization: Bearer $KEY" -X POST "$BASE/chat/abort?agent=<your-agent
 Returns `{agent, session, aborted: true, ms_running}`, or
 `{agent, session, aborted: false}` when nothing was running (or, with
 `turnId`, when that turn is not the one running). Safe to call twice.
+An unknown agent or session also gets `aborted: false`, not `404`.
+`400` when no agent is configured.
 
 - Only the running turn is stopped. Queued turns keep their place.
 - A command the turn runs through `exec` is killed with it. Its result
@@ -711,7 +716,7 @@ written to the session.
 | Status | Body | Meaning |
 |---|---|---|
 | `200` | `{ok: true, id, turnId, kind, agent, session, text?, attachments?}` | Removed. For a typed message (`kind: "human"`), `text` and `attachments` come back so the client can put them into its input field. The attachment refs stay valid. |
-| `200` | `{ok: true, state: "withdrawn", id, turnId, agent, session, steered, steerId?, ranMs}` | A running call was withdrawn. Its result no longer wakes the asker. With `steered: true` the target was told to stop through a steered message. The turn is not aborted. |
+| `200` | `{ok: true, state: "withdrawn", id, turnId, agent, session, steered, steerId?, stopped?, ranMs}` | A running call was withdrawn. Its result no longer wakes the asker. With `steered: true` the target was told to stop through a steered message. The turn is not aborted, except on an external agent: there it is stopped, and `stopped` says whether a turn was running. `turnId` and `ranMs` may be `null`. |
 | `403` | `{ok: false, reason: "forbidden", id, error}` | The entry does not belong to `requesting_agent`. |
 | `404` | `{ok: false, reason: "unknown", error}` | Nothing waits under that id. |
 | `409` | `{ok: false, reason: "already_started", id, turnId}` | The turn is running. Use `POST /chat/abort`. |
@@ -3213,11 +3218,11 @@ public, and the JSON-RPC endpoint checks the peer tokens of
 `a2a.peers` (`Authorization: Bearer <token>`). Without peers, all of
 them answer `404`.
 
-### `GET /a2a/agents/:agent/.well-known/agent-card.json`
+### `GET /a2a/agents/:agent/.well-known/agent-card.json` · `GET /a2a/agents/:agent/.well-known/agent.json`
 
-The agent's Agent Card, for agents with `a2a: true`. `agent.json` at the
-same place answers too. `GET /.well-known/agent-card.json` gives the card
-of `a2a.defaultAgent`.
+The agent's Agent Card, for agents with `a2a: true`; both paths answer
+the same. `GET /.well-known/agent-card.json` and
+`GET /.well-known/agent.json` give the card of `a2a.defaultAgent`.
 
 ```json
 { "name": "nova", "description": "…", "version": "2026.1016.8",
@@ -3244,12 +3249,21 @@ uses the naming of the request.
 
 | Error | Meaning |
 |---|---|
+| HTTP 400, `-32700` | The body is not JSON. |
 | HTTP 401, `-32050` | No token or an unknown one. |
-| HTTP 404, `-32001` | No such agent for this peer, or no such task. |
-| HTTP 429, `-32051` | Rate or daily limit of the peer. |
+| HTTP 404, `-32601` | A2A is not enabled here (no `a2a.peers`). |
+| HTTP 404, `-32001` | No such agent for this peer. |
+| HTTP 413, `-32600` | The request is larger than the cap: five files at the `attachments` limits as base64, plus the longest text (about 214 MB by default). |
+| HTTP 429, `-32051` | Rate or daily limit of the peer, too many open streams (10 per peer, `SendStreamingMessage` and `SubscribeToTask` together), or too many open tasks (500). |
 | HTTP 429, `-32050` | Too many wrong tokens from this address. |
+| `-32001` | No such task (HTTP 200). |
+| `-32002` | `CancelTask` on a task that already ended. |
+| `-32004` | A reply naming a `taskId` whose task no longer waits for an answer. |
+| `-32600` | Not a JSON-RPC 2.0 request. |
 | `-32601` | Unknown method. |
-| `-32602` | No message text, or longer than `a2a.maxMessageChars`. |
+| `-32602` | No message text, longer than `a2a.maxMessageChars`, more than five files, a file beyond the limit, or a `contextId` that does not match the named task. |
+
+Errors without an HTTP status come with HTTP 200.
 
 A turn for such a task carries `origin: { kind: "peer", peer, contextId,
 taskId }` in its `user_message` events, and `from_system: "peer"`.
@@ -3267,8 +3281,15 @@ Renames an agent, somora's own or external
   "warnings": [] }
 ```
 
-`400` for an invalid name, `404` for an unknown agent, `409` while the
-agent is busy or when the name is taken, with `error` saying why.
+A refused or failed rename answers with the same report, `ok: false`
+and `error` saying why:
+
+| Status | When |
+|---|---|
+| `400` | An invalid name, or the old one. |
+| `404` | Unknown agent. |
+| `409` | The agent is busy, the name is taken, another rename of it runs, or an entry is reached through a YAML anchor, alias or merge key. |
+| `500` | A file would not load after the rename, or a step failed and everything was put back. |
 
 ### `GET /a2a/files/:token`
 
@@ -3285,9 +3306,16 @@ An answer with an image carries `{ url, mediaType, filename }`.
 
 ### `GET /agents/:agent/a2a` · `PUT /agents/:agent/a2a`
 
-The agent's A2A switch: `{ on, available, peers, url?, problem? }`.
-`PUT` takes `{ on: boolean }` and writes `a2a:` into `agent.yaml`; `409`
-for a builder.
+The agent's A2A switch: `{ agent, on, available, peers, url?, problem? }`.
+`PUT` takes `{ on: boolean }`, writes `a2a:` into `agent.yaml` and
+answers `{ ok: true, agent, on, available, peers, url?, problem? }`.
+
+| Status | When |
+|---|---|
+| `400` | The body is not `{ on: boolean }`. |
+| `404` | Unknown agent. |
+| `409` | `on: true` for a builder, or the agent is being renamed. |
+| `500` | `agent.yaml` could not be written, for example because it is not valid YAML. |
 
 ## External agents
 
@@ -3361,9 +3389,10 @@ shows here as well.
 ### `POST /agents/:agent/sessions/:session/questions/:id/answer`
 
 Answers the open question with `{ "answers": ["Allow once"] }`, the
-labels of the chosen options. Every client of the session gets
-`question_answered`. `404` when no question with that id is open
-(answered already, or timed out).
+labels of the chosen options, and optionally `text`, a free-text answer.
+Returns `{ ok: true }`; every client of the session gets
+`question_answered`. `404` for an unknown session, or when no question
+with that id is open (answered already, or timed out).
 
 ## External MCP servers
 

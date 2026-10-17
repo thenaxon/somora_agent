@@ -8,10 +8,13 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { rewriteForDreams } from './dreams-migrate.ts';
 import { replacePersonaFile } from './files.ts';
+import { assertNotRenaming } from './rename-lock.ts';
+import { setRootSwitchInText } from './yaml-switch.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 
-/** The file's text with `dreams:` set to `on`. */
+/** The file's text with `dreams:` set to `on` (yaml-switch.ts), after
+ *  the old REM keys are rewritten. Throws instead of breaking the file. */
 export function setDreamsInText(text: string, on: boolean): string {
   let out = text;
   try {
@@ -20,19 +23,22 @@ export function setDreamsInText(text: string, on: boolean): string {
     // An unusual layout the rewrite leaves alone: `dreams:` still wins
     // over the old keys (deriveDreams), so adding it is enough.
   }
-  if (/^dreams:/m.test(out)) return out.replace(/^dreams:.*$/m, `dreams: ${on}`);
-  const sep = out.length === 0 || out.endsWith('\n') ? '' : '\n';
-  return `${out}${sep}dreams: ${on}\n`;
+  return setRootSwitchInText(out, 'dreams', on);
 }
 
 export async function writeAgentDreams(agent: string, on: boolean): Promise<void> {
   const path = join(SOMORA_HOME, 'agents', agent, 'agent.yaml');
+  // Mid-rename the folder moves; mkdir below would make the old one again.
+  assertNotRenaming(agent);
   let current = '';
   try {
     current = await readFile(path, 'utf8');
-  } catch {
-    // agent.yaml is optional; it is created with just the switch.
+  } catch (err) {
+    // agent.yaml is optional; it is created with just the switch. Any
+    // other read failure must not become an empty file.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
+  const next = setDreamsInText(current, on);
   await mkdir(dirname(path), { recursive: true });
-  await replacePersonaFile(path, setDreamsInText(current, on));
+  await replacePersonaFile(path, next);
 }

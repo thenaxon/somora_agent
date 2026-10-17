@@ -154,7 +154,8 @@ colleagues read about one depends on whether it takes work:
   system, for example `claw (Lab assistant; external · OpenClaw)`, and
   its phrases. One shared note below the list says how to hand external
   agents work: a self-contained task over `agent_ask` or
-  `spawn_subagent`, all the context it needs, text only.
+  `spawn_subagent` with all it needs. Images and files go along through
+  `images`; it is slower than a colleague, and a stop may not reach it.
 - **Without A2A access**, it is named in one `Chat only, do not
   involve` line.
 

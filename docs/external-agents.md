@@ -25,7 +25,9 @@ over that command's input and output.
   run this command?"), a card with one button per option appears above
   the input in the web client and on the phone. The TUI shows the
   options numbered.
-- **Stop.** The stop button cancels the agent's turn on its side.
+- **Stop.** The stop button cancels the agent's turn on its side. It
+  also works while the connection is still starting: the turn ends at
+  once and nothing is sent.
 - **Messages it sends on its own.** Some agents write again after their
   turn ended, for example when a sub-task they started finishes. somora
   keeps listening, see
@@ -182,7 +184,7 @@ after a while without use, see `external.idleMinutes` in
 [Settings for all systems](#settings-for-all-systems). Anything the agent
 sends after that, it repeats from its own history when you write next.
 
-OpenClaw (tested with 2026.10.3) sends nothing between turns: its ACP
+OpenClaw sends nothing between turns: its ACP
 bridge drops updates when no prompt is running. A sub-task started with
 `sessions_spawn` finishes on the OpenClaw side, and the agent tells you
 the result with your next message.
@@ -221,6 +223,7 @@ Nothing changes on the other system: its sessions there go on as before.
 
 | You see | Meaning |
 |---|---|
+| "could not be reached: initialize: no answer within 60 s" | The command started but the agent system did not answer the ACP handshake within 60 seconds. Check that the command runs its ACP mode (for example `openclaw acp`, `hermes acp`) and that the system is not stuck at a prompt. |
 | "could not be reached: …" with the command's error | The command did not start or ended at once. The text after it is what the agent system printed. Run the command by hand on that machine as that user. |
 | A note that the earlier session was gone | The other side no longer had the conversation, for example after its own restart. The chat continues in a new one there. |
 | The tile shows initials instead of 🦞 or ☤ | somora did not recognise the system from the command. It does after the first message, or set `profile` or `badge`. |

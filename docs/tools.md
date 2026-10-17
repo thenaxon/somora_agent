@@ -45,8 +45,8 @@ whatever your external MCP servers bring.
 | Toolset | Tools | Offered when |
 |---|---|---|
 | `memory` | 10 | always |
-| `dream` | 6 | always |
-| `wiki` | 4 | only to the agent that holds an open `dream_review` loop |
+| `dream` | 6 | when the agent dreams (`dreams: true`) |
+| `wiki` | 4 | when the agent dreams, and only while it holds an open `dream_review` loop |
 | `time` | 1 | always |
 | `web` | 2 | `web_fetch` always, `web_search` with `web.brave.apiKey` |
 | `file` | 6 | always, except `analyze_file` (see below) |
@@ -408,7 +408,12 @@ says, and the window does not offer them.
 ### Questions to you
 
 `ask_user` lets an agent ask you a question with two to six options,
-each with a short explanation, and wait for your answer. The question
+each with a short explanation, and wait for your answer. It can allow
+several answers at once (`multiple`) and carries a short `header` for
+the card. A free-text answer works over the API (`text`), or from a
+system that sent the task over A2A.
+
+The question
 appears as a card above the input in the web client and on the phone,
 and with numbered options in the TUI. It is offered only while someone
 watches:

@@ -69,7 +69,9 @@ dreams: false
 - **Defaults:** a new agent dreams; a builder does not.
 - **Applies at once:** a switch in the Agent window starts or stops REM
   for the agent, the next Deep run follows it, and the tools follow from
-  the agent's next turn. No restart.
+  the agent's next turn. No restart. After a hand edit of `dreams:` in
+  `agent.yaml`, the tools follow too; REM follows after a
+  [config reload](setup.md#reload-the-config).
 - **Abilities window:** the dream tools and the wiki writing tools are
   shown there, but follow the switch. A click on them changes nothing.
 - **Lucid** looks after the shared wiki and belongs to no agent, so the
@@ -84,9 +86,9 @@ dreams: false
 
 ### Files from before the switch
 
-Until 2026-10, REM was switched on with `rem.enabled` and kept out of
-Deep with `rem.participate_in_wiki`. The first start of a version with
-the switch rewrites each `agent.yaml` once:
+Older `agent.yaml` files switch REM on with `rem.enabled` and keep it
+out of Deep with `rem.participate_in_wiki`. The first start rewrites
+each such file once:
 
 - **The value:** `dreams` is taken from `rem.enabled`. A builder without
   it does not dream; a chat agent without it dreams, unless its dream

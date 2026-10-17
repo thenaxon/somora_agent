@@ -21,7 +21,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="#status"><img src="https://img.shields.io/badge/status-active%20dev-green.svg" alt="Status: active development" /></a>
+  <a href="#what-works-where"><img src="https://img.shields.io/badge/status-active%20dev-green.svg" alt="Status: active development" /></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/node-%E2%89%A522.22-brightgreen.svg" alt="Node 22.22 or newer" /></a>
 </p>
 
@@ -108,7 +108,7 @@ one you give a repository to.
 | **What it is for** | Talking, thinking, remembering, orchestrating: the assistant you ask, the analyst, the coordinator | Building software in a repository: plan, edit, run, test, report |
 | **Its prompt** | Its persona (`AGENTS.md`, `SOUL.md`, `USER.md`), your team, the wiki map, memory recall | Harness rules, an environment block, the repository's own `AGENTS.md`/`CLAUDE.md`; no persona, no memory recall |
 | **Tools** | The whole programme, gated per agent | A short coding set: files, shell, task list, questions, helpers, colleagues, search |
-| **Turns** | A few rounds; the loop stops at 30 tool calls | Hours; hundreds of rounds, compaction mid-turn, a task list you watch |
+| **Turns** | A few rounds; on an OpenAI-compatible model the loop stops at 30 tool calls (the CLI engines run their own loop) | Hours; hundreds of rounds, compaction mid-turn, a task list you watch |
 | **Memory** | Notices facts, dreams them into notes and the wiki | Reads memory, never writes it; does not dream |
 | **Works in** | Its workspace | The pinned project's folder, and only there |
 | **Window** | Chat | Chat plus a task panel: mode, plan → Go, tasks, questions, running time |
@@ -145,6 +145,12 @@ On top of chat and memory, each optional and off until configured:
   something happen; a decision model can judge what the script fetched,
   such as "a new mail that needs an answer today"
   ([docs/sentinel.md](docs/sentinel.md)).
+- **External agents** — bring an OpenClaw or Hermes agent into somora:
+  you chat with it in its own window, and your agents hand it work over
+  A2A, images and files included. Other systems reach your agents the
+  same way, and an editor talks to them through `somora acp`
+  ([docs/external-agents.md](docs/external-agents.md),
+  [docs/a2a.md](docs/a2a.md), [docs/acp.md](docs/acp.md)).
 - **External MCP servers** — one config entry, all engines see the tools,
   gateable per agent ([docs/mcp.md](docs/mcp.md)).
 - **Language servers** — with one installed, every file a builder
@@ -162,7 +168,7 @@ On top of chat and memory, each optional and off until configured:
 
 Hard:
 
-- **Node ≥22.22.2** — uses native `node:sqlite` plus `better-sqlite3`. On an
+- **Node ≥22.22.2** — the memory database uses `better-sqlite3` with `sqlite-vec`, both prebuilt. On an
   older Node every `somora` command stops with the upgrade steps.
 - **macOS, or Linux with glibc ≥2.34** — Debian 12, Ubuntu 22.04, RHEL 9,
   Fedora 35 or newer. The memory database ships prebuilt for these.
@@ -301,11 +307,9 @@ arrange it in the **team** tile of the web client
 HTTPS are in [docs/setup.md](docs/setup.md); hacking on somora itself in
 its [contributor section](docs/setup.md#develop-from-a-checkout).
 
-## Status
+## What works where
 
-Active development. Open to early testers. The core surface (memory +
-wiki + dream system + web + tmux + mobile) is feature-complete and used
-daily:
+Every engine gets the same feature set:
 
 | Capability | claude-cli | codex-cli | grok-cli | openai-compatible |
 |---|:-:|:-:|:-:|:-:|
@@ -321,10 +325,7 @@ daily:
 | Sub-agents, agent-to-agent questions, follow-ups | ✓ | ✓ | ✓ | ✓ |
 | SSH-resource exec | ✓ | ✓ | ✓ | ✓ |
 
-¹ Off until an `imageGen` / `videoGen` block exists. Verified end-to-end
-against a self-hosted OpenAI-shaped endpoint; the hosted providers
-(OpenAI images/video, Google Veo) are implemented to their published
-shapes but **not yet tested against a live account**.
+¹ Off until an `imageGen` / `videoGen` block exists in `config.yaml`.
 
 ## Architecture at a glance
 
@@ -371,7 +372,7 @@ Three first-party clients, all hitting the same local server:
 | Client | Launch | What you get |
 |---|---|---|
 | **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control, the session's queue (`/queue`), memory and tool detail toggles. |
-| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | A browser desktop: one window per agent, drag-and-drop attachments and screenshots, tmux app and shell terminal, Wiki Explorer with link graph, Media gallery, Sessions browser, the agent's Chromium window, server log, an inbox for updates and things that need you, a light or dark theme plus the bundled Ocean theme, or themes of your own (colours and wallpaper, [docs/web.md#themes](docs/web.md#themes)), Abilities matrix (which tools and skills each agent may use), Team and Agent windows, a queue badge per session (what runs, what waits, what is arriving — take back or stop from there), dictation and spoken replies, and a voice window for a live call. HTTPS required; sign in once with the server's key (`somora key link`). [docs/web.md](docs/web.md) |
+| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | A browser desktop: one window per agent, drag-and-drop attachments and screenshots, tmux app and shell terminal, Wiki Explorer with link graph, Media gallery, Sessions browser, the agent's Chromium window, server log, an inbox for updates and things that need you, a light or dark theme plus the bundled Ocean theme, or themes of your own (colours and wallpaper, [docs/web.md#themes](docs/web.md#themes)), Abilities matrix (which tools and skills each agent may use), Team and Agent windows, a queue badge per session (what runs, what waits, what is arriving — take back or stop from there), dictation and spoken replies, and a voice window for a live call. HTTPS recommended (needed from other devices and for the microphone); sign in once with the server's key (`somora key link`). [docs/web.md](docs/web.md) |
 | **Mobile (PWA)** | `…:18737/mobile/`, then "Add to Home Screen" | The phone app: avatar row to switch agent, a sheet in the header to switch session and model or restore an archived session, the same queue sheet with steering, the thinking level per session, voice input and spoken replies, photo/PDF attachments via the native picker. Signs in once by scanning the QR code from `somora key link`. [docs/mobile.md](docs/mobile.md) |
 
 Anything else can talk to the server the same way the clients do, with
@@ -386,8 +387,8 @@ and searchable: [docs.somora.ai](https://docs.somora.ai).
 
 - **Get running:** [setup](docs/setup.md) · [models](docs/models.md) · [agents](docs/agents.md) · [team](docs/team.md) · [security](docs/security.md)
 - **Memory and knowledge:** [memory](docs/memory.md) · [wiki](docs/wiki.md) · [dream phases](docs/dream-phases.md) · [compaction](docs/compaction.md) · [cache strategy](docs/cache-strategy.md)
-- **What agents can do:** [tools](docs/tools.md) · [builders](docs/builder.md) · [language servers](docs/lsp.md) · [files](docs/files.md) · [tmux](docs/tmux.md) · [resources](docs/resources.md) · [skills](docs/skills.md) · [MCP servers](docs/mcp.md) · [projects](docs/projects.md) · [sentinel](docs/sentinel.md) · [browser](docs/browser.md) · [image generation](docs/imagegen.md) · [video generation](docs/videogen.md) · [decision models](docs/decisions.md) · [image handling](docs/image-handling.md)
-- **Clients and API:** [web](docs/web.md) · [mobile](docs/mobile.md) · [TUI display](docs/display.md) · [voice](docs/voice.md) · [realtime voice](docs/realtime-voice.md) · [API](docs/api.md)
+- **What agents can do:** [tools](docs/tools.md) · [builders](docs/builder.md) · [language servers](docs/lsp.md) · [files](docs/files.md) · [tmux](docs/tmux.md) · [resources](docs/resources.md) · [skills](docs/skills.md) · [MCP servers](docs/mcp.md) · [projects](docs/projects.md) · [sentinel](docs/sentinel.md) · [browser](docs/browser.md) · [image generation](docs/imagegen.md) · [video generation](docs/videogen.md) · [decision models](docs/decisions.md) · [image handling](docs/image-handling.md) · [external agents](docs/external-agents.md) · [A2A](docs/a2a.md)
+- **Clients and API:** [web](docs/web.md) · [mobile](docs/mobile.md) · [TUI display](docs/display.md) · [voice](docs/voice.md) · [realtime voice](docs/realtime-voice.md) · [editors (ACP)](docs/acp.md) · [API](docs/api.md)
 - **Models in detail:** [thinking](docs/thinking.md) · [sampling](docs/sampling.md)
 
 ## Contributing

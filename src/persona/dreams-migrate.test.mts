@@ -130,11 +130,20 @@ test('a rem block without enabled or model still parses (the agent keeps its set
 });
 
 test('the Agent window write: flips an existing switch, or migrates and sets', () => {
-  assert.equal(setDreamsInText('model: x\ndreams: true   # note\n', false), 'model: x\ndreams: false\n');
+  assert.equal(setDreamsInText('model: x\ndreams: true   # note\n', false), 'model: x\ndreams: false   # note\n', 'the comment stays');
   assert.equal(setDreamsInText('model: x\nrem:\n  enabled: false\n  model: y\n', true), 'model: x\ndreams: true\nrem:\n  model: y\n');
   assert.equal(setDreamsInText('', false), 'dreams: false\n');
   const odd = setDreamsInText('rem: {enabled: false, model: y}', true);
   assert.equal((parseYaml(odd) as { dreams: boolean }).dreams, true, 'an unusual layout still gets a switch that wins');
+});
+
+test('the Agent window write: a hand-written quoted key is set in place, a broken file is refused', () => {
+  // `"dreams": true` once got a second `dreams:` line appended: a
+  // duplicate key, and agent.yaml then loaded as no settings at all.
+  const quoted = setDreamsInText('model: x\n"dreams": true   # by hand\n', false);
+  assert.equal(quoted, 'model: x\n"dreams": false   # by hand\n');
+  assert.equal((parseYaml(quoted) as { model: string }).model, 'x');
+  assert.throws(() => setDreamsInText('model: [x\n', true), /not valid YAML/);
 });
 
 test('config check names agent.yaml files with old keys', () => {

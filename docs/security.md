@@ -69,9 +69,9 @@ The environment variable `SOMORA_HOST` overrides `server.host`.
 
 ### The key
 
-somora makes one key on its first start and keeps it in
-`~/.somora/server.key`, readable by your user only. It looks like
-`somora_` followed by 43 letters, digits, `-` and `_`. With
+somora makes one key, with `somora init` or on its first start, and
+keeps it in `~/.somora/server.key`, readable by your user only. It
+looks like `somora_` followed by 43 letters, digits, `-` and `_`. With
 `server.auth: on`, the default, every request needs it: from the same
 machine, over the network and over Tailscale alike. There are no user
 accounts. The key opens every route, including the shell
@@ -480,8 +480,9 @@ seconds and does not follow redirects. The last answer is stored in
   user somora logs in as. Its own system decides what it does there.
   somora gives it no access to somora's files or terminal.
 - **What an external agent gets in a task.** Work your agents hand an
-  external agent over [A2A](a2a.md) leaves your machine as text, with
-  the token for that system.
+  external agent over [A2A](a2a.md) leaves your machine with the token
+  for that system: the text, and any attached images or files, inside
+  the message or as download links valid for one hour.
 - **Tasks from other systems.** Agents you switch on for A2A take tasks
   from the peers listed in `a2a.peers`, each with its own token. Such a
   task runs with the agent's tools minus `a2a.tools.deny`, so narrow

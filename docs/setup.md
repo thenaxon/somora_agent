@@ -736,6 +736,9 @@ not watched: they run outside the chat.
 | `skills` | [Skills](skills.md) |
 | `lsp` | [Language servers](lsp.md) |
 | `tmux` | [tmux](tmux.md) |
+| `external` | [External agents](external-agents.md), [A2A](a2a.md) |
+| `a2a` | [A2A](a2a.md) |
+| `decisions` | [Decision models](decisions.md) |
 
 Per agent settings live in each agent's `agent.yaml` and are described
 in the agents guide.
@@ -767,6 +770,7 @@ in the agents guide.
 | `somora codex <args>` | Runs the bundled Codex: `login`, `logout`, `debug models`, `features list`, `--version`. Without arguments it shows where Codex and its login are and how long the login is valid. |
 | `somora grok <args>` | Runs the bundled Grok CLI: `login`, `login --device-auth`, `logout`, `models`, `--version`. Without arguments it shows where the Grok CLI and its login are and how long the login is valid. |
 | `somora skill list`, `check`, `add`, `update`, `remove` | Manages skills. Run `somora skill` for the details. |
+| `somora acp [--agent <name>] [--session <name>]` | Connects an editor or another ACP client to one of your agents over stdin and stdout ([ACP](acp.md)). |
 | `somora agent rename <old> <new> [--dry-run]` | Renames an agent, somora's own or external, everywhere its name lives ([Agents](agents.md#renaming-an-agent)). |
 | `somora team init [--principal <name>]` | Writes `team.yaml` from the agents on disk. Never overwrites. |
 | `somora team check` | Validates `team.yaml`. |
@@ -775,7 +779,7 @@ in the agents guide.
 | `somora lsp install [id…]` | Installs language servers into `~/.somora/lsp`. |
 | `somora wiki migrate [step] [id]` | Moves a grown wiki onto the folder template. Guided, or one of `plan`, `judge`, `status`, `approve`, `dry-run`, `run`, `undo`, `relink`. |
 | `somora --version`, `-v` | Prints the version. |
-| `somora --help`, `-h` | Prints the usage. `setup`, `update`, `codex` and `grok` have their own `--help`. |
+| `somora --help`, `-h` | Prints the usage. Most commands take their own `--help`. |
 
 Useful routes for a quick check:
 
@@ -809,6 +813,8 @@ Everything somora keeps lives under `~/.somora/`, or under
 | `dream-state/deep.json`, `lucid.json` | When Deep and Lucid last ran. |
 | `update-check.json` | The last answer of the update check. |
 | `restart-intent.json`, `restart-resume.json` | A restart an agent asked for, and who was woken after one. |
+| `themes/` | Your own web client themes, one folder each ([Web](web.md#themes)). |
+| `a2a/usage.json` | How many A2A tasks each peer and the external agents used today. |
 | `skills/`, `mcp/`, `lsp/`, `sentinel/`, `projects/`, `browser/` | Data of the feature of that name. |
 | `attachments/`, `images/`, `media/`, `video-jobs/`, `tts-cache/` | Uploaded files, generated pictures, video and audio. |
 | `models/` | The downloaded embedding model. |

@@ -18,15 +18,15 @@ const DEFAULT_CONFIG = `# somora server config — lives at ~/.somora/config.yam
 # 'pi-edge' all work.
 #
 # Per-model 'alias' lets you reference a model by short nickname anywhere
-# (in persona frontmatter, later via /model in the CLI). Aliases must be
-# globally unique across the whole config.
+# (agent.yaml, /model in the clients). Aliases must be unique across the
+# whole config.
 
 server:
   port: 18737
 
 providers:
-  # Anthropic via Claude Code subscription. Uses the local Claude Code
-  # binary (~/.local/bin/claude), so no baseUrl / apiKey needed.
+  # Anthropic via a Claude subscription. Runs the Claude Code that ships
+  # with somora (or your own), so no baseUrl / apiKey needed.
   # capabilities: 'text' (always), 'image' (vision input), 'reasoning'
   # (model exposes a thinking/reasoning effort knob — controllable via
   # /thinking and persona thinking: …).
@@ -63,39 +63,39 @@ providers:
   #       contextWindow: 131072
   #       capabilities: [text, image]
 
-# Compaction-Tunables (DECISION #21). Greifen automatisch — wenn der
-# Block fehlt, gelten die unten kommentierten Default-Werte.
-# SOMORA_COMPACTION_* env vars überschreiben diese hier zur Laufzeit.
+# Compaction: when a conversation nears the model's context window,
+# older turns are summarized. Works without this block; the values
+# below are the defaults. SOMORA_COMPACTION_* environment variables
+# override them.
 # compaction:
-#   triggerRatio: 0.8          # Compaction ab 80% des aktuellen Modell-Windows
-#   safetyCushionPairs: 4      # die N jüngsten user/assistant-Pairs bleiben unkomprimiert
-#   modelOverride: opus        # festes Worker-Modell für Summarisation (alias oder provider/id)
+#   triggerRatio: 0.8          # compact at 80% of the model's context window
+#   safetyCushionPairs: 4      # the newest N user/assistant pairs stay as they are
+#   modelOverride: opus        # a fixed model for the summary (alias or provider/id)
 
-# Agent-Loop-Tunables (Phase 2-Stufe-C). Greifen nur bei openai-compatible —
-# claude-cli und codex-cli haben eigene interne Loops.
+# The tool loop of OpenAI-compatible models (the CLI engines run their
+# own loop).
 # agentLoop:
-#   maxRounds: 8               # max Tool-Call-Rounds pro Turn (1..100)
-#   toolCallTimeoutMs: 30000   # per-Tool-Call Timeout in ms
+#   maxRounds: 8               # model rounds per turn (1..100)
+#   maxToolCallsPerTurn: 30    # tool calls per turn, across all rounds
+#   toolCallTimeoutMs: 30000   # time limit of one tool call, in ms
 
-# Memory-Layer-Tunables (DECISIONS #25-#27). Greifen automatisch mit
-# Default-Werten — Block hier nur wenn du tunen willst. Pro-Agent-
-# Overrides können später in agent.yaml leben.
+# Memory: works with the defaults below; add the block only to tune.
 # memory:
 #   embedding:
-#     provider: local                      # 'local' (@huggingface/transformers) — andere later
-#     model: all-MiniLM-L6-v2              # alias oder voller HF-Repo-Pfad
+#     provider: local                      # runs on this machine (@huggingface/transformers)
+#     model: all-MiniLM-L6-v2              # alias or a full Hugging Face repo path
 #                                          # known-good aliases:
-#                                          #   all-MiniLM-L6-v2 (default, 384 dim, ~30MB)
-#                                          #   all-mpnet-base-v2 (768 dim, ~110MB, höhere Qualität)
-#                                          #   paraphrase-multilingual-MiniLM-L12-v2 (384 dim, multiling.)
+#                                          #   all-MiniLM-L6-v2 (default, 384 dim, ~30 MB)
+#                                          #   all-mpnet-base-v2 (768 dim, ~110 MB, better quality)
+#                                          #   paraphrase-multilingual-MiniLM-L12-v2 (384 dim, multilingual)
 #   chunking:
-#     targetTokens: 400                    # Soll-Größe pro Chunk (Heuristik 4 chars/token)
-#     overlapTokens: 80                    # Überlappung zwischen Chunks
+#     targetTokens: 400                    # target size of a chunk (about 4 characters a token)
+#     overlapTokens: 80                    # overlap between chunks
 #   autoInject:
-#     queryTurns: 3                        # wieviele letzte Turns als Embedding-Query
-#     maxResults: 5                        # Top-N Treffer pro Turn injecten
-#     minScore: 0.5                        # Treffer unter diesem Score verwerfen (0..1)
-#     maxTokens: 1500                      # Hard-Cap auf den injecten Memory-Block
+#     queryTurns: 3                        # recent turns that form the search query
+#     maxResults: 5                        # hits added to a turn
+#     minScore: 0.35                       # hits below this score are dropped (0..1)
+#     maxTokens: 1500                      # size limit of the memory block
 #   hybrid:
 #     vectorWeight: 0.7                    # weight of vector similarity in the fused score
 #     bm25Weight: 0.3                      # weight of BM25 (keyword) score
@@ -104,19 +104,17 @@ providers:
 #     logDemotion: 0.5                     # wiki change logs rank behind the pages (1 = off)
 #     pageSupport: 0.3                     # a page matching in several sections gains support (0 = off)
 
-# Workspace — Default-CWD für die file_*-Tools. Kein Sandkasten:
-# Agents dürfen auch außerhalb schreiben (eigene Persona-Files,
-# globale config). Schutz kommt aus einer Path-Blacklist in den Tools
-# selbst, nicht aus dieser Konfig. Per-Agent-Override in agent.yaml
-# unter workspace.path. ~ wird zu $HOME expandiert. Wird beim
-# Server-Start auto-angelegt.
+# Workspace: the default folder of the file tools. Not a sandbox: what
+# an agent may not touch is set by the file rules (docs/security.md).
+# An agent can have its own in agent.yaml (workspace.path). ~ is your
+# home folder; the folder is made at start.
 # workspace:
 #   default: ~/somoraworkspace
 
-# Resources — benannte SSH-Targets. file_* und exec-Tools nehmen einen
-# optionalen target-Parameter; default local, alternativ einer
-# dieser Namen. keyPath ist der Pfad zum Private-Key auf dem somora-
-# Server selbst. hostKey (sha256:...) erzwingt strict-mode statt TOFU.
+# Resources: named SSH machines. The file and shell tools take an
+# optional target, local by default or one of these names. keyPath is
+# the private key on this machine; hostKey (sha256:...) pins the host
+# key instead of trusting it on first use.
 # resources:
 #   linuxserver-1:
 #     type: ssh
@@ -124,28 +122,26 @@ providers:
 #     user: alice
 #     keyPath: ~/.ssh/id_ed25519
 #     description: |
-#       Bastion in der Werkstatt. Ubuntu 24.04, Docker installed.
+#       Build box in the lab. Ubuntu 24.04, Docker installed.
 #     workspace: /home/alice/work
-#     # hostKey: 'sha256:abc...'      # optional, sonst TOFU
+#     # hostKey: 'sha256:abc...'      # optional; without it, trust on first use
 
-# Web-Tools-Credentials. Pro-Provider-Schlüssel — Tools deren Provider
-# nicht konfiguriert ist sind für den Agent unsichtbar (available()
-# Probe filtert sie raus). Brave: 2k Anfragen/Monat im Free-Tier,
+# Web tools: a tool whose provider has no key is hidden from agents.
+# Brave: 2,000 requests a month on the free tier,
 # https://api-dashboard.search.brave.com/.
 # web:
 #   brave:
 #     apiKey: "BSAxxx..."
 
-# TUI-Anzeige-Defaults für die Ink-CLI. Beeinflusst nur das Rendering,
-# nicht die tatsächliche Memory-Injection oder Tool-Ausführung — die
-# laufen unverändert auf dem Server. Zur Laufzeit umstellbar via
-# /show <topic> on|off bzw. /verbose <topic> on|off.
+# What the terminal client shows. Display only: memory and tools run
+# the same either way. Change it while chatting with /show <topic>
+# on|off and /verbose <topic> on|off.
 #
-# show.*    — line visibility (off = die Zeile erscheint gar nicht)
-# verbose.* — Detailtiefe wenn die Zeile DOCH erscheint:
-#               tools  → volles Input/Output unter jedem Tool-Call
-#               memory → voller Inject-Text unter jedem [memory · …]
-#               system → /verbose system on druckt System-Prompt einmalig
+# show.*    — whether the line appears at all
+# verbose.* — how much it shows when it does:
+#               tools  → full input and output under each tool call
+#               memory → the full injected text under each [memory · …]
+#               system → prints the system prompt once
 # tui:
 #   show:
 #     memory: true

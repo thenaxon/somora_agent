@@ -70,6 +70,7 @@ export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void
     try {
       await writeAgentDreams(agent, body.on);
     } catch (err) {
+      if (err instanceof AgentRenamingError) return c.json({ error: err.message }, 409);
       return c.json({ error: `could not write agent.yaml: ${(err as Error).message}` }, 500);
     }
     await routeDeps.syncDreamers();

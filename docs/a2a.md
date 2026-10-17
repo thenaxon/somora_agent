@@ -11,13 +11,12 @@ The work travels over A2A, the Agent2Agent protocol: an open standard,
 stewarded by the Linux Foundation, for agents of different systems giving
 each other tasks. Your own chat with an external agent keeps using ACP.
 
-## Tested with
+## Works with
 
-| System | Version | Both directions tested |
+| System | Needs | Both directions |
 |---|---|---|
-| OpenClaw | 2026.10.3 | yes; OpenClaw does not collect the answer to work it sends, see [From OpenClaw](#from-openclaw) |
-| Hermes | 0.22.2 (2026-09-24) | yes |
-| somora | 2026.1016 | |
+| OpenClaw | 2026.10.3 or newer | yes; OpenClaw does not collect the answer to work it sends, see [From OpenClaw](#from-openclaw) |
+| Hermes | 0.22 or newer | yes |
 
 Both systems change quickly. Where a newer version differs, the settings
 on this page may have moved; their own documentation has the current
@@ -319,12 +318,12 @@ side's Agent Card (`defaultInputModes`):
   `[Files for this task — download links, valid for one hour: - plan.pdf (application/pdf, 240 KB): https://…/a2a/files/…]`.
   The other agent fetches it with its own tools.
 
-OpenClaw 2026.10.3 and Hermes 0.22.2 both take only text in a message, so
-they get links. A link needs somora's address from outside:
+OpenClaw and Hermes both take only text in a message, so they get
+links. A link needs somora's address from outside:
 `a2a.publicUrl` in `config.yaml` (see
 [Set up somora as a target](#set-up-somora-as-a-target)). Without it a
 task with files is refused with that hint. The session shows how each
-file went (`sent to kai over A2A with 1 as download link`).
+file went (`sent to claw over A2A with 1 as download link`).
 
 **Another system sends a file.** File parts in a task, as bytes or as a
 URL, become attachments of the turn, as if you had attached them in the
@@ -332,8 +331,11 @@ chat: the agent sees an image, or reads a PDF. A URL is fetched with the
 same guard as `web_fetch`: no internal addresses unless
 `web.fetchAllowPrivate` lists them. A task of only files is fine.
 
-At most 5 files per message, each within the `attachments` limits. A
-bigger request is refused before somora reads it.
+At most 5 files per message; more are refused with JSON-RPC error
+`-32602`. Each file may be as big as the largest `attachments` limit
+(an image up to four times `maxImageBytes`, since it is scaled down
+later). A request bigger than five such files, about 214 MB with the
+default limits, gets HTTP 413 before somora parses it.
 
 **Your agent answers with an image.** An image it makes for a task from
 outside goes back with the answer, as a file part with a download link.
@@ -398,7 +400,7 @@ curl https://<host>.<tailnet>.ts.net:18737/a2a/agents/<agent>/.well-known/agent-
 |---|---|---|
 | `a2a.publicUrl` | taken from the request | The address the other systems use, as written into the cards. Set it when somora is behind a proxy or the request host is not the one others reach. |
 | `a2a.defaultAgent` | none | The agent `/.well-known/agent-card.json` describes, for clients that only look there. |
-| `a2a.peers.<name>.token` | required | The token this system sends. At least 16 characters. |
+| `a2a.peers.<name>.token` | required | The token this system sends. At least 16 characters. The name is lower-case: letters, digits, `_`, `.` and `-`. |
 | `a2a.peers.<name>.agents` | every switched-on agent | The agents this system may reach. |
 | `a2a.rateLimitPerMinute` | `30` | Requests per minute per peer. Status requests (`GetTask`, `ListTasks`, `CancelTask`, `SubscribeToTask`) count separately, with four times as many. |
 | `a2a.maxTasksPerDay` | `200` | Tasks per peer per day, from local midnight. |
@@ -434,8 +436,8 @@ should use them:
 | A chat from somora (ACP) | `hermes config set platform_toolsets.acp "[hermes-acp, a2a]"` |
 | A messaging platform | `hermes tools enable a2a --platform telegram` (or the platform's name) |
 
-In Hermes 0.22.2, `hermes tools enable` does not know the `acp`
-platform, hence the `config set` line. Then ask Hermes: "Use a2a_call
+`hermes tools enable` does not know the `acp` platform, hence the
+`config set` line. Then ask Hermes: "Use a2a_call
 with agent somora and ask: …". Hermes waits for the answer, takes
 questions back, and continues a conversation with the same
 `context_id`.
@@ -459,8 +461,8 @@ openclaw config patch --file somora-out.patch.json5
 ```
 
 The OpenClaw agent then sends with its message tool to the target
-`a2a:somora`. The task arrives and your agent answers it. OpenClaw
-2026.10.3, however, only hands a message over: it returns at once and
+`a2a:somora`. The task arrives and your agent answers it. OpenClaw,
+however, only hands a message over: it returns at once and
 never collects the answer. The answer is in somora's session for that
 conversation, not with the OpenClaw agent. For work where OpenClaw
 needs the result, let a somora agent ask OpenClaw instead
@@ -501,7 +503,7 @@ curl -X POST https://<host>.<tailnet>.ts.net:18737/a2a/agents/<agent> \
 | `SendMessage` | waits up to `replyTimeoutSeconds` for the answer, or returns at once with `returnImmediately` |
 | `SendStreamingMessage` | streams the state, the answer as it grows, and a note per tool call (`using web_search`) |
 | `GetTask`, `ListTasks` | the task's state and answer; a peer only sees its own tasks |
-| `SubscribeToTask` | streams the task's changes; at most 10 streams per peer at a time |
+| `SubscribeToTask` | streams the task's changes; a peer keeps at most 10 streams open, counting `SendStreamingMessage` too |
 | `CancelTask` | stops your agent's turn, also while it is still getting ready; a waiting task is taken out of the line |
 | answers a question | the next message in the same conversation is the answer: an option's number or label, or own words. A message that names the task (`taskId`) answers that task's question. |
 | sends the same message again (same `messageId`) | the task it started; nothing runs twice |
@@ -519,7 +521,7 @@ new ones; while 500 are still open, a new task is refused (HTTP 429).
 
 | You see | Meaning |
 |---|---|
-| `… without A2A access, so it cannot take work from agents` | The agent has no `a2a` block in `config.yaml`. |
+| `'claw' is an external agent (openclaw) without A2A access, so somora agents cannot hand it work` | The agent has no `a2a` block in `config.yaml`. |
 | `agent card at … not reachable` | somora cannot reach the URL. Run the `curl` from [Reach it over the network](#reach-it-over-the-network) on the somora machine. |
 | `the other side refused somora's token (HTTP 401)` | The token in `config.yaml` does not match the one the other system has for `somora`. |
 | `claw refused the task: …` | The other system turned the task down, for example a message starting with `/`, or a peer it does not trust. |
@@ -530,7 +532,7 @@ new ones; while 500 are still open, a new task is refused (HTTP 429).
 | A sender gets HTTP 401 `unauthorized` | Its token is not one of `a2a.peers`. |
 | A sender gets `no A2A agent '<name>' here` | The agent is not switched on, is a builder, or the peer's `agents` list leaves it out. |
 | A sender gets HTTP 429 | `a2a.rateLimitPerMinute` or `a2a.maxTasksPerDay` for that peer, 10 open streams, or 500 open tasks. The message says which. |
-| A sender gets HTTP 413 | The request is bigger than 5 files at the `attachments` limits allow. |
+| A sender gets HTTP 413 | The request is bigger than 5 files at the `attachments` limits, about 214 MB by default. |
 | The card is not found at all | No peers in `config.yaml`: then nothing is reachable. |
 | Hermes says it has no `a2a_call` | The `a2a` tools are not on for the place it runs, see [From Hermes](#from-hermes). |
 
