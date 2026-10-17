@@ -168,7 +168,12 @@ async function health(config: YamlFile): Promise<Record<string, unknown> | null>
   }
 }
 
-function serviceAvailable(): boolean {
+/** Whether somora runs as a background service here. Not when the
+ *  installer was told --no-service (SOMORA_NO_SERVICE=1): the start step
+ *  then says how to start it in a terminal instead of loading the
+ *  LaunchAgent or unit that `somora init` wrote. */
+export function serviceAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.SOMORA_NO_SERVICE) return false;
   if (process.platform === 'darwin') return existsSync(launchdPlistPath());
   return existsSync(UNIT_PATH) && capture('systemctl', ['--user', 'show-environment']).code === 0;
 }

@@ -467,7 +467,8 @@ setup_service() {
 finish() {
   if [ -z "$NO_SETUP" ] && [ -n "$HAVE_TTY" ]; then
     step "Setup assistant"
-    somora setup </dev/tty || warn "the assistant stopped early — run it again any time:  somora setup"
+    # --no-service holds for the assistant too: it starts no service.
+    SOMORA_NO_SERVICE="$NO_SERVICE" somora setup </dev/tty || warn "the assistant stopped early — run it again any time:  somora setup"
   else
     if [ -n "$SERVICE_OK" ]; then somora server start >/dev/null 2>&1 || true; fi
     step "Installed"
