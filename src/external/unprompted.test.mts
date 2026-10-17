@@ -4,10 +4,15 @@
 //     message — a note, the tool call, the reply — and shown live;
 //   - a piece right after the turn ends (within the grace time) is not;
 //   - a turn starting while something is collected writes it first;
-//   - nothing collected without a sink (as before).
+//   - a reset throws away what was collected for the old conversation,
+//     and waits for a write already running;
+//   - before a rename, what was collected is written (it moves along).
 import '../testing/own-home.mts';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { Hono } from 'hono';
+import { setConfig } from '../server/server-state.ts';
+import { registerSessionRoutes } from '../server/routes/sessions.ts';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ConfigSchema, type Config } from '../config/types.ts';
@@ -15,16 +20,30 @@ import { runExternalTurn } from '../engine/acp-external.ts';
 import { getHistory } from '../storage/sessions.ts';
 import type { SessionMetaStore } from '../engine/types.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
-import { closeAllExternal } from './connection.ts';
+import { closeAgentConnections, closeAllExternal, closeExternal } from './connection.ts';
 import { getExternalAgent } from './registry.ts';
-import { configureUnprompted, flushUnprompted, resetUnprompted } from './unprompted.ts';
+import { configureUnprompted, discardUnprompted, flushUnprompted, resetUnprompted } from './unprompted.ts';
 
 const fake = join(dirname(fileURLToPath(import.meta.url)), '__fixtures__', 'fake-acp-agent.mjs');
 const cmd = (ms: number) => `FAKE_LATER_MS=${ms} ${JSON.stringify(process.execPath)} ${JSON.stringify(fake)}`;
 const cfg: Config = ConfigSchema.parse({
   providers: {},
-  external: { systems: { lab: { transport: { local: true }, agents: { lobo: { command: cmd(400) }, slowpoke: { command: cmd(400) } } } } },
+  external: {
+    systems: {
+      lab: {
+        transport: { local: true },
+        agents: {
+          lobo: { command: cmd(400) },
+          slowpoke: { command: cmd(400) },
+          resetter: { command: cmd(400) },
+          molasses: { command: cmd(200) },
+          mover: { command: cmd(300) },
+        },
+      },
+    },
+  },
 });
+setConfig(cfg);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const meta = new Map<string, Record<string, unknown>>();
@@ -35,7 +54,19 @@ const store = {
 } as unknown as SessionMetaStore;
 
 const published: Array<{ agent: string; session: string; e: SseEvent }> = [];
-configureUnprompted({ publish: (agent, session, e) => void published.push({ agent, session, e }), quietMs: 300, graceMs: 200 });
+configureUnprompted({
+  publish: async (agent, session, e) => {
+    published.push({ agent, session, e });
+    // A slow client: molasses's writes take a while.
+    if (agent === 'molasses') await sleep(80);
+  },
+  quietMs: 300,
+  graceMs: 200,
+});
+const app = new Hono();
+registerSessionRoutes(app, { nextTurnPrompt: undefined as never, publish: (async () => {}) as never, resolveEffectiveModel: undefined as never, streamKey: ((a: string, s: string) => `${a}::${s}`) as never, streams: new Map() as never });
+const unpromptedNotes = async (agent: string, session: string) =>
+  (await getHistory(agent, session)).filter((e) => e.kind === 'engine_meta' && (e as { itemType?: string }).itemType === 'external_unprompted').length;
 
 async function turn(agent: string, session: string, text: string): Promise<NormalizedEvent[]> {
   const evs: NormalizedEvent[] = [];
@@ -77,4 +108,35 @@ test('a turn starting while something is collected writes it first', async () =>
   await sleep(500);
   const again = await getHistory('slowpoke', 's2');
   assert.equal(again.length, h.length, 'written once, not again when the timer would have fired');
+});
+
+test('a reset throws away what was collected for the old conversation', async () => {
+  await turn('resetter', 'main', 'later, please');
+  await sleep(400 + 120); // the late result is in, not yet written
+  const res = await app.request('/agents/resetter/sessions/main/reset', { method: 'POST' });
+  assert.equal(res.status, 200);
+  await sleep(300 + 300);
+  assert.equal(await unpromptedNotes('resetter', 'main'), 0, 'nothing of the old conversation in the fresh session');
+});
+
+test('discard waits for a write already running', async () => {
+  await turn('molasses', 's', 'later then');
+  // Wait until its write has begun (the first live event is out).
+  for (let i = 0; i < 100 && !published.some((p) => p.agent === 'molasses'); i++) await sleep(20);
+  assert.ok(published.some((p) => p.agent === 'molasses'), 'the write started');
+  closeExternal('molasses', 's');
+  await discardUnprompted('molasses', 's');
+  const h = await getHistory('molasses', 's');
+  assert.equal(h.at(-1)?.kind, 'turn_end', 'the running write was complete when discard returned');
+});
+
+test('before a rename, what was collected is written for every session of the agent', async () => {
+  await Promise.all([turn('mover', 'a', 'later a'), turn('mover', 'b', 'later b')]);
+  await sleep(300 + 120); // both collected, neither quiet long enough
+  closeAgentConnections('mover');
+  await flushUnprompted('mover');
+  assert.equal(await unpromptedNotes('mover', 'a'), 1);
+  assert.equal(await unpromptedNotes('mover', 'b'), 1);
+  await sleep(500);
+  assert.equal(await unpromptedNotes('mover', 'a'), 1, 'written once');
 });

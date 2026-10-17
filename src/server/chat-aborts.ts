@@ -13,6 +13,7 @@ import { logger } from './logger.ts';
 interface ActiveTurn {
   controller: AbortController;
   startedAt: number;
+  turnId?: string;
 }
 
 const active = new Map<string, ActiveTurn>();
@@ -31,6 +32,7 @@ function key(agent: string, session: string): string {
 export function registerChatAbort(
   agent: string,
   session: string,
+  turnId?: string,
 ): { signal: AbortSignal; release: () => void } {
   const k = key(agent, session);
   const existing = active.get(k);
@@ -44,7 +46,7 @@ export function registerChatAbort(
     });
   }
   const controller = new AbortController();
-  active.set(k, { controller, startedAt: Date.now() });
+  active.set(k, { controller, startedAt: Date.now(), ...(turnId ? { turnId } : {}) });
   return {
     signal: controller.signal,
     release: () => {
@@ -59,15 +61,21 @@ export function registerChatAbort(
 /**
  * Trigger the abort signal for an in-flight turn. Returns whether
  * there was something to abort. Idempotent — second call when
- * nothing's running returns false.
+ * nothing's running returns false. With `turnId`, only that turn is
+ * stopped: a client stopping its own turn (somora acp) must not stop
+ * another client's turn that runs in the session meanwhile.
  */
-export function triggerChatAbort(agent: string, session: string): {
+export function triggerChatAbort(agent: string, session: string, turnId?: string): {
   aborted: boolean;
   ms_running?: number;
 } {
   const k = key(agent, session);
   const entry = active.get(k);
   if (!entry) return { aborted: false };
+  if (turnId && entry.turnId !== turnId) {
+    logger.info({ msg: 'chat.abort.other_turn', agent, session, wanted: turnId, running: entry.turnId ?? null });
+    return { aborted: false };
+  }
   entry.controller.abort();
   const ms_running = Date.now() - entry.startedAt;
   // Leave the entry in place — the runChatTurn finally-block calls

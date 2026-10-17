@@ -103,9 +103,22 @@ async function* sseFrames(body: ReadableStream<Uint8Array>): AsyncGenerator<SseF
   }
 }
 
+/** One prompt of the editor, from its arrival to its end. */
+interface PromptRun {
+  cancelled: boolean;
+  /** The somora session it goes to, once known. */
+  target?: string;
+  /** The turn /chat/send started — set once the server answered. */
+  turnId?: string;
+  /** Our turn's own frames have begun: it runs on the server. */
+  mine: boolean;
+  /** Ends the live stream (the turn was taken out of the queue). */
+  stream: AbortController;
+}
+
 export class SomoraAcpAgent implements Agent {
-  /** Running prompts by session: cancel aborts them. */
-  private readonly running = new Map<string, { cancelled: boolean }>();
+  /** Running prompts by session: cancel stops them. */
+  private readonly running = new Map<string, PromptRun>();
   /** New sessions are only noted until their first prompt: a client
    *  that opens a session and never writes (OpenClaw's health check, an
    *  editor opening a panel) leaves no empty somora session behind.
@@ -244,13 +257,38 @@ export class SomoraAcpAgent implements Agent {
     return {};
   }
 
+  /** Stop this prompt and nothing else. Before /chat/send answered,
+   *  the flag alone does it (prompt() checks it before sending and right
+   *  after). A turn still waiting behind another client's turn is taken
+   *  out of the queue; only a turn of ours that runs is stopped. */
   async cancel(params: CancelNotification): Promise<void> {
     const run = this.running.get(params.sessionId);
     if (!run) return;
     run.cancelled = true;
-    await this.opts
-      .fetch(this.url(`/chat/abort?agent=${encodeURIComponent(this.opts.agent)}&session=${encodeURIComponent(this.born.get(params.sessionId) ?? params.sessionId)}`), { method: 'POST' })
-      .catch(() => undefined);
+    if (run.turnId) await this.stopTurn(params.sessionId, run);
+  }
+
+  private async stopTurn(sessionId: string, run: PromptRun): Promise<void> {
+    const turnId = run.turnId!;
+    if (!run.mine) {
+      const res = await this.opts.fetch(this.url(`/chat/queue/${encodeURIComponent(turnId)}`), { method: 'DELETE' }).catch(() => null);
+      if (res?.ok) {
+        run.stream.abort();
+        return;
+      }
+    }
+    // Running (or about to: the lock went to it a moment ago and its
+    // stop is not registered yet — try again briefly). `turnId` makes
+    // sure another client's turn is never the one stopped.
+    const target = run.target ?? sessionId;
+    for (let i = 0; i < 10 && this.running.get(sessionId) === run; i++) {
+      const res = await this.opts
+        .fetch(this.url(`/chat/abort?agent=${encodeURIComponent(this.opts.agent)}&session=${encodeURIComponent(target)}&turnId=${encodeURIComponent(turnId)}`), { method: 'POST' })
+        .catch(() => null);
+      const body = res?.ok ? ((await res.json().catch(() => ({}))) as { aborted?: boolean }) : {};
+      if (body.aborted !== false) return;
+      await new Promise((r) => setTimeout(r, 200));
+    }
   }
 
   /** Images of the prompt → somora attachments (POST /attachments). */
@@ -274,6 +312,20 @@ export class SomoraAcpAgent implements Agent {
   async prompt(params: PromptRequest): Promise<PromptResponse> {
     const { sessionId } = params;
     if (this.running.has(sessionId)) throw RequestError.invalidRequest(undefined, 'a prompt is already running in this session');
+    // Registered at once: a cancel during the uploads or the session's
+    // creation counts too.
+    const run: PromptRun = { cancelled: false, mine: false, stream: new AbortController() };
+    this.running.set(sessionId, run);
+    try {
+      return await this.runPrompt(params, run);
+    } finally {
+      run.stream.abort();
+      this.running.delete(sessionId);
+    }
+  }
+
+  private async runPrompt(params: PromptRequest, run: PromptRun): Promise<PromptResponse> {
+    const { sessionId } = params;
     const text = params.prompt
       .map((b) => {
         if (b.type === 'text') return b.text;
@@ -286,42 +338,41 @@ export class SomoraAcpAgent implements Agent {
       .trim();
     const attachments = await this.upload(params.prompt);
     if (!text && attachments.length === 0) return { stopReason: 'end_turn' };
+    if (run.cancelled) return { stopReason: 'cancelled' };
 
-    const run = { cancelled: false };
-    this.running.set(sessionId, run);
-    const abort = new AbortController();
     const send = (update: SessionUpdate) => this.conn.sessionUpdate({ sessionId, update });
-    // The somora session behind the client's id (created now if new).
-    const target = await this.materialize(sessionId).catch((err: Error) => {
-      this.running.delete(sessionId);
-      throw err;
-    });
     try {
+      // The somora session behind the client's id (created now if new).
+      const target = await this.materialize(sessionId);
+      run.target = target;
       // Stream first, then send: the turn's first frames must not pass
       // before we listen.
       const res = await this.opts.fetch(
         this.url(`/chat/stream?agent=${encodeURIComponent(this.opts.agent)}&session=${encodeURIComponent(target)}`),
-        { headers: { Accept: 'text/event-stream' }, signal: abort.signal },
+        { headers: { Accept: 'text/event-stream' }, signal: run.stream.signal },
       );
       if (!res.ok || !res.body) throw new Error(`chat stream: HTTP ${res.status} ${await res.text().catch(() => '')}`);
       const frames = sseFrames(res.body);
       const first = await frames.next();
       if (first.done) throw new Error('chat stream closed before it connected');
+      if (run.cancelled) return { stopReason: 'cancelled' };
 
       const { turnId } = await this.json<{ turnId: string }>('/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: this.opts.agent, session: target, text, ...(attachments.length ? { attachments } : {}) }),
       });
+      run.turnId = turnId;
+      // Cancelled while the server took the message: stop it now.
+      if (run.cancelled) void this.stopTurn(sessionId, run);
 
       const tr = new SseToAcp(`${turnId.slice(0, 8)}-`);
-      let mine = false;
       let end: SseFrame | null = null;
       for await (const f of frames) {
-        if (!mine) {
+        if (!run.mine) {
           // Frames of a turn before ours (another client's, a queued
           // one) are not this prompt's.
-          if (f.event === 'user_message' && f.data.turnId === turnId) mine = true;
+          if (f.event === 'user_message' && f.data.turnId === turnId) run.mine = true;
           else if (f.event === 'turn_dequeued' && (f.data.turnId === turnId || f.data.workId === turnId)) return { stopReason: 'cancelled' };
           else if (f.event === 'status' && typeof f.data.msg === 'string' && f.data.msg.startsWith('turn failed: ')) {
             throw new Error(f.data.msg.slice('turn failed: '.length));
@@ -347,9 +398,6 @@ export class SomoraAcpAgent implements Agent {
       if (run.cancelled) return { stopReason: 'cancelled' };
       this.opts.log?.(`prompt failed: ${(err as Error).message}`);
       throw RequestError.internalError(undefined, (err as Error).message);
-    } finally {
-      abort.abort();
-      this.running.delete(sessionId);
     }
   }
 

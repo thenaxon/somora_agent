@@ -10,7 +10,9 @@
 //                once and, FAKE_LATER_MS later, a result on its own
 //                (a tool call and a reply in pieces)
 // Env: FAKE_AGENT_NAME (agentInfo.name), FAKE_NO_RESUME=1 (offer load only),
-//      FAKE_STDERR (written to stderr at start), FAKE_FAIL_INIT=1.
+//      FAKE_STDERR (written to stderr at start), FAKE_FAIL_INIT=1,
+//      FAKE_INIT_DELAY_MS / FAKE_SESSION_DELAY_MS (answer initialize /
+//      session/new that much later).
 import { Readable, Writable } from 'node:stream';
 import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
 
@@ -31,6 +33,7 @@ new AgentSideConnection((conn) => {
   const update = (sessionId, u) => conn.sessionUpdate({ sessionId, update: u });
   return {
     async initialize() {
+      if (process.env.FAKE_INIT_DELAY_MS) await sleep(Number(process.env.FAKE_INIT_DELAY_MS));
       return {
         protocolVersion: PROTOCOL_VERSION,
         agentInfo: { name: process.env.FAKE_AGENT_NAME ?? 'fake-agent', title: 'Fake Agent', version: '1.2.3' },
@@ -44,6 +47,7 @@ new AgentSideConnection((conn) => {
     },
     async authenticate() {},
     async newSession() {
+      if (process.env.FAKE_SESSION_DELAY_MS) await sleep(Number(process.env.FAKE_SESSION_DELAY_MS));
       const id = `fake-${++n}-${process.pid}`;
       sessions.set(id, { memory: null, history: [] });
       return { sessionId: id };

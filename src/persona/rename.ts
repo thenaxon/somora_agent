@@ -21,6 +21,7 @@ import { getBrowserService } from '../browser/service.ts';
 import type { Config } from '../config/types.ts';
 import { getExternalAgent, listExternalAgents, nativeAgentExists } from '../external/registry.ts';
 import { closeAgentConnections } from '../external/connection.ts';
+import { flushUnprompted } from '../external/unprompted.ts';
 import { evictMemoryManager } from '../memory/registry.ts';
 import { listAgents, loadPersona, validateAgentsMd } from '../persona/loader.ts';
 import { holdForRename } from './rename-lock.ts';
@@ -428,8 +429,18 @@ async function renameAgentNow(from: string, to: string, deps: RenameDeps, opts: 
   const newBrowserProfile = join(home(), 'browser', 'profiles', to);
   const hasBrowser = existsSync(browserProfile);
   if (hasBrowser && existsSync(newBrowserProfile)) return fail(`a browser profile named '${to}' already exists (browser/profiles/${to}) — remove it or choose another name`);
-  const busy = busyReason(from);
+  let busy = busyReason(from);
   if (busy) return fail(`'${from}' is busy: ${busy}. Try again when it is idle.`);
+  if (external && !dryRun) {
+    // What it sent on its own and not yet written goes into its sessions
+    // now, while they may still be written (the hold below refuses
+    // session writes; a write after the move would make agents/<from>
+    // again). Then the busy check once more: nothing may have started.
+    closeAgentConnections(from, to);
+    await flushUnprompted(from);
+    busy = busyReason(from);
+    if (busy) return fail(`'${from}' is busy: ${busy}. Try again when it is idle.`);
+  }
   // From here on no turn starts and no session is written for either
   // name — taken in the same step as the busy check (rename-lock.ts).
   const release = dryRun ? () => {} : holdForRename([from, to]);

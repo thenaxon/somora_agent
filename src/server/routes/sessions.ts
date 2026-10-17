@@ -6,6 +6,7 @@ import { A2A_CONTEXT_KEY } from '../../engine/a2a-external.ts';
 import { A2A_QUIET_KEY } from '../../tools/gating.ts';
 import { agentKnown, getExternalAgent, isExternalAgent, listExternalAgents } from '../../external/registry.ts';
 import { closeExternal } from '../../external/connection.ts';
+import { discardUnprompted } from '../../external/unprompted.ts';
 import { externalBadge } from './external.ts';
 import { remSettingsFor } from '../../dream/dreams.ts';
 import type { Hono } from 'hono';
@@ -130,8 +131,11 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
     if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
     const body = (await c.req.json().catch(() => ({}))) as { reason?: string };
     try {
-      await archiveSession(agent, session, body.reason);
+      // An external agent's connection goes first, then what it sent on
+      // its own and not yet written — else it lands in the archived file.
       closeExternal(agent, session);
+      await discardUnprompted(agent, session);
+      await archiveSession(agent, session, body.reason);
       logger.info({ msg: 'session.archive', agent, session, reason: body.reason });
       return c.json({ archived: true, agent, session });
     } catch (err) {
@@ -400,8 +404,11 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
         // The reset writes fresh meta: carry the generation over.
         const before = (await sessionMetaStore.get(agent, session)) as Record<string, unknown>;
         const gen = typeof before.externalGeneration === 'number' ? before.externalGeneration : 0;
-        result = await resetSession(agent, session);
+        // The old conversation ends here: its connection, and what it
+        // sent on its own and not yet written (it is not the new one's).
         closeExternal(agent, session);
+        await discardUnprompted(agent, session);
+        result = await resetSession(agent, session);
         // The old conversation on the other side is gone with the reset:
         // drop its id (or the next turn would resume it), its title and
         // its A2A conversation (the next task starts a new one). A

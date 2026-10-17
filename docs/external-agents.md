@@ -133,8 +133,10 @@ external:
   questionTimeoutMinutes: 10
 ```
 
-`idleMinutes` closes a connection after that many minutes without a
-message. The next message opens it again and resumes the session.
+`idleMinutes` closes a connection after that many minutes without use.
+A running turn counts as use however long it takes, also while a
+question waits for you. The minutes count from the end of the turn. The
+next message opens the connection again and resumes the session.
 `questionTimeoutMinutes` is how long a question waits for your answer.
 Without an answer, somora picks the rejecting option.
 
@@ -172,6 +174,8 @@ then is shown:
 - Whatever arrives in the first three seconds after a turn ends counts
   as the end of that turn and is not shown again. Hermes, for example,
   sends a last piece after you stop it.
+- Resetting or archiving the session drops what is still being
+  collected. It belongs to the conversation that ended.
 
 somora hears the agent only while the connection is open. It closes
 after a while without use, see `external.idleMinutes` in
