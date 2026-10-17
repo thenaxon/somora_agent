@@ -233,9 +233,8 @@ What your agents read about them in their team block:
   its `involve_for` and `not_for` phrases. Below the list, one shared
   note: external agents work in other systems with their own memory and
   tools and no access to yours, so hand them a self-contained task with
-  `agent_ask` or `spawn_subagent` and all the context it needs. Images
-  and files go along as with a colleague; it is slower than a colleague,
-  and a stop may not reach it.
+  `agent_ask` or `spawn_subagent` and all it needs. Images and files go
+  along; it is slower than a colleague, and a stop may not reach it.
 - **Without A2A access**, a line `Chat only, do not involve`: they are
   for chatting with you and take no work from agents.
 
