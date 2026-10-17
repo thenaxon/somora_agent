@@ -2,6 +2,7 @@
 // process tree dying on a timeout (setsid escapees included), capped
 // output, blacked-out secrets, the copy's fingerprint, three languages
 // and the environment a check gets.
+import '../testing/own-home.mts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync, appendFileSync, existsSync, readFileSync } from 'node:fs';

@@ -360,8 +360,14 @@ test('files out: an image the agent made comes back as a download link that serv
   assert.equal(got.status, 200, 'open without the login key: the token is the key');
   assert.equal(got.headers.get('content-type'), 'image/png');
   assert.equal(Buffer.from(await got.arrayBuffer()).equals(PNG), true);
-  const tampered = parts[1].url.replace(/.$/, (ch: string) => (ch === 'A' ? 'B' : 'A'));
+  const tampered = parts[1].url.replace(/.(.{5})$/, (_m: string, rest: string) => (parts[1].url.at(-6) === 'A' ? 'B' : 'A') + rest);
   assert.equal((await fetch(tampered)).status, 404);
+  // The spare bits of the last character: another spelling of the same
+  // signature is refused too.
+  const last = parts[1].url.at(-1)!;
+  const ALPHA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  const sibling = ALPHA[ALPHA.indexOf(last) ^ 1]!;
+  assert.equal((await fetch(parts[1].url.slice(0, -1) + sibling)).status, 404, 'one spelling only');
   assert.equal(isA2APublicPath('GET', new URL(parts[1].url).pathname), true);
   assert.equal(isA2APublicPath('GET', '/a2a/files/../../etc'), false);
 });

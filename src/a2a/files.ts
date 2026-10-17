@@ -57,8 +57,11 @@ export function fileLinkToken(file: AttachmentRef, now = Date.now(), ttlMs = FIL
 export function verifyFileLink(token: string, now = Date.now()): { hash: string; mime: string; name: string } | { error: string } {
   const [payload, sig] = token.split('.');
   if (!payload || !sig) return { error: 'not a file link' };
-  const want = createHmac('sha256', secret()).update(payload).digest();
-  const got = Buffer.from(sig, 'base64url');
+  // Compared as text: base64url's last character carries two spare bits
+  // that decoding ignores, so a byte comparison would take a second
+  // spelling of the same signature.
+  const want = Buffer.from(createHmac('sha256', secret()).update(payload).digest('base64url'));
+  const got = Buffer.from(sig);
   if (want.length !== got.length || !timingSafeEqual(want, got)) return { error: 'not a file link' };
   let data: { h?: unknown; m?: unknown; n?: unknown; e?: unknown };
   try {

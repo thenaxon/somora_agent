@@ -9,6 +9,7 @@
 // Since 2026-09-21 a left-out session on a trigger for yourself means
 // the session you are in (sub-agent turns excepted).
 
+import '../../testing/own-home.mts';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

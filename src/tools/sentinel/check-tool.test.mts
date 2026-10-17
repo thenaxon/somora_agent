@@ -1,6 +1,7 @@
 // The sentinel tool for check triggers: no create without a dry run of
 // exactly this script, the dry run's verdict, create/get/update/test,
 // and Art 2 only offered when a decision model is configured.
+import '../../testing/own-home.mts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';

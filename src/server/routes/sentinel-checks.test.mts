@@ -1,6 +1,7 @@
 // The sentinel routes for check triggers: the list and a single trigger
 // carry the check counts, the script is readable (and flagged when it
 // was changed), and test answers with a dry run instead of a fire.
+import '../../testing/own-home.mts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';

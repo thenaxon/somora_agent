@@ -2,6 +2,7 @@
 // and a watch check end to end against a fake decision model — starting
 // state, the same data never asked twice, new data above and below the
 // threshold, an outage that wakes nobody, and a model gone from config.
+import '../testing/own-home.mts';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type ServerResponse } from 'node:http';

@@ -9,6 +9,7 @@
 //   #5 daily-cap auto-pause was permanent; the resume boundary uses the
 //      same UTC-day edge as the fire count (isDailyCapResumeDue).
 
+import '../testing/own-home.mts';
 import assert from 'node:assert/strict';
 
 import {

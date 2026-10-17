@@ -3,6 +3,7 @@
 // back, the edge of a watch check, errors to a pause and back, the
 // files of a deleted trigger, the evidence the agent reads, and the
 // rules for creating a check.
+import '../testing/own-home.mts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
