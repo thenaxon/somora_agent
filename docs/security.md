@@ -370,6 +370,11 @@ each turn and hands Grok an agent profile with the session:
   terminal, file, web search, scheduler and subagent tools are off, so
   everything an agent does passes through somora's gating and rules.
   `--always-approve` therefore approves only somora's own tools.
+- **No xAI account connectors.** Grok's tool search also reaches
+  connectors of your xAI account. One of them, `tasks`, creates
+  automations in that account, which never wake a somora session.
+  somora's Grok home switches it off (`[disabled_mcp_tools]` in its
+  `config.toml`), so reminders go through Sentinel.
 - **somora's system prompt.** It replaces Grok's own prompt, and is
   sent again on every resume.
 - **No skills and no `AGENTS.md`** from the working folder.
