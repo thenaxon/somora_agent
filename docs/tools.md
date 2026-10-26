@@ -456,9 +456,10 @@ reads the same input description of each tool. The `claude-cli` and
 ### Always in the list, or found on demand
 
 `claude-cli` and `codex-cli` keep most tools behind a tool search: the
-model sees their names only after it searches. A short list stays in
-the model's list on every turn, so it never has to search for the tools
-used most:
+model sees their names only after it searches. `openai-compatible`
+names them at the end of the system prompt, without their input (see
+below). A short list stays in the model's list on every turn, so it
+never has to search for the tools used most:
 
 `exec`, `process`, `tmux`, `file_read`, `file_write`, `file_patch`,
 `file_list`, `file_search`, `web_search`, `web_fetch`, `memory_search`,
@@ -478,11 +479,10 @@ tool set is in the list, because it is small.
 
 ### Found on demand on `openai-compatible`
 
-By default an `openai-compatible` model gets every tool with its full
-description on every request. An agent with external MCP servers can
-send 80 tools that way, often more text than the rest of its prompt.
-`mode: catalog` (per engine or per model) sends the list above instead,
-plus two tools of somora's own:
+Sending every tool with its full description on every request costs a
+lot: an agent with external MCP servers can send 80 tools that way,
+often more text than the rest of its prompt. So an `openai-compatible`
+model gets the list above, plus two tools of somora's own:
 
 | Tool | What it does |
 |---|---|
@@ -567,10 +567,10 @@ Settings that shape how tools run:
 | `agentLoop.toolCallTimeoutMs` | `30000` | Time limit of one tool call, unless the tool sets its own. |
 | `agentLoop.longTaskMaxTimeoutMs` | `1800000` | Longest wait of the tools that wait for other work. |
 | `wiki.lucid.maxCallsPerTurn` | `3` | `wiki_*` calls per turn inside a review loop. |
-| `toolCatalog.alwaysVisible` | the list above | Tools kept in the model's list on `claude-cli` and `codex-cli` instead of behind the tool search. Takes effect on the next turn. |
+| `toolCatalog.alwaysVisible` | the list above | Tools kept in the model's list on `claude-cli`, `codex-cli` and `openai-compatible` instead of behind the tool search. Takes effect on the next turn. |
 | `toolCatalog.engines` | none | Per engine, `add` and `remove` lists on top of it, for example `codex-cli: {add: [sentinel]}`. |
 | `toolCatalog.models` | none | The same per model alias or `<provider>/<modelId>`, for example more tools for a model that searches poorly. |
-| `toolCatalog.engines.openai-compatible.mode` | `all` | `catalog` sends the list above plus `tool_search` and `tool_call` instead of every tool. A model's `mode` under `toolCatalog.models` wins over its engine's. |
+| `toolCatalog.engines.openai-compatible.mode` | `catalog` | `all` sends every tool with its schema instead of the list above plus `tool_search` and `tool_call`. A model's `mode` under `toolCatalog.models` wins over its engine's. |
 | `toolCatalog.search.listingMaxChars` | `8000` | Length limit of the list of the other tools at the end of the system prompt. |
 | `toolCatalog.search.defaultResults` / `maxResults` | `5` / `20` | Hits per `tool_search` query, and the most a model may ask for. |
 | `codexCli.directTools` | unset | Old form of the list for `codex-cli` only. When set it replaces `toolCatalog.alwaysVisible` there, and the server log says so once. |

@@ -11,9 +11,9 @@
 //   - codex-cli: every tool not in the set gets `deferLoading`;
 //   - claude-cli: the MCP child marks the set `anthropic/alwaysLoad`;
 //   - grok-cli: offers only search_tool/use_tool, nothing to mark;
-//   - openai-compatible: sees every tool today. When it gets a catalog
-//     with a load tool (the parked plan: direct list + catalog + load),
-//     run-turn's `alwaysVisibleTools` is the list it starts from.
+//   - openai-compatible: gets the set plus tool_search/tool_call and a
+//     listing of the rest (engine/openai-tool-catalog.ts), unless its
+//     mode is `all`.
 //
 // The set is always cut to the tools the turn OFFERS — after Abilities
 // (agent.yaml tools:), the session's deny list, builder mode/phase and
@@ -65,7 +65,7 @@ export const REVIEW_LOOP_TOOLS: readonly string[] = [
 export interface ToolListPatch {
   add?: readonly string[];
   remove?: readonly string[];
-  /** openai-compatible: send every schema (`all`) or the catalog (`catalog`). */
+  /** openai-compatible: send the catalog (`catalog`, default) or every schema (`all`). */
   mode?: 'all' | 'catalog';
 }
 
@@ -120,11 +120,12 @@ export function alwaysVisibleTools(offered: readonly string[], opts: AlwaysVisib
 }
 
 /**
- * How the openai-compatible engine sends this turn's tools: `all`
- * (every schema, the default) or `catalog` (the always-visible list
- * plus tool_search/tool_call, the rest named at the end of the system
- * prompt). A model's setting wins over its engine's; a builder always
- * gets `all` — its whole set is direct anyway.
+ * How the openai-compatible engine sends this turn's tools: `catalog`
+ * (the default: the always-visible list plus tool_search/tool_call, the
+ * rest named at the end of the system prompt) or `all` (every schema).
+ * Measured 2026-10-26 on two local models: same tasks solved, a third
+ * less context per request. A model's setting wins over its engine's; a
+ * builder always gets `all` — its whole set is direct anyway.
  */
 export function catalogMode(
   opts: Pick<AlwaysVisibleOptions, 'kind' | 'engine' | 'modelRefs' | 'catalog'>,
@@ -134,5 +135,5 @@ export function catalogMode(
     const m = opts.catalog?.models?.[ref]?.mode;
     if (m) return m;
   }
-  return opts.catalog?.engines?.[opts.engine]?.mode ?? 'all';
+  return opts.catalog?.engines?.[opts.engine]?.mode ?? 'catalog';
 }

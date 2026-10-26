@@ -145,7 +145,7 @@ test('mode: a model setting wins over its engine, builders and other engines sta
   assert.equal(catalogMode({ engine: 'openai-compatible', modelRefs: ['p/weak', 'weak'], catalog }), 'all');
   assert.equal(catalogMode({ engine: 'openai-compatible', kind: 'builder', modelRefs: ['p/strong'], catalog }), 'all');
   assert.equal(catalogMode({ engine: 'codex-cli', modelRefs: [], catalog }), 'all');
-  assert.equal(catalogMode({ engine: 'openai-compatible', modelRefs: [] }), 'all', 'default');
+  assert.equal(catalogMode({ engine: 'openai-compatible', modelRefs: [] }), 'catalog', 'default');
 });
 
 // ── through the engine with a scripted backend ─────────────────────────

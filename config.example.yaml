@@ -779,9 +779,9 @@ providers:
 #     - ask_user              # listed only when the turn offers it
 #   engines:                  # per engine: add / remove on top of the list
 #     codex-cli: { add: [sentinel] }
-#     openai-compatible:      # mode: all (default) sends every tool's schema;
-#       mode: catalog         # catalog sends the list + tool_search/tool_call
-#                             # and names the rest at the end of the system prompt
+#     openai-compatible:      # mode: catalog (default) sends the list +
+#       mode: all             # tool_search/tool_call and names the rest at the
+#                             # end of the system prompt; all sends every schema
 #   models:                   # per model alias or <provider>/<modelId>
 #     some-small-model: { add: [sentinel, browser] }
 #     weak-local-model: { mode: all }   # a model's mode wins over its engine's
