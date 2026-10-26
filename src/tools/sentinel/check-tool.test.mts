@@ -55,6 +55,9 @@ test('create refuses without a dry run of exactly this script; dry run then crea
   const got = await call({ action: 'get', id: made.trigger.id });
   assert.equal(got.check.checks, 0);
   assert.match(got.describe, /check once, every 15s until/);
+  assert.ok(String(got.check.script).endsWith(`/sentinel/scripts/${made.trigger.id}/check.sh`), 'get names the copy it runs');
+  assert.ok(existsSync(got.check.script), 'and that file is there');
+  assert.ok(String(got.check.stateDir).endsWith(`/sentinel/state/${made.trigger.id}`));
 });
 
 test('a script edited after its dry run needs another one', async () => {

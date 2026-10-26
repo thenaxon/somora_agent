@@ -475,7 +475,7 @@ All actions of the `sentinel` tool:
 | `dry_run` | `source` of type `check` | Runs the script once and shows what would happen. Nothing is saved. |
 | `update` | `id`, any of `source`, `prompt`, `name`, `intent` | Changes a trigger. `source` only on a check trigger; a new script or kind needs a dry run first. Noted in the history as `updated`. |
 | `list` | optional `owner`, `status`, `include_completed` | Lists triggers, newest first. Fired one-shots are hidden and counted in `hidden_completed`. |
-| `get` | `id` | Full detail of one trigger. For a check also `check`: counts of checks and wakes, the last check, the last decision and the next check. |
+| `get` | `id` | Full detail of one trigger. For a check also `check`: where somora's copy of the script runs from and the script's state folder, counts of checks and wakes, the last check, the last decision and the next check. |
 | `pause` | `id` | Stops it from firing. |
 | `resume` | `id` | Makes it active again and clears the error count. |
 | `delete` | `id` | Removes the trigger and its history. |

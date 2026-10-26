@@ -11,13 +11,14 @@
 // Plus: the scheduler auto-pauses on error-streak ≥ 3 and on daily-cap
 // breach.
 
+import { join } from 'node:path';
 import { z } from 'zod';
 import { activeDecisionModel, type Config } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
 import { buildCheckSource, validateCheckInput, type CheckSpecInput } from '../../sentinel/check-create.ts';
 import { dryRunCheck, hasRecentDryRun, recordDryRun } from '../../sentinel/check-dry-run.ts';
 import { initialCheckState } from '../../sentinel/check-logic.ts';
-import { installCheckScript, loadCheckState, removeCheckFiles, replaceCheckScript, saveCheckState } from '../../sentinel/check-store.ts';
+import { checkScriptDir, checkStateDir, installCheckScript, loadCheckState, removeCheckFiles, replaceCheckScript, saveCheckState } from '../../sentinel/check-store.ts';
 import { checkReadAllowed, realpathSafeAncestor, resolveLocalPath } from '../file/policy.ts';
 import type { ToolContext, ToolDefinition } from '../types.ts';
 import {
@@ -750,6 +751,16 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
           ...(checkState
             ? {
                 check: {
+                  // Where somora's copy runs from, so nobody has to look
+                  // for it on disk: update replaces this file, new
+                  // versions belong in the workspace.
+                  ...(t.source.type === 'check'
+                    ? {
+                        script: join(checkScriptDir(t.id), t.source.script.file),
+                        stateDir: checkStateDir(t.id),
+                        note: "somora's copy of the script; update replaces it, so keep new versions in your workspace and pass that path",
+                      }
+                    : {}),
                   checks: checkState.checkCount,
                   wakes: checkState.wakeCount,
                   ...(checkState.nextCheckAt && t.status === 'active' ? { nextCheckAt: checkState.nextCheckAt } : {}),
