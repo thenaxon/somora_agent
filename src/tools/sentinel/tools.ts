@@ -291,33 +291,16 @@ function sentinelDescription(art2: boolean, limits: Config['sentinel']['checks']
       ? 'A judged script must print only items that are NEW since its last run (remember what it printed in the state folder) and nothing that changes on every run (no timestamps, counters) — otherwise old items are judged again and wake you again. '
       : '') +
     'Templates: docs/sentinel.md.' +
-    '\n\nSteps for a check: write the script → action "dry_run" with the exact source you will create (runs it once, shows what would happen; required, nothing saved, nobody woken) → "create" with the same source, a name and dispatch.prompt: what to do when woken. ' +
-    '"update" (id + source / prompt / name) swaps the script or settings; a new script needs a dry run first. "test" on a check trigger dry-runs its script.' +
-    '\n\nActions: ' +
-    '"create" (name + source + dispatch + optional policy), ' +
-    '"dry_run" (source of type "check"), ' +
-    '"update" (id + any of source, prompt, name, intent), ' +
-    '"list" (optional owner / status filter; fired one-shots are hidden unless status:"completed" ' +
-    'or include_completed:true — the count is reported as hidden_completed), ' +
-    '"get" (full detail by id; for a check also its counts and last check), ' +
-    '"pause" / "resume" (toggle active/paused by id), ' +
-    '"delete" (remove + clean history), ' +
-    '"test" (time trigger: fire NOW, bypassing cooldown/cap; check trigger: dry-run its script), ' +
-    '"history" (last N events for a trigger), ' +
-    '"purge_completed" (delete ALL fired one-shots at once, optional owner filter — recurring, ' +
-    'active, paused and errored triggers are never touched). Fired one-shots are also ' +
-    'auto-deleted after sentinel.completedRetentionDays (default 7). ' +
-    '\n\n' +
-    'Time source variants (source.spec): ' +
-    '`at` (one-shot ISO timestamp), `every` (interval like "5m", min 60s), `daily` ("08:00"), ' +
-    '`weekly` (mon/tue/…/sun + "09:00"), `cron` (standard 5-field — escape hatch for things ' +
-    'like "1st of each month"). Cron examples: `"0 9 1 * *"` (monthly 1st 9:00), ' +
-    '`"0 8 * * *"` (daily 8:00), `"*/15 * * * *"` (every 15 min). Cron does NOT support ' +
-    'ranges (use `1,2,3,4,5` not `1-5`) or named months/weekdays. Prefer the named ' +
-    'primitives when they fit — they read better. ' +
-    '\n\n' +
-    `Safeguards: max 50 active triggers per agent, max 500 fires per trigger per day, ${limits.maxWakesPerDay} wakes per check trigger per day, ` +
-    'auto-pause after 3 errors in a row. Visible and manageable in the web client\'s Sentinel window.'
+    '\n\nSteps for a check: write the script → action "dry_run" with the exact source you will create (runs it once, shows what would happen; required, nothing saved, nobody woken) → "create" with the same source, a name and dispatch.prompt: what to do when woken. A new script for update needs a dry run too.' +
+    '\n\nActions: create (name + source + dispatch, optional policy) · dry_run (a check source) · ' +
+    'update (id + any of source, prompt, name, intent) · list (filter by owner or status; fired one-shots ' +
+    'only with include_completed:true) · get (id) · pause / resume (id) · delete (id) · ' +
+    'test (id; a time trigger fires now, a check runs its script once) · history (id, last events) · ' +
+    'purge_completed (deletes all fired one-shots, nothing else).' +
+    '\n\nTime specs (source.spec): at (ISO time, once) · every ("5m", at least 60s) · daily ("08:00") · ' +
+    'weekly (day + "09:00") · cron (5 fields, see its description). Prefer daily, weekly or every when they fit.' +
+    `\n\nLimits: 50 active triggers per agent, 500 fires per trigger and day, ${limits.maxWakesPerDay} wakes per check trigger and day; ` +
+    'three errors in a row pause a trigger. The person sees all triggers in the web Sentinel window.'
   );
 }
 
@@ -379,7 +362,7 @@ function sentinelJsonSchema(art2: boolean): Record<string, unknown> {
                   { type: 'object', properties: { type: { const: 'every' }, interval: { type: 'string', description: '30s / 5m / 1h. Minimum 60s.' } }, required: ['type', 'interval'] },
                   { type: 'object', properties: { type: { const: 'daily' }, time: { type: 'string', description: 'HH:MM or HH:MM:SS.' } }, required: ['type', 'time'] },
                   { type: 'object', properties: { type: { const: 'weekly' }, day: { type: 'string', enum: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] }, time: { type: 'string' } }, required: ['type', 'day', 'time'] },
-                  { type: 'object', properties: { type: { const: 'cron' }, expression: { type: 'string', description: 'Standard 5-field cron: m h dom mon dow. Supports *, N, */N, a,b,c. Does NOT support ranges (use 1,2,3,4,5 instead of 1-5) or named months/weekdays (use 1=Mon..7=Sun). Examples: "0 8 * * *" daily at 8:00 · "0 9 1 * *" 1st of each month 9:00 · "*/15 * * * *" every 15 min · "0 9,17 * * *" 9:00 AND 17:00 daily · "0 0 * * 0" sundays midnight. For simple cases prefer `daily`/`weekly`/`every` — they read better and cover 90% of recurring use-cases.' } }, required: ['type', 'expression'] },
+                  { type: 'object', properties: { type: { const: 'cron' }, expression: { type: 'string', description: '5-field cron: minute hour day month weekday. Allowed: *, N, */N, a,b,c. No ranges (write 1,2,3,4,5, not 1-5) and no names (weekday 1=Mon … 7=Sun). Examples: "0 8 * * *" daily 8:00 · "0 9 1 * *" 1st of the month 9:00 · "*/15 * * * *" every 15 min · "0 9,17 * * *" 9:00 and 17:00.' } }, required: ['type', 'expression'] },
                 ],
               },
             },
@@ -396,11 +379,10 @@ function sentinelJsonSchema(art2: boolean): Record<string, unknown> {
           session: {
             type: 'string',
             description:
-              'Target session: a slug or id, "main", or "current" = the session you are in right now ' +
-              '(only when dispatch.agent is you). Left out: a trigger on yourself fires in the session you ' +
-              'create it from (as a sub-agent: in "main"); a trigger on another agent fires in their "main". Say "main" explicitly when a ' +
-              'recurring job belongs there rather than in the conversation you happen to be in. ' +
-              'Auto-created with timestamp prefix if not existing.',
+              'A session slug or id, "main", or "current" (the session you are in; only for yourself). ' +
+              'Left out: a trigger on yourself fires in the session you create it from (a sub-agent\'s: in ' +
+              '"main"); one on another agent fires in their "main". Say "main" when a recurring job belongs ' +
+              'there. A missing session is created.',
           },
           prompt: { type: 'string', description: 'Agent receives this as a user-turn body, prefixed by a structured evidence block.' },
         },
@@ -415,14 +397,9 @@ function sentinelJsonSchema(art2: boolean): Record<string, unknown> {
             type: 'string',
             enum: ['skip', 'catchUpOnce', 'catchUpAll'],
             description:
-              'How to handle recurring fires that elapsed while somora was down. ' +
-              '`skip` (default): no backfill — best for "daily inbox check" where stacked ' +
-              'fires after an outage are spam. `catchUpOnce`: fire one historical instance ' +
-              'with catchUp:true in the evidence block — best for "monthly summary" where ' +
-              'you want to know it was missed but not get N separate fires. `catchUpAll`: ' +
-              'fire one per missed instant (capped at 24) — best for log-style triggers ' +
-              'where each instant carries unique context. One-shot `at`-triggers use a 6h ' +
-              'grace window separately, this flag only affects recurring sources.',
+              'Recurring triggers only — fires missed while somora was down. "skip" (default): none. ' +
+              '"catchUpOnce": one, marked catchUp:true (e.g. a monthly summary). "catchUpAll": one per ' +
+              'missed time, at most 24 (when each time matters).',
           },
         },
       },

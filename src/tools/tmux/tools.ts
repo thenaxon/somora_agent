@@ -55,55 +55,64 @@ const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const MAX_WAIT_TIMEOUT_MS = 600_000; // 10 min — same ceiling as longTaskMax
 const DEFAULT_IDLE_STABLE_MS = 500;
 
+/** Field texts, shared by the zod schema (Claude, Grok) and the JSON
+ *  schema (Codex, OpenAI-compatible) so every engine reads the same. */
+const FIELD = {
+  action: 'create | send | capture | wait_idle | list | kill.',
+  target:
+    '"local" (default) = the somora server. Otherwise a resource name from resource_list. ' +
+    'tmux must be installed there.',
+  name:
+    'Session name, required for every action except list. Letters, digits, - and _; ' +
+    'pick a readable one like "codex-auth-fix".',
+  cwd: 'create only — working directory of the new session.',
+  keys:
+    'send only — text to type. Each \\n is an Enter (end with \\n to run a shell command). ' +
+    'Not together with key.',
+  key:
+    'send only — key names, space-separated: Escape, C-c, C-u, Tab, BSpace, Up, F1, "C-x C-c" ' +
+    '(C- = Ctrl, M- = Alt, S- = Shift). Not together with keys.',
+  multiline_safe:
+    'send only — true sends inner \\n as Alt+Enter, a newline that does not submit, for TUIs ' +
+    'where Enter submits. A \\n at the very end still submits. Default false.',
+  wait_pattern:
+    'capture only — text to wait for. Checked every 200 ms until it matches or ' +
+    'wait_timeout_ms runs out. Without it, capture returns the pane at once.',
+  wait_mode:
+    'capture only — how wait_pattern matches. "auto" (default, for shells): the pattern ' +
+    'appears more often than before, or it is there and a shell prompt ($ # >) ends the pane. ' +
+    '"present" (for TUIs): the pattern is anywhere in the pane. "idle": the pattern is there ' +
+    'and the pane has not changed for idle_stable_ms.',
+  idle_stable_ms: `wait_idle and wait_mode "idle" — how long the pane must stay unchanged, in ms. Default ${DEFAULT_IDLE_STABLE_MS}.`,
+  wait_timeout_ms:
+    `capture with wait_pattern, and wait_idle — longest wait in ms (default ${DEFAULT_WAIT_TIMEOUT_MS}, ` +
+    `max ${MAX_WAIT_TIMEOUT_MS}). On timeout you get the current pane with matched_pattern=false ` +
+    `or became_idle=false.`,
+  include_ansi:
+    'capture only — true returns the pane with its ANSI styling, so dim suggestion text can ' +
+    'be told apart from typed input. Default false.',
+  lines: 'capture only — how many lines from the end of the scrollback to return. Default 200.',
+  inherit_agent_env:
+    'create only, local only. Default false: a claude or codex started in the pane uses the ' +
+    "person's normal login. true keeps somora's own isolated Claude settings — rarely wanted.",
+  kind:
+    'create only — what runs in the pane: "shell" (default: shells, builds, REPLs, vim), ' +
+    '"claude-code", "codex" or "opencode". With a coding-CLI kind, capture and wait_idle ' +
+    'return tui_state, wait_idle waits until the program is really ready, and somora wakes ' +
+    'you with a [tmux attention] turn when it finishes while you are not looking. In ' +
+    'opencode a "Permission required" dialog counts as ready (Enter = allow once). When ' +
+    'unsure, use "shell".',
+  attention:
+    'create only, coding-CLI kinds — false: no wake turn when the program finishes. Default true.',
+};
+
 const TmuxInput = z
   .object({
-    action: z
-      .enum(['create', 'send', 'capture', 'wait_idle', 'list', 'kill'])
-      .describe(
-        'create (new session) | send (keys to existing session) | capture (read pane content) | ' +
-          'wait_idle (poll until pane content stops changing — pattern-free; for "wait until ' +
-          'TUI/command is done" without guessing a marker) | list (sessions on target) | ' +
-          'kill (remove session).',
-      ),
-    target: z
-      .string()
-      .min(1)
-      .default('local')
-      .describe(
-        '"local" (default) = the somora server\'s machine. Otherwise a configured resource ' +
-          'name from resource_list. tmux must be installed on the target — Standard on most ' +
-          'macOS/Linux boxes; install via `brew install tmux` / `apt install tmux` if missing.',
-      ),
-    name: z
-      .string()
-      .min(1)
-      .max(100)
-      .optional()
-      .describe(
-        'Session name. Required for create/send/capture/kill. Convention: meaningful slug ' +
-          '(e.g. "claude-bugfix-auth", "codex-experiment-1") so list output is readable. ' +
-          'Allowed: alphanumerics + dash + underscore; tmux rejects most other characters.',
-      ),
-    cwd: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        'create only — initial working directory for the session\'s shell. Useful when the ' +
-          'TUI tool you spawn cares about cwd (claude/codex usually do).',
-      ),
-    keys: z
-      .string()
-      .optional()
-      .describe(
-        'send only — text to type into the session. By default, newlines (\\n) are sent as ' +
-          'Enter keypresses (CR), which is what shells expect — append \\n to actually run a ' +
-          'shell command. For interactive TUIs (claude --dangerously-skip-permissions, codex, ' +
-          'IPython, jupyter input boxes, etc.) where Enter SUBMITS the message, set ' +
-          '`multiline_safe: true` so embedded \\n becomes a soft-newline instead of a submit. ' +
-          'For control / function / modifier keys (Escape, Ctrl-C, Ctrl-U, F1, arrow keys, …) ' +
-          'use the `key` field instead — JSON-encoding raw control bytes is brittle.',
-      ),
+    action: z.enum(['create', 'send', 'capture', 'wait_idle', 'list', 'kill']).describe(FIELD.action),
+    target: z.string().min(1).default('local').describe(FIELD.target),
+    name: z.string().min(1).max(100).optional().describe(FIELD.name),
+    cwd: z.string().min(1).optional().describe(FIELD.cwd),
+    keys: z.string().optional().describe(FIELD.keys),
     key: z
       .string()
       .min(1)
@@ -113,140 +122,23 @@ const TmuxInput = z
         'key: only [A-Za-z0-9_-] tokens, optionally space-separated (e.g. "Escape", "C-c", "F1", "C-x C-c")',
       )
       .optional()
-      .describe(
-        'send only — one or more tmux key names, space-separated. Use this for keys that are ' +
-          'hard to type as text: Escape, C-c, C-u, C-d, BSpace, Tab, F1..F12, Up/Down/Left/Right, ' +
-          'Home/End/PgUp/PgDn, modifier-prefixed (C- = Ctrl, M- = Meta/Alt, S- = Shift; ' +
-          'combinable: C-M-Enter). tmux delivers them as real key events, not text bytes — ' +
-          'reliable across TUIs (codex/claude-code/etc) for "interrupt running task" (Escape), ' +
-          '"abort" (C-c), "clear input line" (C-u). Mutually exclusive with `keys` — pass one ' +
-          'or the other per call. Multi-key example: `key: "C-x C-c"` sends Ctrl-X then Ctrl-C.',
-      ),
-    multiline_safe: z
-      .boolean()
-      .default(false)
-      .describe(
-        'send only — when true, embedded \\n in `keys` is sent as M-Enter (Esc+CR / Alt+Enter) ' +
-          'instead of a literal Enter. M-Enter is the soft-newline convention in modern input ' +
-          'TUIs (Claude Code, codex, IPython, fish, Slack-style input boxes etc.) — the message ' +
-          'gets a real linebreak without being submitted. The LAST character of `keys` is still ' +
-          'sent as Enter when it\'s a \\n, so a trailing newline still submits. Default false ' +
-          '(plain Enter for shell use). Use this when a single send carries a multi-line ' +
-          'message into a TUI that auto-submits on Enter.',
-      ),
-    wait_pattern: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        'capture only — string to wait for in the pane content. Capture polls every 200ms ' +
-          'until matched OR wait_timeout_ms elapses. Without wait_pattern, capture returns the ' +
-          'current pane content immediately. The match semantic is controlled by `wait_mode` — ' +
-          'see that field; the right choice depends on whether you\'re driving a Shell or a ' +
-          'TUI session.',
-      ),
-    wait_mode: z
-      .enum(['auto', 'present', 'idle'])
-      .default('auto')
-      .describe(
-        'capture only — how `wait_pattern` matches. `auto` (default): smart for SHELL sessions ' +
-          '— matches when pattern occurrences GROW past baseline (the typed command itself often ' +
-          'echoes the pattern, growth = real new output) OR when the buffer ends with a shell ' +
-          'prompt sigil ($/#/>) and the pattern is present (= command finished, output rendered). ' +
-          '`present`: matches as soon as pattern appears anywhere in pane content — for TUI ' +
-          'sessions (Claude Code, codex, vim, htop, fzf) where the pattern is part of a static ' +
-          'rendered panel and the buffer never gets a shell prompt. `idle`: matches when ' +
-          'pattern is in pane AND content has been stable (no changes) for `idle_stable_ms` — ' +
-          'good for "wait until the TUI stops typing/redrawing".',
-      ),
-    idle_stable_ms: z
-      .number()
-      .int()
-      .min(100)
-      .max(10_000)
-      .default(DEFAULT_IDLE_STABLE_MS)
-      .describe(
-        `capture wait_mode=idle / wait_idle — how many ms of unchanged content count as ` +
-          `"stable". Default ${DEFAULT_IDLE_STABLE_MS}ms. Lower = match faster but might catch ` +
-          `a brief pause mid-render; higher = waits longer for true idle.`,
-      ),
+      .describe(FIELD.key),
+    multiline_safe: z.boolean().default(false).describe(FIELD.multiline_safe),
+    wait_pattern: z.string().min(1).optional().describe(FIELD.wait_pattern),
+    wait_mode: z.enum(['auto', 'present', 'idle']).default('auto').describe(FIELD.wait_mode),
+    idle_stable_ms: z.number().int().min(100).max(10_000).default(DEFAULT_IDLE_STABLE_MS).describe(FIELD.idle_stable_ms),
     wait_timeout_ms: z
       .number()
       .int()
       .min(100)
       .max(MAX_WAIT_TIMEOUT_MS)
       .default(DEFAULT_WAIT_TIMEOUT_MS)
-      .describe(
-        `capture (with wait_pattern) / wait_idle — max wall time to wait. Default ` +
-          `${DEFAULT_WAIT_TIMEOUT_MS}ms (${DEFAULT_WAIT_TIMEOUT_MS / 1000}s); max ` +
-          `${MAX_WAIT_TIMEOUT_MS}ms (${MAX_WAIT_TIMEOUT_MS / 60_000} min) for slow tools. ` +
-          `On timeout, capture returns matched_pattern=false / wait_idle returns ` +
-          `became_idle=false, both with the latest content as-is.`,
-      ),
-    include_ansi: z
-      .boolean()
-      .default(false)
-      .describe(
-        'capture only — when true, `content` returns the raw pane bytes including ANSI escape ' +
-          'sequences (colors, cursor moves, dim/bold styling). Default false (escapes stripped — ' +
-          'plain text easier to match against). Use `include_ansi:true` when you need to ' +
-          'distinguish DIM/grayed-out text (e.g. auto-suggestions in Claude Code/codex prompt ' +
-          'lines) from real user-typed input. SAFETY: never auto-Enter on a buffer containing ' +
-          'pending input you didn\'t type yourself — it could be an auto-suggestion the TUI ' +
-          'rendered, and submitting it could trigger destructive actions ("delete project", ' +
-          '"clear all"). When in doubt, ask the user before submitting.',
-      ),
-    lines: z
-      .number()
-      .int()
-      .min(1)
-      .max(10_000)
-      .default(200)
-      .describe(
-        'capture only — how many lines from the END of the pane scrollback to return. Default ' +
-          '200 — covers a typical multi-step interaction without flooding. Bump higher if you ' +
-          'need to see further back.',
-      ),
-    inherit_agent_env: z
-      .boolean()
-      .default(false)
-      .describe(
-        'create only, local target only. When false (default), somora-internal env vars ' +
-          '(CLAUDE_CONFIG_DIR, SOMORA_CLAUDE_BIN) are stripped from the new session so a ' +
-          '`claude` / `codex` started inside the pane uses the user\'s normal login state. ' +
-          'This is what a user expects when they ask the agent to open a coding-TUI in tmux. ' +
-          'Set true only when you intentionally want somora\'s isolated claude tree inherited ' +
-          '— rare: e.g. when the agent itself wants to drive a nested claude-cli through tmux ' +
-          'against somora\'s shared auth/state tree.',
-      ),
-    kind: z
-      .enum(['shell', 'claude-code', 'codex', 'opencode'])
-      .default('shell')
-      .describe(
-        'create only — what runs inside the pane. Drives TUI-aware capture/wait_idle: when ' +
-          'set, capture+wait_idle return a `tui_state` block ({state:"ready"|"queued"|"running", ' +
-          'markers:[]}) AND wait_idle treats queued/running marker hits as "not idle" so it ' +
-          'doesn\'t return prematurely on a content-stable-but-not-actually-ready pane. ' +
-          'When to pick which: "shell" (default) for bash/zsh/build-tools/REPLs/vim/htop — no ' +
-          'TUI magic, pure content-stability (today\'s behavior). "claude-code" for ' +
-          '`claude --dangerously-skip-permissions` — detects "Press up to edit queued messages" ' +
-          'and "esc to interrupt" + Claude Code\'s spinner words. "codex" for codex CLI — ' +
-          'detects esc-to-interrupt running cue. "opencode" for the OpenCode TUI — detects its ' +
-          '"esc interrupt" running cue and the QUEUED label on a message submitted while a turn ' +
-          'runs; a "Permission required" dialog reads as ready (it waits for you: Enter = Allow ' +
-          'once). Pick "shell" when unsure; the TUI flags are ' +
-          'additive and only help if the correct kind is declared. Sessions created with a ' +
-          'coding-CLI kind are watched by the attention watcher: if the CLI finishes while ' +
-          'you are no longer looking, somora wakes you with a [tmux attention] turn so you ' +
-          'can read the output and continue.',
-      ),
-    attention: z
-      .boolean()
-      .default(true)
-      .describe(
-        'create only, coding-CLI kinds (claude-code/codex/opencode) only. false opts this session out of the ' +
-          'attention watcher (no needs_attention flag, no wake turns). Default true.',
-      ),
+      .describe(FIELD.wait_timeout_ms),
+    include_ansi: z.boolean().default(false).describe(FIELD.include_ansi),
+    lines: z.number().int().min(1).max(10_000).default(200).describe(FIELD.lines),
+    inherit_agent_env: z.boolean().default(false).describe(FIELD.inherit_agent_env),
+    kind: z.enum(['shell', 'claude-code', 'codex', 'opencode']).default('shell').describe(FIELD.kind),
+    attention: z.boolean().default(true).describe(FIELD.attention),
   })
   .strict();
 
@@ -512,111 +404,65 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
   name: 'tmux',
   toolset: 'exec',
   description:
-    'Drive a long-lived terminal (tmux) session on local (the somora server) or on a configured ' +
-    'SSH resource. Use when you need to spawn an interactive tool (claude in skip-permissions ' +
-    'mode, codex, vim, a REPL) and drive it across MULTIPLE agent turns — the session and its ' +
-    'process state survive between your tool calls. ' +
+    'Drive a long-lived terminal (tmux) session, locally on the somora server or on an SSH ' +
+    'resource. Use it for interactive programs you drive over several turns (claude, codex, ' +
+    'opencode, a REPL, vim): the session keeps running between your calls. For a one-shot ' +
+    'command or a background job use exec instead, and kill tmux sessions you no longer need.' +
     '\n\n' +
-    'Typical flow: action:"create" once → many action:"send"/"capture" pairs over many turns → ' +
-    'action:"kill" when done. action:"list" shows all sessions on the target. ' +
+    'Flow: create once → send and capture (or wait_idle) as often as needed → kill. list shows ' +
+    'the sessions on a target.\n' +
+    '- send: `keys` types text, and \\n presses Enter. In a TUI where Enter submits, set ' +
+    'multiline_safe:true so inner newlines stay newlines. `key` sends keys by name: Escape or ' +
+    'C-c interrupts a running task, C-u clears the input line.\n' +
+    '- capture: returns the pane now, or with wait_pattern waits for a text (see wait_mode).\n' +
+    '- wait_idle: waits until the pane stops changing — use it when you do not know what the ' +
+    'output will look like.\n' +
+    '- At create, set kind ("claude-code", "codex", "opencode") when that program will run in ' +
+    'the pane: capture and wait_idle then return tui_state {state: ready | queued | running, ' +
+    'suggestion_visible, suggestion_text}.' +
     '\n\n' +
-    'Use exec INSTEAD when: you want to run a one-shot command (sync) or a detached background ' +
-    'job (background:true) that runs to completion without further interaction. tmux is ' +
-    'overkill for those — and forgotten tmux sessions accumulate. ' +
-    '\n\n' +
-    'capture supports wait_pattern with three modes (wait_mode field): "auto" (default, smart ' +
-    'for shell sessions), "present" (matches as soon as pattern appears anywhere — for TUIs), ' +
-    '"idle" (matches when pattern present AND content stable for idle_stable_ms). Without ' +
-    'wait_pattern, capture returns the current pane content immediately. ' +
-    '\n\n' +
-    'wait_idle: pattern-free polling — returns once the pane content stops changing for ' +
-    'idle_stable_ms. Use when you want to wait until "the TUI/command is done" without ' +
-    'guessing a marker string. Cheaper than capture+wait_pattern when you don\'t know what ' +
-    'the final output will look like (long agent runs, code-formatter passes, etc.). ' +
-    '\n\n' +
-    'Two opt-in flags help with TUIs that auto-submit on Enter or that draw auto-suggestions: ' +
-    'send `multiline_safe:true` keeps embedded \\n as soft-newlines (M-Enter) instead of ' +
-    'submits; capture `include_ansi:true` returns raw bytes with ANSI escapes so dim/grayed-out ' +
-    'text (= auto-suggestions) is distinguishable from real input. ' +
-    '\n\n' +
-    'When you create a session that will host a known coding-TUI, declare it at create-time ' +
-    'with `kind: "claude-code"` or `kind: "codex"` — capture and wait_idle then return a ' +
-    'structured `tui_state:{state, markers, suggestion_visible, suggestion_text}` block and ' +
-    'wait_idle correctly distinguishes ' +
-    '"content stable AND TUI ready" from "content stable but queued input not submitted / ' +
-    'still running". Default `kind: "shell"` keeps today\'s pure content-stability behavior ' +
-    'for plain shell jobs, builds, REPLs, vim/htop — anything that isn\'t one of the named TUIs. ' +
-    '\n\n' +
-    'send has two input forms (mutually exclusive): `keys` for text/printable input (with ' +
-    '`multiline_safe` for TUI-aware newline handling), or `key` for control/function/modifier ' +
-    'keys by symbolic name (Escape, C-c, C-u, F1, Up, …). Use `key` to interrupt a running TUI ' +
-    'task ("Escape" / "C-c") or to clear the input line ("C-u") — JSON-encoding raw control ' +
-    'bytes in `keys` is unreliable. ' +
-    '\n\n' +
-    'AUTO-SUGGESTIONS (ghost text): Claude Code and codex render a dim predicted-next-input ' +
-    'line in their input field — a hint for a human sitting in front of the app, NOT real ' +
-    'typed input. In stripped captures it looks identical to typed text. For kind-declared ' +
-    'sessions, `tui_state.suggestion_visible/suggestion_text` tell you explicitly what is ' +
-    'ghost text: IGNORE it — do not clear it, do not mention it, do not treat it as a stray ' +
-    'input line. It vanishes on its own when you type. ' +
-    '\n\n' +
-    'SAFETY for TUI sessions: never blindly press Enter on a buffer that already shows pending ' +
-    'input you didn\'t type. If tui_state reports suggestion_visible for that text it\'s just a ' +
-    'suggestion (Enter may submit it in some TUIs — type your own input instead); if it\'s real ' +
-    'pending input you didn\'t author, submitting it can trigger destructive actions ("delete ' +
-    'project", "clear all"). When in doubt, capture with include_ansi:true to see styling, or ' +
-    'ask the user.',
+    'Ghost text: Claude Code and codex show a dim suggested next input. It is not typed input — ' +
+    'ignore it, it disappears when you type. Never press Enter on input you did not type ' +
+    'yourself: it may be a suggestion or text someone left there, and submitting it can do ' +
+    'damage ("delete project"). If unsure, capture with include_ansi:true (dim text is a ' +
+    'suggestion) or ask the person.',
   inputSchema: TmuxInput,
   jsonSchema: {
     type: 'object',
     properties: {
-      action: {
-        type: 'string',
-        enum: ['create', 'send', 'capture', 'wait_idle', 'list', 'kill'],
-      },
-      target: { type: 'string', description: '"local" or resource name.', default: 'local' },
-      name: { type: 'string', description: 'Session name. Required for create/send/capture/kill.' },
-      cwd: { type: 'string' },
-      keys: { type: 'string' },
-      key: {
-        type: 'string',
-        description:
-          'send only — symbolic tmux key name(s) for control/function keys. Mutually ' +
-          'exclusive with `keys`. Examples: "Escape", "C-c", "C-u", "F1", "Up", "C-x C-c".',
-      },
-      multiline_safe: { type: 'boolean', default: false },
-      wait_pattern: { type: 'string' },
-      wait_mode: { type: 'string', enum: ['auto', 'present', 'idle'], default: 'auto' },
+      action: { type: 'string', enum: ['create', 'send', 'capture', 'wait_idle', 'list', 'kill'], description: FIELD.action },
+      target: { type: 'string', default: 'local', description: FIELD.target },
+      name: { type: 'string', description: FIELD.name },
+      cwd: { type: 'string', description: FIELD.cwd },
+      keys: { type: 'string', description: FIELD.keys },
+      key: { type: 'string', description: FIELD.key },
+      multiline_safe: { type: 'boolean', default: false, description: FIELD.multiline_safe },
+      wait_pattern: { type: 'string', description: FIELD.wait_pattern },
+      wait_mode: { type: 'string', enum: ['auto', 'present', 'idle'], default: 'auto', description: FIELD.wait_mode },
       idle_stable_ms: {
         type: 'integer',
         minimum: 100,
         maximum: 10_000,
         default: DEFAULT_IDLE_STABLE_MS,
+        description: FIELD.idle_stable_ms,
       },
       wait_timeout_ms: {
         type: 'integer',
         minimum: 100,
         maximum: MAX_WAIT_TIMEOUT_MS,
         default: DEFAULT_WAIT_TIMEOUT_MS,
+        description: FIELD.wait_timeout_ms,
       },
-      include_ansi: { type: 'boolean', default: false },
-      lines: { type: 'integer', minimum: 1, maximum: 10_000, default: 200 },
-      inherit_agent_env: { type: 'boolean', default: false },
+      include_ansi: { type: 'boolean', default: false, description: FIELD.include_ansi },
+      lines: { type: 'integer', minimum: 1, maximum: 10_000, default: 200, description: FIELD.lines },
+      inherit_agent_env: { type: 'boolean', default: false, description: FIELD.inherit_agent_env },
       kind: {
         type: 'string',
         enum: ['shell', 'claude-code', 'codex', 'opencode'],
         default: 'shell',
-        description:
-          'create only — what runs inside the pane, drives TUI-aware capture/wait_idle. ' +
-          'See the inputSchema for full per-kind semantics.',
+        description: FIELD.kind,
       },
-      attention: {
-        type: 'boolean',
-        default: true,
-        description:
-          'create only, coding-CLI kinds (claude-code/codex/opencode) only. false opts this session out of the ' +
-          'attention watcher (no needs_attention flag, no wake turns).',
-      },
+      attention: { type: 'boolean', default: true, description: FIELD.attention },
     },
     required: ['action'],
     additionalProperties: false,
