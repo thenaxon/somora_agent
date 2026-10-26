@@ -1,6 +1,6 @@
 // The automatic compaction before a turn says so in the chat.
 //
-// 2026-10-19: rudi's context gauge dropped from 87 % to 23 % and nothing
+// 2026-10-19: a builder's context gauge dropped from 87 % to 23 % and nothing
 // in the history explained it. Of the four compaction paths (by hand,
 // mid-turn, after an overflow, before a turn) only the last one wrote
 // no `context_compacted` row. Now it does, exactly once, before the

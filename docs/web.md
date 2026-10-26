@@ -126,7 +126,9 @@ agent through `dream_review`.
 
 Drag the title bar to move a window and the bottom-right corner to
 resize it. The title bar has Close, Minimize and Maximize. A minimized
-window stays in the taskbar. Maximize (the green button, or a
+window stays in the taskbar.
+
+Maximize (the green button, or a
 double-click on the title bar) fills the desktop above the taskbar;
 click it again, or drag the title bar, and the window returns to its
 old size and place. Arrange windows also brings maximized windows back
