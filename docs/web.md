@@ -125,8 +125,12 @@ agent through `dream_review`.
 ### Windows
 
 Drag the title bar to move a window and the bottom-right corner to
-resize it. The title bar has Close and Minimize. A minimized window
-stays in the taskbar. Closing a window never ends the conversation or
+resize it. The title bar has Close, Minimize and Maximize. A minimized
+window stays in the taskbar. Maximize (the green button, or a
+double-click on the title bar) fills the desktop above the taskbar;
+click it again, or drag the title bar, and the window returns to its
+old size and place. Arrange windows also brings maximized windows back
+into the tiling. Closing a window never ends the conversation or
 disturbs other clients.
 
 Windows never leave the desktop. Dragging and resizing stop at the

@@ -79,6 +79,11 @@ export interface WindowState {
   h: number;
   z: number;
   minimized: boolean;
+  /** Fills the desktop area above the taskbar. x/y/w/h keep the
+   *  restored geometry meanwhile, so the second click (or a drag on
+   *  the title bar) puts the window back where it was. Optional so
+   *  layouts saved before it existed load unchanged. */
+  maximized?: boolean;
 }
 
 /** Minimal slice persisted to localStorage so a browser reload

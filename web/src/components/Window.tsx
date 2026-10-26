@@ -15,6 +15,7 @@ interface Props {
   onFocus: (id: string) => void;
   onClose: (id: string) => void;
   onMinimize: (id: string) => void;
+  onToggleMaximize: (id: string) => void;
   onMove: (id: string, x: number, y: number) => void;
   onResize: (id: string, w: number, h: number) => void;
   /** Per-agent hex color for chat windows. Drives the tinted-border
@@ -25,6 +26,18 @@ interface Props {
 
 type DragState =
   | { type: 'drag'; offsetX: number; offsetY: number }
+  | {
+      /** Title bar grabbed on a maximized window. Nothing happens until
+       *  the mouse really moves (a double-click must not restore and
+       *  re-maximize); then the window restores under the cursor at the
+       *  same relative spot and the gesture carries on as a drag, the
+       *  way macOS and Windows do it. */
+      type: 'unmaximize';
+      startX: number;
+      startY: number;
+      fracX: number;
+      offsetY: number;
+    }
   | {
       type: 'resize';
       startX: number;
@@ -41,6 +54,10 @@ type DragState =
     }
   | null;
 
+/** Pixels the mouse must travel on a maximized window's title bar
+ *  before the window restores and follows it. */
+const UNMAXIMIZE_THRESHOLD = 4;
+
 // Clamp numbers (taskbar height, minimum size) live in
 // lib/window-geometry.ts — the same rule the window manager applies on
 // a browser-viewport resize, so the three ways a window can move never
@@ -52,6 +69,7 @@ export function Window({
   onFocus,
   onClose,
   onMinimize,
+  onToggleMaximize,
   onMove,
   onResize,
   agentColor,
@@ -80,14 +98,33 @@ export function Window({
       onFocus(win.id);
       const rect = ref.current?.getBoundingClientRect();
       if (!rect) return;
-      dragStateRef.current = {
-        type: 'drag',
-        offsetX: e.clientX - rect.left,
-        offsetY: e.clientY - rect.top,
-      };
+      dragStateRef.current = win.maximized
+        ? {
+            type: 'unmaximize',
+            startX: e.clientX,
+            startY: e.clientY,
+            fracX: rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5,
+            offsetY: e.clientY - rect.top,
+          }
+        : {
+            type: 'drag',
+            offsetX: e.clientX - rect.left,
+            offsetY: e.clientY - rect.top,
+          };
       e.preventDefault();
     },
-    [onFocus, win.id],
+    [onFocus, win.id, win.maximized],
+  );
+
+  // Double-click on the title bar toggles maximize, as on every
+  // desktop — but not on the traffic-light buttons themselves.
+  const onTitleDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if ((e.target as HTMLElement).closest('.window-btn')) return;
+      dragStateRef.current = null;
+      onToggleMaximize(win.id);
+    },
+    [onToggleMaximize, win.id],
   );
 
   const onResizeMouseDown = useCallback(
@@ -112,7 +149,14 @@ export function Window({
     function onMouseMove(e: MouseEvent) {
       const ds = dragStateRef.current;
       if (!ds) return;
-      if (ds.type === 'drag') {
+      if (ds.type === 'unmaximize') {
+        if (Math.abs(e.clientX - ds.startX) + Math.abs(e.clientY - ds.startY) < UNMAXIMIZE_THRESHOLD) return;
+        const offsetX = Math.round(ds.fracX * win.w);
+        const { x, y } = clampDragPosition(e.clientX - offsetX, e.clientY - ds.offsetY, win.h, currentViewport());
+        onMove(win.id, x, y);
+        onToggleMaximize(win.id);
+        dragStateRef.current = { type: 'drag', offsetX, offsetY: ds.offsetY };
+      } else if (ds.type === 'drag') {
         // The WHOLE window stays above the taskbar — title bar AND
         // body — and never leaves the desktop on the top/left; up to
         // all but 100px may hang off the right edge on purpose.
@@ -145,7 +189,7 @@ export function Window({
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, [onMove, onResize, win.id, win.h]);
+  }, [onMove, onResize, onToggleMaximize, win.id, win.w, win.h]);
 
   return (
     <div
@@ -154,22 +198,25 @@ export function Window({
         'window',
         focused ? 'focused' : '',
         win.minimized ? 'minimized' : '',
+        win.maximized ? 'maximized' : '',
         agentColor ? 'agent-tinted' : '',
         win.kind === 'pin-note' ? 'pin-tinted' : '',
       ]
         .filter(Boolean)
         .join(' ')}
       style={{
-        left: win.x,
-        top: win.y,
-        width: win.w,
-        height: win.h,
+        // Maximized fills .desktop-area (which already ends above the
+        // taskbar) in CSS terms, so a browser resize keeps it filling
+        // without touching the stored geometry it restores to.
+        ...(win.maximized
+          ? { left: 0, top: 0, width: '100%', height: '100%' }
+          : { left: win.x, top: win.y, width: win.w, height: win.h }),
         zIndex: win.z,
         ...tintStyle,
       }}
       onMouseDown={() => onFocus(win.id)}
     >
-      <div className="window-titlebar" onMouseDown={onTitleMouseDown}>
+      <div className="window-titlebar" onMouseDown={onTitleMouseDown} onDoubleClick={onTitleDoubleClick}>
         <div className="window-controls">
           <button
             type="button"
@@ -192,8 +239,11 @@ export function Window({
           <button
             type="button"
             className="window-btn max"
-            title="Maximize (TODO)"
-            onClick={(e) => e.stopPropagation()}
+            title={win.maximized ? 'Restore' : 'Maximize'}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleMaximize(win.id);
+            }}
           />
         </div>
         <div className="window-title">
@@ -205,7 +255,7 @@ export function Window({
       </div>
       <div className="window-body">
         {children}
-        <div className="window-resize" onMouseDown={onResizeMouseDown} />
+        {!win.maximized && <div className="window-resize" onMouseDown={onResizeMouseDown} />}
       </div>
     </div>
   );

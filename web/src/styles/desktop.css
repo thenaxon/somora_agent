@@ -261,6 +261,10 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .window.minimized {
   display: none;
 }
+.window.maximized {
+  border-radius: 0;
+  border-color: transparent;
+}
 .window-titlebar {
   height: 36px;
   display: flex;

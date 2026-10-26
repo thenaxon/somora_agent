@@ -139,6 +139,10 @@ export function useWindowManager() {
     setWindows((ws) => ws.map((w) => (w.id === id ? { ...w, minimized: true } : w)));
   }, []);
 
+  const toggleMaximize = useCallback((id: string) => {
+    setWindows((ws) => ws.map((w) => (w.id === id ? { ...w, maximized: !w.maximized } : w)));
+  }, []);
+
   const move = useCallback((id: string, x: number, y: number) => {
     setWindows((ws) => ws.map((w) => (w.id === id ? { ...w, x, y } : w)));
   }, []);
@@ -706,7 +710,9 @@ export function useWindowManager() {
       const byId = new Map(order.map((w, i) => [w.id, slots[i] as Rect]));
       return ws.map((w) => {
         const slot = byId.get(w.id);
-        return slot ? { ...w, ...slot } : w;
+        // An arranged window takes its slot — a maximized one would
+        // otherwise keep covering the desktop and hide the new layout.
+        return slot ? { ...w, ...slot, maximized: false } : w;
       });
     });
   }, []);
@@ -744,6 +750,7 @@ export function useWindowManager() {
     focus,
     close,
     minimize,
+    toggleMaximize,
     move,
     resize,
     autoArrange,

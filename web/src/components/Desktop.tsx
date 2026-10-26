@@ -361,6 +361,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
                 agentColor={color}
@@ -392,6 +393,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -408,6 +410,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -424,6 +427,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -440,6 +444,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -456,6 +461,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -472,6 +478,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -488,6 +495,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -504,6 +512,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -520,6 +529,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -536,6 +546,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -564,6 +575,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -580,6 +592,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -599,6 +612,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -615,6 +629,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -631,6 +646,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
@@ -647,6 +663,7 @@ export function Desktop() {
                 onFocus={wm.focus}
                 onClose={wm.close}
                 onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
                 onMove={wm.move}
                 onResize={wm.resize}
               >
