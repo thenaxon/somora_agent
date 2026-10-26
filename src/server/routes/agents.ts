@@ -16,6 +16,8 @@ import { listAgents, loadPersona } from '../../persona/loader.ts';
 import { resolveSessionId, sessionMetaStore } from '../../storage/sessions.ts';
 import { logger } from '../logger.ts';
 import { config } from '../server-state.ts';
+import { planCatalog } from '../../engine/openai-tool-catalog.ts';
+import { turnAlwaysVisible, turnCatalogSettings } from '../turn-tool-catalog.ts';
 
 export interface AgentRoutesDeps {
   readonly nextTurnPrompt: typeof Server.nextTurnPrompt;
@@ -201,18 +203,45 @@ export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void
     const session = await resolveSessionId(agent, sessionRef);
     if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
     const sessionMeta = await sessionMetaStore.get(agent, session);
-    const { assembled, available } = await routeDeps.nextTurnPrompt(agent, session, persona, sessionMeta);
-    const toolSchemaChars = available.reduce(
-      (n, t) => n + JSON.stringify({ name: t.name, description: t.description, parameters: t.jsonSchema }).length,
-      0,
-    );
+    const { assembled, available, previewModel } = await routeDeps.nextTurnPrompt(agent, session, persona, sessionMeta);
+    const schemaChars = (list: readonly { name: string; description: string; jsonSchema: unknown }[]) =>
+      list.reduce((n, t) => n + JSON.stringify({ name: t.name, description: t.description, parameters: t.jsonSchema }).length, 0);
+    const toolSchemaChars = schemaChars(available);
+    // What the openai-compatible engine would actually send: in catalog
+    // mode the always-visible tools plus tool_search/tool_call, and the
+    // rest by name at the end of the system prompt.
+    const plan =
+      previewModel && previewModel.provider.engine === 'openai-compatible'
+        ? planCatalog({
+            offered: available,
+            direct: turnAlwaysVisible({ config, agent, kind: persona.kind, offered: available.map((t) => t.name) })(previewModel),
+            settings: turnCatalogSettings({ config, kind: persona.kind })(previewModel),
+          })
+        : null;
     return c.json({
       agent,
       session,
       text: assembled.text,
       chars: assembled.text.length,
       parts: assembled.parts.map((p) => ({ key: p.key, label: p.label, chars: p.text.length })),
-      tools: { count: available.length, schemaChars: toolSchemaChars, names: available.map((t) => t.name) },
+      tools: {
+        count: available.length,
+        schemaChars: toolSchemaChars,
+        names: available.map((t) => t.name),
+        ...(previewModel?.provider.engine === 'openai-compatible'
+          ? {
+              catalog: plan
+                ? {
+                    mode: 'catalog',
+                    direct: plan.direct.length,
+                    deferred: plan.deferred.length,
+                    sentSchemaChars: schemaChars(plan.direct) + JSON.stringify(plan.metaTools).length,
+                    listingChars: plan.listing.length + 2,
+                  }
+                : { mode: 'all', direct: available.length, deferred: 0, sentSchemaChars: toolSchemaChars, listingChars: 0 },
+            }
+          : {}),
+      },
       budgets: config.promptBudgets,
       notIncluded: [
         'tool schemas (sent on the API tool channel; counted above, engines load them direct or deferred)',

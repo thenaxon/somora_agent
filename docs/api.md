@@ -1435,6 +1435,7 @@ and nothing is changed.
 |---|---|
 | `parts` | The pieces of `text` in prompt order: self-pointer, persona, team, tool reminder, wiki overview, skills, session, project. |
 | `tools` | The tools this agent would see on that session's model, and the size of their schemas. They travel beside the prompt, not in `text`. |
+| `tools.catalog` | `openai-compatible` only: what the request carries. `{mode, direct, deferred, sentSchemaChars, listingChars}`. In mode `catalog`, `direct` tools go with their schemas plus `tool_search` and `tool_call` (`sentSchemaChars`), and the `deferred` ones are named at the end of the system prompt (`listingChars`, not part of `text`). |
 | `budgets` | `promptBudgets` from the config. |
 | `notIncluded` | What a turn sends in addition. |
 

@@ -473,9 +473,38 @@ tools join it: `dream_list`, `dream_get`, `dream_apply`,
 `dream_dismiss`, `dream_review` and `wiki_edit`. A builder's whole
 tool set is in the list, because it is small.
 
-`grok-cli` always finds tools through its own search, and
-`openai-compatible` models get every tool directly. The list is
+`grok-cli` always finds tools through its own search. The list is
 `toolCatalog` in `config.yaml`, see Settings.
+
+### Found on demand on `openai-compatible`
+
+By default an `openai-compatible` model gets every tool with its full
+description on every request. An agent with external MCP servers can
+send 80 tools that way, often more text than the rest of its prompt.
+`mode: catalog` (per engine or per model) sends the list above instead,
+plus two tools of somora's own:
+
+| Tool | What it does |
+|---|---|
+| `tool_search` | Finds tools by English keywords (`queries`), or returns the full description of named ones (`names`). Each hit gives the name, one line and a short form of its input. |
+| `tool_call` | Runs one of the other tools: `{name, arguments}`. A wrong field is named, with the closest real ones. |
+
+The other tools are named at the end of the system prompt, one line
+each, external MCP servers in their own group. Over
+`toolCatalog.search.listingMaxChars` the lines shrink, then only the
+names stay. A model may also call such a tool directly by its exact
+name; somora runs it all the same.
+
+The tool list and the system prompt stay the same in every round of a
+turn and between turns, so a backend's prompt cache keeps working: a
+tool found by search is run through `tool_call`, never added to the
+list. The chat shows the tool that ran, under its own name, not
+`tool_call`. Three identical failing searches or calls end the tool
+use of the turn with an answer.
+
+Only offered tools are listed, found or run, in either mode: a tool
+switched off for the agent is refused by name. A builder always gets
+all of its tools.
 
 ## Results, limits and timeouts
 
@@ -541,6 +570,9 @@ Settings that shape how tools run:
 | `toolCatalog.alwaysVisible` | the list above | Tools kept in the model's list on `claude-cli` and `codex-cli` instead of behind the tool search. Takes effect on the next turn. |
 | `toolCatalog.engines` | none | Per engine, `add` and `remove` lists on top of it, for example `codex-cli: {add: [sentinel]}`. |
 | `toolCatalog.models` | none | The same per model alias or `<provider>/<modelId>`, for example more tools for a model that searches poorly. |
+| `toolCatalog.engines.openai-compatible.mode` | `all` | `catalog` sends the list above plus `tool_search` and `tool_call` instead of every tool. A model's `mode` under `toolCatalog.models` wins over its engine's. |
+| `toolCatalog.search.listingMaxChars` | `8000` | Length limit of the list of the other tools at the end of the system prompt. |
+| `toolCatalog.search.defaultResults` / `maxResults` | `5` / `20` | Hits per `tool_search` query, and the most a model may ask for. |
 | `codexCli.directTools` | unset | Old form of the list for `codex-cli` only. When set it replaces `toolCatalog.alwaysVisible` there, and the server log says so once. |
 
 Per agent, in `agent.yaml`:

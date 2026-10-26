@@ -65,7 +65,11 @@ export const REVIEW_LOOP_TOOLS: readonly string[] = [
 export interface ToolListPatch {
   add?: readonly string[];
   remove?: readonly string[];
+  /** openai-compatible: send every schema (`all`) or the catalog (`catalog`). */
+  mode?: 'all' | 'catalog';
 }
+
+export type CatalogMode = 'all' | 'catalog';
 
 /** config.yaml `toolCatalog`. */
 export interface ToolCatalogConfig {
@@ -74,6 +78,7 @@ export interface ToolCatalogConfig {
   engines?: Readonly<Record<string, ToolListPatch>>;
   /** Keyed by model alias or `<provider>/<modelId>`. */
   models?: Readonly<Record<string, ToolListPatch>>;
+  search?: { listingMaxChars: number; defaultResults: number; maxResults: number };
 }
 
 export interface AlwaysVisibleOptions {
@@ -112,4 +117,22 @@ export function alwaysVisibleTools(offered: readonly string[], opts: AlwaysVisib
   if (opts.engine) applyPatch(wanted, opts.catalog?.engines?.[opts.engine]);
   for (const ref of opts.modelRefs ?? []) applyPatch(wanted, opts.catalog?.models?.[ref]);
   return offered.filter((n) => wanted.has(n));
+}
+
+/**
+ * How the openai-compatible engine sends this turn's tools: `all`
+ * (every schema, the default) or `catalog` (the always-visible list
+ * plus tool_search/tool_call, the rest named at the end of the system
+ * prompt). A model's setting wins over its engine's; a builder always
+ * gets `all` — its whole set is direct anyway.
+ */
+export function catalogMode(
+  opts: Pick<AlwaysVisibleOptions, 'kind' | 'engine' | 'modelRefs' | 'catalog'>,
+): CatalogMode {
+  if (opts.kind === 'builder' || opts.engine !== 'openai-compatible') return 'all';
+  for (const ref of opts.modelRefs ?? []) {
+    const m = opts.catalog?.models?.[ref]?.mode;
+    if (m) return m;
+  }
+  return opts.catalog?.engines?.[opts.engine]?.mode ?? 'all';
 }

@@ -124,6 +124,19 @@ export interface TurnInput {
    */
   alwaysVisibleTools?: (model: ResolvedModel) => readonly string[];
   /**
+   * openai-compatible: send every tool's schema (`all`, the default) or
+   * the catalog — the always-visible tools plus tool_search/tool_call,
+   * the rest named at the end of the system prompt
+   * (src/engine/openai-tool-catalog.ts). Asked with the model that
+   * answers, like alwaysVisibleTools. Left out: `all`.
+   */
+  toolCatalogSettings?: (model: ResolvedModel) => {
+    mode: 'all' | 'catalog';
+    listingMaxChars: number;
+    defaultResults: number;
+    maxResults: number;
+  };
+  /**
    * Steering: messages sent to this session while the turn runs. An
    * engine that supports it calls `drain()` at each step boundary
    * (before the next model call), feeds every message to the model as

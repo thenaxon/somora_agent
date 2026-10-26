@@ -777,7 +777,7 @@ export async function nextTurnPrompt(
     toolNames: available.map((t) => t.name),
     persistWikiSnapshot: false,
   });
-  return { assembled, available };
+  return { assembled, available, previewModel };
 }
 
 registerTeamRoutes(app);

@@ -808,16 +808,36 @@ const ToolListPatchSchema = z
   .object({
     add: z.array(z.string().min(1)).optional(),
     remove: z.array(z.string().min(1)).optional(),
+    /** openai-compatible only: `all` sends every tool's schema (the
+     *  default), `catalog` sends the list above plus tool_search and
+     *  tool_call, the rest by name at the end of the system prompt. A
+     *  model's value wins over its engine's. */
+    mode: z.enum(['all', 'catalog']).optional(),
   })
   .strict();
+
+/** Catalog mode (openai-compatible): the listing of the tools that are
+ *  not sent in full, and tool_search's result counts. */
+const ToolSearchSettingsSchema = z
+  .object({
+    /** Cap for the listing at the end of the system prompt. Over it,
+     *  descriptions shrink, then only names stay. */
+    listingMaxChars: z.number().int().min(500).max(100_000).default(8000),
+    defaultResults: z.number().int().min(1).max(50).default(5),
+    maxResults: z.number().int().min(1).max(50).default(20),
+  })
+  .strict()
+  .default({ listingMaxChars: 8000, defaultResults: 5, maxResults: 20 });
 
 /**
  * Which somora tools sit in the model's direct list instead of behind
  * the engine's tool search (src/tools/catalog.ts). claude-cli marks
  * them alwaysLoad, codex-cli leaves only them undeferred; grok-cli
- * cannot (it offers search_tool/use_tool) and openai-compatible sees
- * every tool. Always cut to the tools a turn offers: a tool the agent
- * may not use never shows up. A builder's whole (small) set is direct.
+ * cannot (it offers search_tool/use_tool). openai-compatible sees every
+ * tool unless `mode: catalog` is set for it or for a model (then the
+ * rest is found with tool_search and run with tool_call). Always cut to
+ * the tools a turn offers: a tool the agent may not use never shows up.
+ * A builder's whole (small) set is direct.
  */
 export const ToolCatalogConfigSchema = z
   .object({
@@ -826,9 +846,15 @@ export const ToolCatalogConfigSchema = z
     engines: z.record(z.string(), ToolListPatchSchema).default({}),
     /** Per model alias or `<provider>/<modelId>` — e.g. more direct tools for a weak model. */
     models: z.record(z.string(), ToolListPatchSchema).default({}),
+    search: ToolSearchSettingsSchema,
   })
   .strict()
-  .default({ alwaysVisible: [...DEFAULT_ALWAYS_VISIBLE], engines: {}, models: {} });
+  .default({
+    alwaysVisible: [...DEFAULT_ALWAYS_VISIBLE],
+    engines: {},
+    models: {},
+    search: { listingMaxChars: 8000, defaultResults: 5, maxResults: 20 },
+  });
 export type ToolCatalogSettings = z.infer<typeof ToolCatalogConfigSchema>;
 
 // Workspace — default cwd for the file_* tools. NOT a sandbox: agents

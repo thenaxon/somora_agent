@@ -6,7 +6,7 @@
 
 import type { Config, ResolvedModel } from '../config/types.ts';
 import { isLoopHolder } from '../dream/loop-state.ts';
-import { alwaysVisibleTools } from '../tools/catalog.ts';
+import { alwaysVisibleTools, catalogMode, type CatalogMode } from '../tools/catalog.ts';
 import { logger } from './logger.ts';
 
 let legacyLogged = false;
@@ -26,7 +26,7 @@ export function turnAlwaysVisible(args: {
     });
   }
   const inReviewLoop = isLoopHolder(args.agent);
-  return (model) =>
+  return (model: ResolvedModel) =>
     alwaysVisibleTools(args.offered, {
       kind: args.kind ?? 'chat',
       inReviewLoop,
@@ -35,4 +35,31 @@ export function turnAlwaysVisible(args: {
       catalog: args.config.toolCatalog,
       ...(legacy ? { legacyCodexDirect: legacy } : {}),
     });
+}
+
+/** Catalog mode and search settings for the openai-compatible engine. */
+export interface ToolCatalogSettingsForTurn {
+  mode: CatalogMode;
+  listingMaxChars: number;
+  defaultResults: number;
+  maxResults: number;
+}
+
+const SEARCH_DEFAULTS = { listingMaxChars: 8000, defaultResults: 5, maxResults: 20 };
+
+/** The same model-follows logic as turnAlwaysVisible, for the mode. */
+export function turnCatalogSettings(args: {
+  config: Pick<Config, 'toolCatalog'>;
+  kind: 'chat' | 'builder' | undefined;
+}): (model: ResolvedModel) => ToolCatalogSettingsForTurn {
+  return (model) => ({
+    mode: catalogMode({
+      kind: args.kind ?? 'chat',
+      engine: model.provider.engine,
+      modelRefs: [`${model.providerName}/${model.modelId}`, ...(model.model.alias ? [model.model.alias] : [])],
+      catalog: args.config.toolCatalog,
+    }),
+    ...SEARCH_DEFAULTS,
+    ...(args.config.toolCatalog?.search ?? {}),
+  });
 }

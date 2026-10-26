@@ -283,6 +283,10 @@ export type NormalizedEvent =
        *  this call (first call of a round only), so a rebuilt history
        *  puts it where it was said instead of after all the work. */
       lead?: string;
+      /** openai-compatible catalog mode: how a tool outside the model's
+       *  tool list was run — through tool_call, or called directly by its
+       *  name (hydrated). `tool` and `input` are the real tool's. */
+      via?: 'tool_call' | 'hydrated';
     }
   | { kind: 'tool_result'; ts: number; engine: string; callId: string; output: unknown; error?: string }
   // Engine-internal metadata that the agent emits as a side-channel to

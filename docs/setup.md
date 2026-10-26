@@ -706,7 +706,7 @@ not watched: they run outside the chat.
 | `claudeCli.sharedUserCredentials` | `true` | Keep the Claude login in sync with `~/.claude`. |
 | `codexCli.toolTimeoutSec` | `1800` | Longest tool call on the Codex engine, in seconds. |
 | `codexCli.shellEnvironmentPolicy` | `inherit-all` | What Codex's own shell inherits from the server's environment. `core-only` passes only the basics. |
-| `toolCatalog` | the everyday core tools | somora tools kept in the model's list on every turn on `claude-cli` and `codex-cli`. The rest is found through tool search. See docs/tools.md. |
+| `toolCatalog` | the everyday core tools | somora tools kept in the model's list on every turn on `claude-cli` and `codex-cli`, and on `openai-compatible` with `mode: catalog`. The rest is found through tool search. See docs/tools.md. |
 
 ### Sections with their own page
 

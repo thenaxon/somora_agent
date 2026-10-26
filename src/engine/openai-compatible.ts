@@ -48,6 +48,8 @@ import { openAiReasoningState, withReasoningRetry } from './reasoning-retry.ts';
 import { formatSampling, isSamplingParamError, samplingBody } from './sampling.ts';
 import { insideOpenThink, splitInlineThink } from './inline-think.ts';
 import { imageOriginalNotes } from '../multimodal/attachment-note.ts';
+import { DEFAULT_ALWAYS_VISIBLE } from '../tools/catalog.ts';
+import { explainInvalidInput, planCatalog, routeCall, runToolSearch, TOOL_CALL, TOOL_SEARCH } from './openai-tool-catalog.ts';
 
 const ENGINE = 'openai-compatible';
 
@@ -788,6 +790,22 @@ export const openAiCompatibleEngine: AgentEngine = {
     /** The trigger this turn was measured against, for that check. */
     let compactionTrigger = Number.POSITIVE_INFINITY;
 
+    // The turn's tools. Catalog mode (toolCatalog: mode catalog for this
+    // engine or model) sends the always-visible list plus tool_search
+    // and tool_call, and names the rest at the end of the system prompt
+    // (src/engine/openai-tool-catalog.ts); mode `all` sends every schema
+    // exactly as before.
+    const tools = input.tools;
+    const toolList = tools ? tools.list() : [];
+    const catalogPlan = planCatalog({
+      offered: toolList,
+      direct: input.alwaysVisibleTools?.(resolvedModel) ?? DEFAULT_ALWAYS_VISIBLE,
+      settings: input.toolCatalogSettings?.(resolvedModel),
+    });
+    // The listing is part of the system prompt, so the compaction check
+    // and every rebuild see the same bytes the request carries.
+    const systemPromptForTurn = catalogPlan ? `${input.systemPrompt}\n\n${catalogPlan.listing}` : input.systemPrompt;
+
     let meta = (await metaStore.get(agent, session)) as OpenAiCompatibleMeta;
     let compactions = meta.compactions;
 
@@ -804,7 +822,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       tokenRatio = meta.tokenRatio.ratio;
     }
     const decision = shouldCompact({
-      systemPrompt,
+      systemPrompt: systemPromptForTurn,
       history,
       compactions,
       contextWindow: resolvedModel.model.contextWindow,
@@ -936,8 +954,8 @@ export const openAiCompatibleEngine: AgentEngine = {
     const useLegacySystemConcat = memoryInjectMode === 'system';
     const effectiveSystemPrompt =
       useLegacySystemConcat && ephemeralContext
-        ? `${systemPrompt}\n\n---\n\n${ephemeralContext}`
-        : systemPrompt;
+        ? `${systemPromptForTurn}\n\n---\n\n${ephemeralContext}`
+        : systemPromptForTurn;
     const pdfMode =
       (resolvedModel.provider as { pdfMode?: 'native' | 'rasterize' }).pdfMode ?? 'rasterize';
     const messages = await buildMessages(
@@ -1013,15 +1031,25 @@ export const openAiCompatibleEngine: AgentEngine = {
     let reasoningOnlyNudges = 0;
     let lastTodoRound = 1;
 
-    const tools = input.tools;
-    const toolList = tools ? tools.list() : [];
     // An EMPTY array is not "no tools" to a backend: LiteLLM answers
     // `400 "tools must not be an empty array. Either provide at least one
     // tool or omit the field entirely"`. An agent with every tool denied
     // hit that on every single turn (found while testing 2026-09-10).
-    const advertised: ChatTool[] | undefined = tools ? toOpenAiTools(toolList) : undefined;
+    // Catalog mode: the same array for every round of the turn — a tool
+    // found by tool_search runs through tool_call, it never joins the
+    // array (that would throw away the backend's prefix cache).
+    const advertised: ChatTool[] | undefined = tools
+      ? catalogPlan
+        ? [...toOpenAiTools(catalogPlan.direct), ...catalogPlan.metaTools]
+        : toOpenAiTools(toolList)
+      : undefined;
     const openAiTools: ChatTool[] | undefined = advertised && advertised.length > 0 ? advertised : undefined;
     const toolByName = new Map(toolList.map((t) => [t.name, t]));
+    const offeredNames: ReadonlySet<string> = new Set(toolByName.keys());
+    /** Failing tool_search / tool_call / unknown-name calls by exact
+     *  call text: the third identical failure ends the turn's tool use. */
+    const metaFailures = new Map<string, number>();
+    let hitMetaLoop = false;
     if (preTurnCompaction) {
       // Before and after on the gauge's scale: the whole request with
       // its tool schemas, not the compacted slice (Compaction.tokensBefore
@@ -1078,6 +1106,9 @@ export const openAiCompatibleEngine: AgentEngine = {
         estimatedTokens: estTokens,
         compactionsApplied: compactions?.length ?? 0,
         toolsAdvertised: openAiTools?.length ?? 0,
+        ...(catalogPlan
+          ? { toolCatalog: { direct: catalogPlan.direct.length, deferred: catalogPlan.deferred.length, listingChars: catalogPlan.listing.length } }
+          : {}),
       });
 
       // Cross-engine thinking knob → OpenAI's `reasoning_effort` body param
@@ -1906,15 +1937,25 @@ export const openAiCompatibleEngine: AgentEngine = {
         }
         let leadPending = roundContent;
         for (const { call, args: parsedArgs, fault, why } of calls) {
+          // Which tool really runs: tool_call unwraps to it, a deferred
+          // name called directly runs as is (hydrated), a name the turn
+          // does not offer is refused. The record shows the REAL tool and
+          // its arguments, so the chat and a rebuilt history read like a
+          // direct call; only the model's own messages of this turn keep
+          // the tool_call wrapper it wrote.
+          const route = fault ? null : routeCall(catalogPlan, offeredNames, call.function.name, parsedArgs);
+          const runName = route?.kind === 'run' ? route.name : call.function.name;
+          const runArgs = route?.kind === 'run' ? route.args : parsedArgs;
           yield {
             kind: 'tool_call',
             ts: ts(),
             engine: ENGINE,
             callId: call.id,
-            tool: call.function.name,
+            tool: runName,
             // The fragment is kept HERE, in the session record, because it
             // is the evidence of what went wrong. It never reaches the wire.
-            input: parsedArgs,
+            input: runArgs,
+            ...(route?.kind === 'run' && route.via ? { via: route.via } : {}),
             // What the model said in this reply, stored once per round so
             // a rebuilt history keeps it next to its calls.
             ...(leadPending ? { lead: leadPending } : {}),
@@ -1952,6 +1993,49 @@ export const openAiCompatibleEngine: AgentEngine = {
             } as ChatMessage);
             continue;
           }
+          if (route && route.kind !== 'run') {
+            const answered =
+              route.kind === 'search'
+                ? runToolSearch(catalogPlan!, toolList, parsedArgs)
+                : ({ ok: false, error: route.error } as const);
+            if (!answered.ok) {
+              const sig = `${call.function.name}:${call.function.arguments}`;
+              const n = (metaFailures.get(sig) ?? 0) + 1;
+              metaFailures.set(sig, n);
+              if (n >= 3) hitMetaLoop = true;
+            }
+            logger.info({
+              msg: route.kind === 'search' ? 'engine.tool_search' : 'engine.tool_call_refused',
+              engine: ENGINE,
+              agent,
+              session,
+              tool: call.function.name,
+              ...(route.kind === 'search' ? { args: parsedArgs } : { error: route.error }),
+            });
+            yield {
+              kind: 'tool_result',
+              ts: ts(),
+              engine: ENGINE,
+              callId: call.id,
+              output: answered.ok ? answered.data : null,
+              ...(answered.ok ? {} : { error: answered.error }),
+            };
+            loopMessages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              content: answered.ok ? JSON.stringify(answered.data) : answered.error,
+            } as ChatMessage);
+            continue;
+          }
+          if (route?.via) {
+            logger.info({
+              msg: route.via === 'hydrated' ? 'engine.tool_hydrated' : 'engine.tool_via_tool_call',
+              engine: ENGINE,
+              agent,
+              session,
+              tool: runName,
+            });
+          }
           // Resolve the per-call timeout. Tools that declare themselves
           // long-running (subagent_result with wait_until_done, agent_ask,
           // exec, etc.) override the global cap via timeoutFromInput
@@ -1960,8 +2044,8 @@ export const openAiCompatibleEngine: AgentEngine = {
           // pin a slot indefinitely. Pattern adapted from OpenClaw's
           // waitForAgentRun — engine itself has no fixed cap, the caller
           // declares the budget.
-          const toolDef = toolByName.get(call.function.name);
-          const dynamicTimeout = toolDef?.timeoutFromInput?.(parsedArgs as never);
+          const toolDef = toolByName.get(runName);
+          const dynamicTimeout = toolDef?.timeoutFromInput?.(runArgs as never);
           const staticTimeout = toolDef?.defaultTimeoutMs;
           const hardCap = toolDef?.maxTimeoutMs;
           let toolTimeoutMs = dynamicTimeout ?? staticTimeout ?? globalToolTimeoutMs;
@@ -1970,19 +2054,32 @@ export const openAiCompatibleEngine: AgentEngine = {
           // Timeout → error-shaped result the model can retry against.
           // Abort → AbortError so the turn ends without waiting out the
           // full tool budget (stop-button felt broken during long exec).
-          if (call.function.name === 'todo_write') lastTodoRound = round;
-          const result = await raceToolInvoke(tools.invoke(call.function.name, parsedArgs), {
+          if (runName === 'todo_write') lastTodoRound = round;
+          const invoked = await raceToolInvoke(tools.invoke(runName, runArgs), {
             timeoutMs: toolTimeoutMs,
             signal: effectiveSignal,
             timeoutResult: {
               ok: false as const,
               error:
-                `tool '${call.function.name}' timed out after ${toolTimeoutMs}ms` +
+                `tool '${runName}' timed out after ${toolTimeoutMs}ms` +
                 (dynamicTimeout !== undefined
                   ? ` — call again with a higher timeout_ms if more time is needed`
                   : ''),
             },
           });
+          // Catalog mode: a refused input names the closest real fields
+          // (the model saw only the compact signature), and the third
+          // identical failing tool_call ends the turn's tool use.
+          const result =
+            catalogPlan && !invoked.ok && invoked.error?.startsWith('invalid input for ')
+              ? { ...invoked, error: explainInvalidInput(invoked.error, toolDef) }
+              : invoked;
+          if (catalogPlan && !result.ok && route?.via === 'tool_call') {
+            const sig = `${call.function.name}:${call.function.arguments}`;
+            const n = (metaFailures.get(sig) ?? 0) + 1;
+            metaFailures.set(sig, n);
+            if (n >= 3) hitMetaLoop = true;
+          }
           // Multimodal results (file_read polymorph on image/PDF) carry
           // contentBlocks instead of a JSON-able payload. OpenAI's API
           // accepts a content-array in tool messages with text and
@@ -2046,6 +2143,11 @@ export const openAiCompatibleEngine: AgentEngine = {
               content: outputText,
             } as ChatMessage);
           }
+        }
+
+        if (hitMetaLoop) {
+          logger.warn({ msg: 'engine.tool_meta_loop_stop', engine: ENGINE, agent, session, round });
+          break;
         }
 
         // Total-tool-call budget. Bounds within-round fan-out that the
@@ -2160,18 +2262,20 @@ export const openAiCompatibleEngine: AgentEngine = {
       // accumulated text and force the same clean no-tools finish.
       const scaffoldLeak =
         sawScaffoldLeak || containsScaffold(cumulative) || looksRepetitive(cumulative);
-      const forcedByCap = (round >= maxRounds && lastRoundHadTools) || hitToolBudget || hitTimeCap || hitDoomLoop;
+      const forcedByCap = (round >= maxRounds && lastRoundHadTools) || hitToolBudget || hitTimeCap || hitDoomLoop || hitMetaLoop;
       if (forcedByCap || scaffoldLeak) {
         cumulative = '';
         forcedFinalReason = scaffoldLeak
           ? 'scaffold_leak'
-          : hitDoomLoop
-            ? 'doom_loop'
-            : hitTimeCap
-              ? 'time_cap'
-              : hitToolBudget
-                ? 'tool_budget'
-                : 'round_cap';
+          : hitMetaLoop
+            ? 'tool_search_loop'
+            : hitDoomLoop
+              ? 'doom_loop'
+              : hitTimeCap
+                ? 'time_cap'
+                : hitToolBudget
+                  ? 'tool_budget'
+                  : 'round_cap';
         logger.warn({
           msg: 'engine.force_final_answer',
           engine: ENGINE,
@@ -2184,13 +2288,15 @@ export const openAiCompatibleEngine: AgentEngine = {
         // "maximum number of tool-call rounds (maxRounds)" even when the
         // TOOL-CALL BUDGET fired (2026-09-04: "cap of 50" reported on
         // sessions with 30 calls — a diagnosis detour).
-        const capDescription = hitDoomLoop
-          ? 'a loop: the same tool call(s) with the same arguments five times in a row'
-          : hitTimeCap
-            ? `the time cap of ${Math.round((maxTurnMs ?? 0) / 60_000)} minutes for this turn (agentLoop.maxTurnMs)`
-            : hitToolBudget
-              ? `the tool-call budget of ${maxToolCallsPerTurn} calls for this turn (agentLoop.maxToolCallsPerTurn)`
-              : `the agent-loop cap of ${maxRounds} tool-call rounds for this turn (agentLoop.maxRounds)`;
+        const capDescription = hitMetaLoop
+          ? 'a loop: the same tool search or tool call failed three times'
+          : hitDoomLoop
+            ? 'a loop: the same tool call(s) with the same arguments five times in a row'
+            : hitTimeCap
+              ? `the time cap of ${Math.round((maxTurnMs ?? 0) / 60_000)} minutes for this turn (agentLoop.maxTurnMs)`
+              : hitToolBudget
+                ? `the tool-call budget of ${maxToolCallsPerTurn} calls for this turn (agentLoop.maxToolCallsPerTurn)`
+                : `the agent-loop cap of ${maxRounds} tool-call rounds for this turn (agentLoop.maxRounds)`;
         // USER role, not a trailing `system` entry: strict chat templates
         // (vLLM + Qwen 3.x behind LiteLLM) reject any system message
         // after index 0 with 400 "System message must be at the

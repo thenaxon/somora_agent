@@ -466,6 +466,13 @@ come first. The [thinking guide](thinking.md) lists the order.
   sampling and says so in the chat.
 - **Estimated reasoning count.** A server that streams reasoning but
   reports no `reasoning_tokens` gets an estimated 🧠 count with a tilde.
+- **Every tool, or a catalog.** By default the model gets every tool
+  with its full description on each request. `toolCatalog` with
+  `mode: catalog` (for the engine or for one model) sends the everyday
+  tools plus `tool_search` and `tool_call` and names the rest at the end
+  of the system prompt. Rows then show the tool that ran, not
+  `tool_call`. See docs/tools.md, "Found on demand on
+  `openai-compatible`".
 
 ### Which engines can be workers
 
@@ -633,7 +640,7 @@ not in `user`.
 | `fallback` | unset | `agent.yaml` | One model or an ordered list. Used on every engine when the model fails before it wrote text or ran a tool. |
 | `fallback.retryUnavailableMinutes` | 60 | `config.yaml` | A model that was unreachable is skipped for this many minutes. |
 | `compaction.triggerRatio` | 0.8 | `config.yaml` | Share of the window at which somora compacts. `openai-compatible` only. |
-| `toolCatalog` | the everyday core tools | `config.yaml` | somora tools in the model's direct list on `claude-cli` and `codex-cli`. Takes effect on the next turn. |
+| `toolCatalog` | the everyday core tools | `config.yaml` | somora tools in the model's direct list on `claude-cli` and `codex-cli`, and on `openai-compatible` with `mode: catalog`. Takes effect on the next turn. |
 
 ## Minimum versions
 
