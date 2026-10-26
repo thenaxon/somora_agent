@@ -156,8 +156,8 @@ export function renderBuilderSessionBlock(state: BuilderSessionState | null, opt
   if (opts.projectFolder === false) {
     lines.push(
       state.mode === 'attended'
-        ? '- No project folder is pinned to this session: the working directory above is the general workspace. Before building, find out which repository or folder the work belongs to — ask the person, or create the project with project_create (give it `workdir`) and pin it with project_focus; a pinned project makes its folder the working directory.'
-        : '- No project folder is pinned to this session: the working directory above is the general workspace. Do not build there. Report that no project folder was given and stop.',
+        ? '- No project is pinned to this session, so you may not build yet — not in the general workspace and not in a folder the order names: building always happens in a pinned project. Ask the person which project the work belongs to, or create it with project_create (give it `workdir`, e.g. the folder the order names) and pin it with project_focus; the pinned project\'s folder becomes the working directory.'
+        : '- No project is pinned to this session, so do not build — not in the general workspace and not in a folder the order names: building always happens in a pinned project. Write no files. Report that the order needs a pinned project and stop.',
     );
   }
   if (state.mode === 'attended') {

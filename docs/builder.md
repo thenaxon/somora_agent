@@ -196,10 +196,12 @@ one working copy would overwrite each other's files.
 A builder works where its session points: the `workdir` of the pinned
 project, else the agent's workspace.
 
-Without a pinned project folder, an attended builder is told to ask for
-the repository, or to create and pin the project itself with
+A builder builds only in a pinned project. A folder named in the order
+is not enough. Without a pin, an attended builder is told to ask which
+project the work belongs to, or to create and pin it itself with
 `project_create` (with `workdir`) and `project_focus`. An unattended
-one is told to report that no project folder was given and to stop.
+one writes nothing, reports that the order needs a pinned project and
+stops.
 
 The pin holds while the builder works. Unpinning or switching the
 project during a running builder turn is refused. A first pin is
