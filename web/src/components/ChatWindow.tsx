@@ -1546,7 +1546,7 @@ export function ChatWindow({
             <div>
               <div className="chat-msg-bubble" style={{ color: 'var(--text-2)' }}>
                 <span style={{ animation: 'somora-cursor-blink 1.2s infinite' }}>
-                  {agent.name} denkt nach…
+                  {agent.name} is thinking…
                 </span>
               </div>
             </div>

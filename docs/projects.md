@@ -37,7 +37,7 @@ projects:
 Restart somora:
 
 ```bash
-somora restart
+somora server restart
 ```
 
 On Linux `systemctl --user restart somora` does the same. Then tell the

@@ -18,7 +18,7 @@ somora, see [External agents](external-agents.md).
 - **Your agent in the editor.** Text and thinking stream in, and every
   tool call shows with its result.
 - **Sessions.** A new conversation in the editor is a new somora
-  session named `acp-<date>-<time>`. The editor can list the agent's
+  session named `acp-<date>-<time>-<tail>`. The editor can list the agent's
   sessions and open earlier ones, with their history replayed.
 - **A builder's plan.** When a builder agent updates its task list, the
   editor shows it as the plan.
@@ -29,6 +29,9 @@ somora, see [External agents](external-agents.md).
   taken out of the queue, and the other turn keeps running.
 - **Images.** Images you add in the editor reach the agent as
   attachments.
+- **Questions.** A chat agent's question does not wait. It appears in
+  the reply as text with its options, and your next message answers
+  it.
 - **The context fill**, when the agent's model reports it.
 
 ## Try it
@@ -45,7 +48,7 @@ the protocol.
 
 | Option | Meaning |
 |---|---|
-| `--agent <name>` | The somora agent to talk to. Default: the first agent by name. |
+| `--agent <name>` | The somora agent to talk to. Default: the first somora agent by name (external agents are skipped). |
 | `--session <name>` | Every new conversation in the editor opens this session (for example `main`) instead of a new one. |
 
 ## Zed

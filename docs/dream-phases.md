@@ -58,7 +58,7 @@ client. It covers the whole chain:
 | Deep takes its notes into the wiki | yes | no |
 | Dream tools (`dream_list`, `dream_apply`, `dream_run`, …) | on | off |
 | Wiki writing tools (`wiki_create`, `wiki_edit`, `wiki_move`, `wiki_delete`) | on | off |
-| `file_write` and `file_patch` into the vault and the wiki | allowed | refused |
+| `file_write` and `file_patch` into the vault and the wiki | allowed (hidden inside a review loop) | refused |
 | Its own notes (`memory_write`, …) | yes | yes, they stay its own |
 | Reading and searching the wiki and the vault | yes | yes |
 
@@ -110,7 +110,7 @@ files that still carry them.
 | **Runs** | After 30 minutes without chat | Every 12 hours | Every 7 days |
 | **Approval** | Every finding | None | Every finding |
 | **Result** | Findings in `dream_list` | New and updated wiki pages | Findings in `dream_list` |
-| **Configured in** | `agent.yaml`, `rem` | `config.yaml`, `wiki.deep` | `config.yaml`, `wiki.lucid` |
+| **Configured in** | `config.yaml` `rem` (worker), `agent.yaml` `dreams` and `rem` (per agent) | `config.yaml`, `wiki.deep` | `config.yaml`, `wiki.lucid` |
 | **Good model** | Small or local | Strong | Strong |
 
 Facts come in through REM, are consolidated by Deep and are checked by
@@ -211,7 +211,8 @@ The transcript says who wrote each line. Only `USER` lines are the
 person speaking. A line from another agent is labelled
 `OTHER-AGENT(<name>)`, an automatic trigger `SYSTEM(<kind>)`. A fact
 passed on by another agent can become a finding, but it is recorded
-with its source ("Laut <name>: …"). Trigger text is never a source.
+with its source ("According to <name>: …", or "Laut <name>: …" in a
+German conversation). Trigger text is never a source.
 
 ### What REM produces
 
@@ -544,7 +545,7 @@ changes nothing in the wiki.
 | Rule | Detail |
 |---|---|
 | Wiki tools appear | The agent gets `wiki_edit`, `wiki_create`, `wiki_delete` and `wiki_move`. They exist only inside the loop. |
-| Other tools are hidden | `exec_*`, `tmux_*`, `agents_*`, `skill_*`, `file_write` and `file_patch` are refused. `file_read`, `file_search`, `file_list`, `analyze_file`, memory and web tools stay. |
+| Other tools are hidden | The `exec` family (`exec`, `process`, `tmux`), the `agents` family (`agent_ask`, `spawn_subagent`, …), the `skills` family (`skill`, `skill_list`), `file_write` and `file_patch` are hidden. `file_read`, `file_search`, `file_list`, `analyze_file`, memory and web tools stay. |
 | One loop at a time | Only one agent on the instance can hold a loop. |
 | Small steps | At most `maxCallsPerTurn` (default 3) `wiki_*` calls per turn. The count resets with every message of yours. |
 | Open findings stay open | `end` needs a `summary`. Findings you did not get to keep waiting, and a later loop continues there. `dismiss_rest: true` closes them all. |
@@ -556,9 +557,9 @@ lists (`relatedAdd`, `relatedRemove`, `sourcesAdd`, `sourcesRemove`), or
 both. `wiki_edit({wikiPath, relatedRemove: ['dead/page']})` removes a
 dead reference without touching the text.
 
-> **Note:** Agents on `claude-cli`, `codex-cli` and `grok-cli` get their
-> tool list once per turn. After `dream_review` start, the `wiki_*`
-> tools are available from the next turn. The agent should end its
+> **Note:** The tool list is fixed for a turn on every engine. After
+> `dream_review` start, the `wiki_*` tools are available from the next
+> turn. The agent should end its
 > reply and continue after you answer.
 
 The TUI shows `📝 wiki-review:<agent>` in the status line while a loop
@@ -741,7 +742,7 @@ Lucid run although findings wait. For `rem` neither applies.
 
 | Route | What it does |
 |---|---|
-| `POST /agents/:agent/dream/run-rem` | Starts the REM cycle for one agent. Returns `outcome`: `started`, `busy` or `nothing_to_do`. 400 when REM is not enabled for the agent. |
+| `POST /agents/:agent/dream/run-rem` | Starts the REM cycle for one agent. Returns `outcome`: `started`, `busy` or `nothing_to_do`. 409 with `reason: does-not-dream` when the agent does not dream, or `reason: no-model` when no REM model is set; 404 for an unknown agent. |
 | `POST /dream/run-deep` | Starts Deep. Body `{wait?, force?}`. With `wait: true` returns `candidatesSeen`, `cachedSkips`, `counts` and `outcomes`. |
 | `POST /dream/run-lucid` | Starts Lucid. Body `{wait?, force?}`. With `wait: true` returns `runId`, `findingsCount`, `pagesScanned` and `status`. |
 | `GET /dream-states` | Per agent: REM `active` and `pendingCount`. Deep: `active`. Lucid: `active`, `pendingRuns`, `pendingFindings` and `loopHolder`. |

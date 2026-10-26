@@ -57,8 +57,10 @@ A relative path on a resource is resolved like this:
 | `x` in a `file_*` tool | inside `workspace` when the resource has one, else the home |
 | `x` as `cwd` of `exec` | the home on the remote |
 
-The path rules that protect keys and system folders apply on a
-resource as they do locally.
+The protected credential stores (`~/.ssh`, `~/.gnupg`, …) and
+`/etc/shadow`, `/boot`, `/sys`, `/proc` are closed on a resource too,
+with `~` meaning the remote home. `/etc` and `/usr` stay writable there
+([Files](files.md#paths-that-are-closed)).
 
 ## Authentication
 

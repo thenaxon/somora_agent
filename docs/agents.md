@@ -148,7 +148,7 @@ The system prompt of a chat agent has these parts, in this order:
 | Self-pointer | The agent's name, the paths of its persona files and `agent.yaml`, its workspace, the path of `config.yaml`, the visible remote resources, and how to link local files and show images in a reply. |
 | Persona | `SOUL.md`, `AGENTS.md`, `USER.md`. |
 | Team block | Rendered from `team.yaml`. |
-| Tool reminder | A short constant text, when the agent has tools. |
+| Tool reminder | A short constant text, when the agent has tools. In a turn a person started, one more line tells the agent to ask questions with clear choices through `ask_user`. |
 | Wiki overview | A map of the shared wiki, fixed when the session starts. |
 | Skills | The skills this agent may use. |
 | This session | The session's name. |
@@ -739,7 +739,8 @@ How the fallback chain works:
 
 Rules for `tools` and `skills`:
 
-- A name under `deny` beats everything. A name or pattern under
+- A name under `deny` beats every other rule in this file. The dream
+  and wiki-writing tools follow the `dreams` switch instead. A name or pattern under
   `allow` beats a family rule under `deny`, which makes it an
   exception. No block means no restriction.
 - A tool pattern is an exact name (`web_search`), a toolset
@@ -856,7 +857,7 @@ agent is there on the next `GET /agents`.
 | `GET /agents/:agent/memory/notes` | Lists the agent's indexed notes. |
 | `GET /agents/:agent/memory/search?q=` | Searches memory, wiki and vault, for debugging. |
 | `POST /agents/:agent/dream/run-rem` | Starts REM for this agent now. |
-| `POST /dream/run-deep`, `POST /dream/run-lucid` | Start Deep or Lucid, for the whole install. Body `{wait?, force?}` and `{wait?}`. |
+| `POST /dream/run-deep`, `POST /dream/run-lucid` | Start Deep or Lucid, for the whole install. Body `{wait?, force?}` for both. |
 | `GET /spawn-result` | The result of a sub-agent task, as `subagent_result` reads it. |
 
 Bodies and answers in full are on the [API](api.md) page.
@@ -869,8 +870,9 @@ folder name must match the naming rule under [Set it up](#set-it-up).
 **The agent ignores its `agent.yaml`.** One invalid value makes somora
 ignore the whole file: the agent then has no model, no tool rules and
 no REM. The log line `persona.agent_yaml_parse_failed` names the key.
-Common causes: a `rem` block without `model`, an unknown key under
-`sampling`, a `thinking` value outside the four levels, or broken YAML.
+Common causes: an unknown key under `sampling`, a `thinking` value
+outside the four levels, a wrong type (e.g. `dreams: "yes"`), or broken
+YAML.
 `persona.agent_yaml_not_object` means the file is not a key and value
 map.
 

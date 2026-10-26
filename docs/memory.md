@@ -44,8 +44,8 @@ came from.
 | **vault** | the rest of your Obsidian vault | you | `vault/<path>` |
 
 Memory is private to one agent and short-term. The wiki is shared by all
-agents and long-term. The vault is yours: somora reads it and never
-writes to it.
+agents and long-term. The vault is yours: the dream phases never
+write to it.
 
 Curated content ranks first. By default a wiki hit counts 1.4 times, a
 memory hit 0.85 times and a vault hit 0.65 times its score.
@@ -161,8 +161,10 @@ A note gets into the inbox in three ways.
    `dream_apply`.
 
 Note names (slugs) are lowercase letters, digits, `-` and `_`. The write
-tools accept nothing else, so an agent cannot write outside its own
-memory folder. Agents cannot write to the wiki or the vault at all.
+tools accept nothing else, so they cannot write outside the agent's own
+memory folder. An agent that dreams can still change wiki and vault
+files with `file_write` and `file_patch`; one with `dreams: false`
+cannot (see [Who dreams](dream-phases.md#who-dreams)).
 
 ### Notes on a network share
 
@@ -362,7 +364,7 @@ wiki:
 | Tool | What it does |
 |---|---|
 | `memory_search(query, limit?, minScore?, source?)` | Searches all three sources. `source` is `memory`, `wiki`, `vault` or `all` (default). `minScore` defaults to 0, so the agent gets the best hits whatever their score. |
-| `memory_get(reference)` | Returns the full file behind a hit. The reference is what search returned, for example `memory/gate-code` or `wiki/personen/familie-klein`. |
+| `memory_get(reference)` | Returns the full file behind a hit. The reference is what search returned, for example `memory/gate-code` or `wiki/people/nina-muster`. |
 | `memory_list(tag?, source?, pathPrefix?)` | Lists notes with name, description and tags. Default is the agent's own inbox. `source: "wiki"` with `pathPrefix` browses a wiki folder. |
 | `memory_write(slug, content, frontmatter?)` | Creates or replaces a note in the agent's inbox. |
 | `memory_edit(slug, content, frontmatter?)` | Changes an existing note. Fails when the note does not exist. |
@@ -375,7 +377,10 @@ folded into it, so the same text never appears twice in the results.
 The tools reach the model differently per engine: through a local MCP
 server for `claude-cli` and `grok-cli`, as dynamic tools for
 `codex-cli`, and as function definitions for `openai-compatible`
-engines.
+engines. `memory_search`, `memory_get` and `memory_write` are in every
+engine's direct tool list; `memory_list`, `memory_edit` and
+`memory_delete` are found through the engine's tool search (see
+[Tools](tools.md)).
 
 ## When recall feels off
 

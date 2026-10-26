@@ -88,7 +88,7 @@ line, not a message:
 | `🔔 sentinel · <trigger name>` | A sentinel trigger fired. |
 | `🤖 subagent · <task>` | A sub-agent delivered its result. |
 | `↩ agent answer · <agent>` | The answer to a question this agent asked another agent. |
-| `🌐 browser · <view> · handed back` | The browser window was handed back to the agent. `activity` appears in place of `handed back` for other browser wakes. |
+| `🌐 browser · <window> · handed back` | The browser window was handed back to the agent. `activity` appears in place of `handed back` for other browser wakes. |
 | `🎙 voice · <text>` | A request from a voice call. |
 | `🖥 tmux · <tmux session>` | A watched terminal session needs attention. |
 | `🎬 video · <first line>` | A video render finished or failed. |
@@ -111,10 +111,14 @@ locale is not UTF-8.
 | Esc | During a turn: stops the running turn and keeps your input. Otherwise: clears the input. |
 | Ctrl+C | Clears the input. With an empty input it quits. |
 
-When an [external agent](external-agents.md) asks before it acts, the
-question appears with numbered options. Type the number and press
-Enter. Another number is refused while the question is open; `/model`,
-`/thinking` and `/sampling` say that its own system sets them.
+When an agent asks you something, the question appears with numbered
+options. Type the number and press Enter, or `1,3` when several answers
+are allowed. A question that does not wait (a chat agent's `ask_user`,
+Codex's own questions) also takes anything else you write as the
+answer. A question that waits, such as an [external
+agent](external-agents.md)'s permission request, refuses a number it
+does not have. For an external agent, `/model`, `/thinking` and
+`/sampling` say that its own system sets them.
 
 You can keep typing while the agent works. A message sent during a
 running turn waits its turn and shows `· queued`, or `· queued · N

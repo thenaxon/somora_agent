@@ -220,7 +220,7 @@ skill's programs anywhere, also as a string in Python or JavaScript:
 The script runs in the agent's workspace as the somora user. When the
 trigger is created, a shell script is checked against the commands
 `exec` blocks, and a script in any language is refused when it
-restarts, stops or updates somora (`somora restart`, `systemctl …
+restarts, stops or updates somora (`somora server restart`, `systemctl …
 somora`, the restart route): a check would do that on every run.
 
 Nothing is checked while the script runs. The login key is not passed
@@ -646,7 +646,7 @@ Use `cron` for the rest, such as monthly jobs or several times a day.
 ```
 
 The five fields are minute, hour, day of month, month, day of week.
-Day of week is 0 for Sunday to 6 for Saturday. The parser is small on
+Day of week is 0 for Sunday to 6 for Saturday; 7 is Sunday too. The parser is small on
 purpose:
 
 | Supported | Not supported |
@@ -749,11 +749,16 @@ limits in the Limits table are fixed.
 ```
 
 Each history line has `firedAt`, `scheduledFor` and an `outcome` of
-`success`, `error`, `skipped` or `updated`, plus `error`, `skipReason`,
-`note`, `taskId`, `catchUp` and `testMode` where they apply. A check
-trigger records its wakes, its pauses (as `error`) and its updates;
-negative checks are only counted in its check state. About the last 200
-entries per trigger are kept. Deleting a trigger removes its script
+`success`, `error`, `skipped`, `updated` or `judged`, plus `error`,
+`skipReason`, `note`, `taskId`, `catchUp` and `testMode` where they
+apply.
+
+A check trigger records its wakes, its pauses (as `error`) and
+its updates; a judged check also one `judged` entry per check that
+asked the decision model, naming each item with its answer in `note`.
+Other negative checks are only counted in its check state. The newest
+200 fires and, apart from them, the newest 200 `judged` entries are
+kept per trigger. Deleting a trigger removes its script
 copy, state folder and check state too.
 
 ## Troubleshooting

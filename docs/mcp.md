@@ -46,7 +46,7 @@ with its own tools.
 2. **Put the secret in the environment**, not in the config. Append
    `ACME_API_KEY=...` to `~/.somora/somora.env`. The file is read when
    the server starts.
-3. **Restart somora** with `somora restart`. The list of servers is
+3. **Restart somora** with `somora server restart`. The list of servers is
    read at start only.
 4. **Check it**:
 
@@ -144,7 +144,12 @@ an exception. An agent without a `tools:`
 block sees everything. A change applies from the agent's next turn.
 
 A hidden tool is absent from the model's tool list on all four engines,
-so it also costs no context. This is the way to handle overlapping
+so it also costs no context. In a sub-agent session and in a task from
+another agent system, `subagents.tools.deny` and `a2a.tools.deny` hide
+external tools too, on every engine, with the same patterns
+(`mcp__acme__*`).
+
+This is the way to handle overlapping
 tools: give a research agent the search tool of an MCP server and hide
 the built-in `web_search` for it, while every other agent keeps the
 built-in one.
@@ -226,6 +231,10 @@ refresh token is dead. The hub renames the entry to
 `<key>_stale_<timestamp>` in the credential file and the server shows
 `needs-auth`, with the new key name in `lastError`. Run the login
 again, then reconnect the server.
+
+The hub renames the entry only when the file still holds the token that was refused: a login written while the
+refresh was on its way, for example by the Claude login sync, stays in
+place and is used at the next try.
 
 - **One copy per dead token.** The same dead token is never put aside
   twice, and only the newest 3 `_stale_` entries per key stay in the
@@ -389,6 +398,7 @@ mcp:
 | `auth.tokenEndpoint` | none | OAuth token endpoint used for the refresh. |
 | `auth.credentialFile` | `~/.somora/claude-home/.credentials.json` | The JSON file the login writes. `~` is expanded. |
 | `auth.refresh` | `true` | `true`, `false`, or a list of the keys the hub may refresh. |
+| `auth.loginHint` | none | What to do to log in again, shown with `needs-auth` in `/mcp/status` and the inbox. The `claude-design` preset fills it. |
 
 With `auth` set, the hub sends `Authorization: Bearer <token>`. An
 `Authorization` entry under `headers` is ignored for that server.
@@ -402,7 +412,7 @@ All three answer `503` when no server is configured.
 
 | Route | What it does |
 |---|---|
-| `GET /mcp/status` | `{enabled, servers}`. Per server: `state`, `toolCount`, `transport`, `lastError`, `lastConnectedAt`, `consecutiveFailures`. |
+| `GET /mcp/status` | `{enabled, servers}`. Per server: `state`, `toolCount`, `transport`, `lastError`, `lastConnectedAt`, `consecutiveFailures`, and `loginHint` with `needs-auth`. |
 | `POST /mcp/servers/<name>/reconnect` | Drops the connection and connects again at once. Answers `{ok, status}`, or `400` for an unknown or disabled server. |
 | `POST /mcp/call` | Runs one tool without a model. Body: `{server, tool, args, timeoutMs}`, with `tool` as the server's own tool name. Answers `{isError, text, images}`, or `502` when the call fails. The proxies use this route. It is also handy for debugging. |
 

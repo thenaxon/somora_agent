@@ -63,8 +63,9 @@ server:
 #               models with this capability. For models without it, the
 #               setting is dormant and the TUI marks it accordingly.
 providers:
-  # Anthropic via Claude Code subscription. Uses the local Claude Code
-  # binary (~/.local/bin/claude) — no baseUrl / apiKey needed.
+  # Anthropic via Claude Code subscription. Uses the Claude Code bundled
+  # with somora (or your own, when installed); log in with
+  # `somora claude login`. No baseUrl / apiKey needed.
   anthropic:
     engine: claude-cli
     models:
@@ -681,9 +682,9 @@ providers:
 #                                  # serial delivery order.
 #   heartbeatMs: 20000             # server→client heartbeat on /chat/stream + /activity/stream
 #   deadAfterMs: 60000             # a heartbeat write hanging longer → stream counts as dead, socket closed
-#   h2PingIntervalMs: 30000        # HTTP/2 PING pro Client-Session (TLS-Listener) …
-#   h2PingTimeoutMs: 30000         # … ohne ACK in dieser Zeit → Session zerstört (Tab weg, WLAN weg)
-#   keepAliveDelayMs: 30000        # TCP-Keepalive auf jedem Socket (Kernel-Probes obendrauf)
+#   h2PingIntervalMs: 30000        # HTTP/2 PING per client session (TLS listener) …
+#   h2PingTimeoutMs: 30000         # … no ACK within this time → session destroyed (tab closed, Wi-Fi gone)
+#   keepAliveDelayMs: 30000        # TCP keepalive on every socket (kernel probes on top)
 # tmux attention watcher — somora watches its own tmux sessions that were
 # created with kind "claude-code" or "codex" and detects when the CLI in
 # the pane goes from running to ready (finished OR waiting for input).
@@ -755,7 +756,7 @@ providers:
 #                             # only (the server logs that once).
 
 # toolCatalog:                # docs/tools.md "Always in the list, or found on demand"
-#   alwaysVisible:            # kept in the model's list on claude-cli and codex-cli
+#   alwaysVisible:            # kept in the model's list on claude-cli, codex-cli and openai-compatible
 #     - exec                  # instead of behind the tool search. Always cut to
 #     - process               # the tools a turn offers: a tool switched off for
 #     - tmux                  # the agent never shows up. Default = this list.

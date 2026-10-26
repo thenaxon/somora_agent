@@ -187,5 +187,5 @@ The server log has the backend's own message under
 - [Thinking](thinking.md): the thinking level, set in the same three
   layers
 - [Agents](agents.md): everything else in `agent.yaml`
-- [Setup](setup.md): `maxTokens` and the rest of the model entry
+- [Models](models.md#model-fields): `maxTokens` and the rest of the model entry
 - [API](api.md): all session routes

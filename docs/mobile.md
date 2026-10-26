@@ -67,9 +67,9 @@ Otherwise the link points at `127.0.0.1`, which the phone cannot open.
 
 On a phone whose camera island and status indicator sit at a side
 (a foldable when folded, a phone with a notch held sideways), the
-header moves its buttons out from under them, and the avatar row
-scrolls far enough to bring its first and last agent clear. The rest
-of the screen keeps the full width.
+header and the status banners keep their content out from under them,
+and the avatar row scrolls far enough to bring its first and last agent
+clear. The chat keeps the full width.
 
 ### Agent order
 
@@ -160,7 +160,12 @@ A question with options appears as a card above the text field. A chat
 agent's question in a conversation with you does not hold the turn: the
 card stays until you answer. Tap an option to send it as your next
 message, or write anything else, which answers it too. A card with
-several questions has a **Send** button.
+several questions, or one that allows several answers, has a **Send**
+button.
+
+A question that waits, such as an external agent's permission request,
+shows how long it still waits. The card is read again after
+a reload or a dropped connection.
 
 ### The work badge
 
@@ -213,7 +218,7 @@ is open. It is off by default and remembered per browser.
 | `🧠 thinking` | The model's reasoning, when the engine provides it. While it thinks, the newest line peeks below. Tap the row to read all of it. |
 | `⇄ fallback · <model>` | A backup model answered. The tooltip names the models that failed and why. |
 | **⚠** block | The turn ended in an error. |
-| `◌ history compacted …` divider | The history was compacted to fit the window. The line says by how much. |
+| `◌ history compacted …` divider | The history was compacted: before a turn, by hand, or by the engine itself. When somora compacted, the line says by how much. |
 | Media line | The reply produced a picture or video. The phone shows a line naming it. Open the web client to see it. |
 | `Image from <host>` with **Show** and **Always show** | A picture from another website, held back until you allow it. See [Security](security.md#pictures-from-other-websites). |
 
@@ -263,9 +268,9 @@ Use the [web client](web.md) for these:
 - Several windows side by side
 - Renaming, archiving or resetting a session
 - Switching the project of a session
-- A builder's task panel: plan, Go, task list and questions. You can
-  chat with a builder from the phone, but its plan is approved and its
-  questions are answered in the web client.
+- A builder's task panel: mode and phase, Go and the task list. You
+  can chat with a builder from the phone and answer its questions there,
+  but its plan is approved in the web client.
 
 REM, Deep and Lucid have no button in any client. Ask the agent to run
 one, for example "catch up on your memories": it starts the phase with
@@ -372,4 +377,4 @@ extra step.
 - [Thinking](thinking.md): which engines show their reasoning
 - [Setup](setup.md): HTTPS via Tailscale, speech-to-text
 - [API](api.md): `GET /activity/stream`, `DELETE /chat/queue/:id`,
-  `GET /mobile-config`
+  `GET /mobile-config`, `GET`/`PUT /mobile-agent-order`

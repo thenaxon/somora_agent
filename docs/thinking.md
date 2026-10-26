@@ -83,10 +83,10 @@ The level only reaches a model that lists `reasoning` in its
 `capabilities` in `config.yaml`:
 
 ```yaml
-- id: claude-opus-4-7
+- id: claude-opus-5-5
   alias: opus
   contextWindow: 1000000
-  capabilities: [text, image, reasoning]
+  capabilities: [text, image, pdf, reasoning]
 ```
 
 Without `reasoning`, somora sends no thinking parameter and the model
@@ -487,5 +487,5 @@ SDK delivers. The setting still works.
   same way
 - [TUI display](display.md): `/verbose` and what the header shows
 - [Dream phases](dream-phases.md): REM, Deep and Lucid
-- [Setup](setup.md): `maxTokens` and other model settings
+- [Models](models.md#model-fields): `maxTokens` and other model settings
 - [API](api.md): all routes and SSE events

@@ -252,7 +252,7 @@ finished image in the same call.
 2. Paths under `jobs:` on the model turn jobs on.
 3. An `async` block on the model's entry in the provider's catalog:
    `"async": {"create": "/img/create", "status": "/img/status?id=", "content": "/img/content?id="}`.
-4. Otherwise one request, as before.
+4. Otherwise one request.
 
 A model with an `allow` block does not read the catalog. To use jobs
 there, set `lifecycle: jobs` and `jobs:`.
@@ -293,7 +293,7 @@ path from the tool result.
 |---|---|
 | Image files | `imageGen.outputDir`, default `~/somoraworkspace/images` |
 | With `monthlyFolders: true` | `<outputDir>/YYYY-MM/` |
-| File name | `2026-08-26_143012_koala-im-weltraum.png`: date, time, then the start of the prompt |
+| File name | `2026-08-26_143012_koala-in-space.png`: date, time, then the start of the prompt |
 | Metadata | `~/.somora/media/<id>.json`, one file per item, shared with videos |
 
 The metadata holds prompt, model, settings, cost, time, agent and path.

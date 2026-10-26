@@ -99,8 +99,11 @@ tmux({ action: "send", name: "claude-1", multiline_safe: true,
              "2. 10x20 grid\n" })
 ```
 
-Do not use `multiline_safe` for a plain shell. It does not follow this
-convention and joins your lines instead.
+Use `multiline_safe` only for the chat-style input boxes of Claude
+Code, codex and OpenCode. In a shell or a Python REPL every Enter runs
+its line, so send the lines as they are, without the flag. The Python
+REPL from 3.13 on indents by itself: send lines without leading spaces,
+or start it with `PYTHON_BASIC_REPL=1`.
 
 ## Reading the screen
 
@@ -371,7 +374,7 @@ One tool, `tmux`. Only `action` is always required.
 | `kind` | `create` | `"shell"` | `shell`, `claude-code`, `codex` or `opencode`. |
 | `attention` | `create` | `true` | `false` keeps the watcher away from this session. |
 | `inherit_agent_env` | `create` | `false` | `true` keeps somora's internal variables. Local only. |
-| `keys` | `send` | none | Text to type. `\n` is Enter. |
+| `keys` | `send` | none | Text to type. `\n` is Enter. Into a Python REPL (3.13+) send lines without leading spaces. |
 | `key` | `send` | none | Named keys, separated by spaces. Letters, digits, dash and underscore only. |
 | `multiline_safe` | `send` | `false` | `true` sends every `\n` inside `keys` as `M-Enter`. |
 | `lines` | `capture`, `wait_idle` | `200` | Lines from the end of the pane to return. 1 to 10000. |

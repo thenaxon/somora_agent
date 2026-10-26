@@ -75,8 +75,10 @@ to one agent. The wiki is long-term and shared.
 | **An agent in review** | when you start `dream_review` | Walks the Lucid findings with you and changes pages with `wiki_edit`, `wiki_create`, `wiki_delete` and `wiki_move` after you agree to each step. |
 | **You** | any time | Edit a page in Obsidian and save. |
 
-Outside a `dream_review` loop no agent can write to the wiki. The four
-`wiki_*` tools only work for the agent that holds the loop.
+The four `wiki_*` tools only work for the agent that holds a
+`dream_review` loop. An agent that dreams can also edit wiki files with
+`file_write` and `file_patch` outside a loop; one with `dreams: false`
+cannot.
 
 Every write checks the file's modification time first. If you changed a
 page after somora read it, the write is dropped and tried again on the
@@ -386,9 +388,8 @@ A single note stays out with `wiki_promote: false` in its frontmatter.
   already use for it. somora runs on one host.
 - **Do not sync the inboxes.** Deep empties them. Synced to a second
   machine, a note one side just changed could be consumed by the other.
-- **Your vault stays yours.** somora reads the vault outside the wiki
-  folder and never writes there. Deep does not turn vault notes into
-  wiki pages.
+- **Your vault stays yours.** Deep and Lucid never write outside the
+  wiki folder, and Deep does not turn vault notes into wiki pages.
 - **No chat logs.** Deep skips notes that are only of the day: task
   lists, scratchpads, daily logs.
 - **Splitting a page is manual.** Lucid can propose moving or uniting
@@ -489,7 +490,7 @@ themselves.
 | `somora wiki migrate judge <id>` | Step 2. Waits for the model and lists the groups. |
 | `somora wiki migrate status <id>` | The groups and what is approved. |
 | `somora wiki migrate approve <id> --action move --action fold --twins` | Approves all groups of an action (`move`, `fold`, `unclear`) and all same-name unions. |
-| `somora wiki migrate approve <id> --group fold:projects/orbit --dismiss` | Dismisses one group. A group key is `move:<folder>` or `fold:<page>`. |
+| `somora wiki migrate approve <id> --group fold:projects/house-build --dismiss` | Dismisses one group. A group key is `move:<folder>` or `fold:<page>`. |
 | `somora wiki migrate dry-run <id>` | Writes `dry-run.md`, touches nothing. |
 | `somora wiki migrate run <id> --confirm "move my wiki"` | The real run, with backup first. |
 | `somora wiki migrate undo <id>` | Puts the backup back. Asks for "yes" unless you pass `--yes`. |

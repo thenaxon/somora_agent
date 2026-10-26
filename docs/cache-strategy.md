@@ -56,7 +56,7 @@ The system prompt is put together from eight parts, in this order:
 | 1 | Self-pointer: who the agent is, its paths and resources | resources or paths change in the config |
 | 2 | Persona: `SOUL.md`, `AGENTS.md`, `USER.md` | you edit one of the files |
 | 3 | Team block | `team.yaml` or the list of agents changes |
-| 4 | Tool reminder | never (constant text) |
+| 4 | Tool reminder | constant, except the `ask_user` line, which is there only in a turn someone watches |
 | 5 | Wiki overview | never within a session |
 | 6 | Skills list | a skill is added, removed or its description edited |
 | 7 | This session | never within a session |
@@ -69,8 +69,11 @@ part most likely to change in the middle of a session.
 A sub-agent turn adds one note to part 1. Empty parts are left out: no
 team, no wiki, no pinned project.
 
-Tool definitions are not part of this text. They travel in the tool
-channel of the API and stay the same as long as the set of tools does.
+Tool schemas travel in the API's tool channel. On `openai-compatible`
+(catalog mode, the default) the tools not sent in full are listed by
+name after part 8, and on `codex-cli` the developer instructions end
+with the names of the deferred tools. Both change only when the set of
+tools changes.
 
 ### The wiki overview is frozen
 
@@ -210,7 +213,8 @@ request, so the cache holds.
 | Changing `team.yaml`, adding or removing an agent | Once, from the team block on. |
 | Adding, removing or editing a skill | Once, from the skills list on. |
 | Switching or updating the session's project | Once, from the project block on. The parts before it stay cached. |
-| Changing the set of tools an agent sees | Once. Tool definitions sit in front of the conversation. |
+| Changing the set of tools an agent sees | Once. Tool definitions, and the listing at the end of the system prompt, sit in front of the conversation. |
+| A turn nobody watches (an agent's request, a Sentinel wake) after one a person started, or the reverse | From the tools on: `ask_user` and its line in the tool reminder are offered only when someone watches. |
 | A compaction on `openai-compatible` | Once. The summary joins the system message and the older messages are dropped. |
 | Switching the model or provider of a session | The new model starts with an empty cache. |
 | `memoryInjectMode: system` | Every turn. The system prompt changes with each recall. |

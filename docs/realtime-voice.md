@@ -87,8 +87,8 @@ A call is always bound to one agent and one existing session.
 
 The question arrives in the bound session as a normal turn, marked as
 coming from the voice channel (`from_system: 'voice'`), not as a message
-from another agent. The agent answers into its own chat. The web client
-and the TUI show the question as its own `voice` row, so you can tell it
+from another agent. The agent answers into its own chat. The web client,
+the phone and the TUI show the question as its own `voice` row, so you can tell it
 apart from something you typed.
 
 The last six lines of the call travel with the question. Without them,
@@ -184,8 +184,8 @@ authority, speak in the first person.
 
 ### Reading what the voice is told
 
-In the web client, right-click an agent. The agent window has a
-**Voice prompt** tab next to the persona files. It shows the whole
+In the web client, right-click an agent and choose **Configure…**. The
+agent window has a **Voice prompt** tab next to the persona files. It shows the whole
 instruction, whether the character came from `VOICE.md` or was derived,
 and the voice, language and consult policy. The tab only exists for
 agents that can be called.

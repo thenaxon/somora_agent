@@ -51,7 +51,7 @@ whatever your external MCP servers bring.
 | `web` | 2 | `web_fetch` always, `web_search` with `web.brave.apiKey` |
 | `file` | 6 | always, except `analyze_file` (see below) |
 | `exec` | 3 | always |
-| `agents` | 12 | always |
+| `agents` | 13 | always (`ask_user` only in a turn someone watches) |
 | `skills` | 2 | always |
 | `sentinel` | 1 | always |
 | `projects` | 6 | `projects.enabled: true` |
@@ -60,7 +60,7 @@ whatever your external MCP servers bring.
 | `media` | 1 | image or video generation is set up |
 | `browser` | 1 | `browser.enabled: true` |
 | `decision` | 1 | `decisions.model` names an entry in `decisions.models` |
-| `builder` | 3 | builder agents only |
+| `builder` | 2 | builder agents only |
 | `mcp` | varies | servers listed under `mcp.servers` |
 
 ### Memory, docs and resources
@@ -469,7 +469,7 @@ never has to search for the tools used most:
 
 The list only ever picks from the tools the agent is offered in that
 turn. A tool switched off for the agent never shows up, and `ask_user`
-only in a turn a person started. During a dream review the review
+only in a turn someone watches (a person, or a task sent over A2A). During a dream review the review
 tools join it: `dream_list`, `dream_get`, `dream_apply`,
 `dream_dismiss`, `dream_review` and `wiki_edit`. A builder's whole
 tool set is in the list, because it is small.
@@ -625,7 +625,7 @@ A tool is one `ToolDefinition` object in the somora repository, under
 | `toolset` | The family tag. |
 | `description` | What the model reads. Write it as policy, not only as API text: "use this INSTEAD of running `cat` via exec". |
 | `inputSchema` | Zod schema, checked at runtime. |
-| `jsonSchema` | JSON Schema sent to the model. Keep it in step with `inputSchema` by hand. |
+| `jsonSchema` | JSON Schema every engine sees. Write fields and descriptions by hand; the registry copies zod's bounds (`minimum`/`maximum`, lengths, item counts) in where it leaves them out, and a parity test keeps the two equal. |
 | `handler(input, ctx)` | Does the work. `ctx` carries `agent`, `session`, `config`, `activeModel` and `getMemoryManager`. |
 | `available?(ctx)` | Optional check. When it returns false or throws, the tool is hidden and a call is refused. |
 | `maxResultSizeChars?` | Own size limit for the result. |

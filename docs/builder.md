@@ -148,7 +148,7 @@ The caller returns at once. It is woken with the builder's report as an
 |---|---|
 | `task` | The complete order. Required. The builder sees nothing of the caller's conversation. |
 | `builder` | Name of the builder. May be left out when exactly one exists. With several, the caller picks by the role and description each one carries. |
-| `project` | Project to pin. Without one, name the repository in `task`. |
+| `project` | Project to pin; its `workdir` becomes the working directory. Without it the builder does not build: unattended, it reports that the order needs a pinned project and stops; attended, it asks which project the work belongs to. |
 | `plan_path` | Absolute path of a plan the builder must read first. |
 | `done_criteria` | What "done" means, for example "tests green and the new column is printed". |
 | `report_path` | Absolute path the builder writes its report to, besides answering. |
@@ -385,7 +385,7 @@ What a builder is offered by default. Everything else is off until
 `analyze_file` is offered only when a vision worker is configured and
 the builder's own model cannot see images.
 
-The three builder tools:
+The builder's tools:
 
 | Tool | Parameters | What it does |
 |---|---|---|
@@ -393,7 +393,10 @@ The three builder tools:
 | `ask_user` | `question`, `options` (2 to 6, each `{label, description?}`), `header?`, `multiple?`, `timeout_ms?` | Asks in the task panel and waits. Returns `{answered, answers[], text?}`. |
 | `plan_write` | `content` | Writes the whole plan file. |
 
-A chat agent never gets these three, whatever its `agent.yaml` says.
+A chat agent never gets `todo_write` and `plan_write`, whatever its
+`agent.yaml` says. `ask_user` belongs to every agent ([Questions to
+you](tools.md#questions-to-you)); for a builder it waits in the task
+panel.
 
 ## Routes
 
@@ -407,7 +410,7 @@ is `GET /agents/:agent/sessions/:session/builder`.
 | `POST …/builder/go` | `{note?}` | 202 with `{state, turnId, callId?, wakes?}`. 409 `folder busy` when another builder turn holds the folder. |
 | `PUT …/todos` | `{todos: [{content, status, priority?}]}` | `{todos}`. Publishes `todo_updated`. Used by `todo_write`. |
 | `PUT …/plan` | `{content}` | `{path, bytes, archived?}`. Used by `plan_write`. |
-| `POST …/ask` | `{question, header?, options[], multiple?, timeout_ms?}` | Blocks, then `{answered, answers[], text?}`. Publishes `question_asked`. Used by `ask_user`. |
+| `POST …/ask` | `{question, header?, options[], multiple?, timeout_ms?}` | A builder's question, or one in a task sent over A2A, blocks, then returns `{answered, answers[], text?}`. A chat agent's question in a turn a person started returns at once with `{asked: true, questionId, note}`. Publishes `question_asked`. Used by `ask_user`. |
 | `POST …/answer` | `{questionId, answers?, text?}` | `{ok}`. Publishes `question_answered`. |
 | `GET /builders` | | `{builders: [{name, role, description, busy[]}]}` |
 | `GET /builders/busy?workdir=…` | | `{workdir, busy}`, where `busy` is the claim or `null`. Without `workdir`: all claims. |

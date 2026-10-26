@@ -217,8 +217,7 @@ reaches the same tools as on the other engines.
 | `somora_direct` | tools whose results can carry images |
 | `somora_mcp_<server>` | tools of an external MCP server |
 
-The tools of the shared list `toolCatalog` (docs/tools.md, "Always in
-the list, or found on demand") sit in the model's direct list on every
+The tools of the shared list `toolCatalog` ([Tools](tools.md#always-in-the-list-or-found-on-demand)) sit in the model's direct list on every
 turn. The rest is deferred and found through Codex tool search. The
 developer instructions list their names.
 
@@ -470,8 +469,8 @@ come first. The [thinking guide](thinking.md) lists the order.
   tools plus `tool_search` and `tool_call`, and the rest is named at the
   end of the system prompt. Rows show the tool that ran, not
   `tool_call`. `toolCatalog` with `mode: all` (for the engine or for one
-  model) sends every tool with its full description on each request. See docs/tools.md, "Found on demand on
-  `openai-compatible`".
+  model) sends every tool with its full description on each request.
+  See [Tools](tools.md#found-on-demand-on-openai-compatible).
 
 ### Which engines can be workers
 
@@ -644,9 +643,9 @@ not in `user`.
 ## Minimum versions
 
 - Node.js 22.22.2 or newer. Every `somora` command refuses an older Node.
-- A current Claude Code for `claude-cli`.
-- Codex needs no separate install. somora bundles the exact version
-  pinned in its `package.json`.
+- Claude Code, Codex and the Grok CLI need no separate install. somora
+  bundles the exact versions pinned in its `package.json`. A Claude
+  Code you installed yourself is used instead when present.
 
 A CLI engine's tools and lock-down are checked again after every CLI
 update.

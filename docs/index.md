@@ -58,7 +58,7 @@ takes about ten minutes. [Setup](setup.md) explains each step.
 |---|---|
 | **agent** | A persona with its own instructions, model, notes and conversations. Lives in `~/.somora/agents/<name>/`. A chat agent talks and coordinates. A builder plans and writes software. |
 | **session** | One conversation with one agent. Stored as a file, can be resumed and switched. |
-| **engine** | The way somora reaches a model: `claude-cli` (Claude subscription), `codex-cli` (ChatGPT subscription), `grok-cli` (SuperGrok subscription) or `openai-compatible` (any server or API that speaks the OpenAI chat format). |
+| **engine** | The way somora reaches a model: `claude-cli` (Claude subscription), `codex-cli` (ChatGPT subscription), `grok-cli` (SuperGrok or Premium subscription) or `openai-compatible` (any server or API that speaks the OpenAI chat format). |
 | **provider, model, alias** | `config.yaml` lists providers and the models on each. An alias is a short name for a model that works everywhere. |
 | **memory** | An agent's own short-term notes. Recalled automatically for every message, together with the wiki and your vault. |
 | **wiki** | The long-term knowledge base shared by all agents. Lives in a folder, usually inside your Obsidian vault. |

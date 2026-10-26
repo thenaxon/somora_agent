@@ -329,8 +329,9 @@ Further rules:
 
 - When nothing matches and every line of `old_string` starts like
   `12: `, the line numbers are removed and the search runs again.
-- A tolerant match far larger than `old_string` is refused: twice the
-  lines or more, three lines more, or four times the characters. The
+- A tolerant match far larger than `old_string` is refused: one that
+  spans at least twice the lines and at least three lines more, or, for
+  several lines, more than four times the characters (and 500 more). The
   agent is asked to read the file again.
 - Local files under `~/.somora` are matched with `exact` only. A wrong
   edit in the configuration or a persona file costs the most.
@@ -423,14 +424,14 @@ working:
 | Engine | Images | PDFs |
 |---|---|---|
 | `claude-cli` | Native image block. | Native document block. |
-| `codex-cli` | Native image input. | Rendered to one PNG per page. |
+| `codex-cli` | Native image input. | Rendered to one JPEG image per page. |
 | `openai-compatible` | Works with models that can see. Local servers vary. | Depends on `pdfMode`. |
 
 `pdfMode` is a setting of an `openai-compatible` provider:
 
 | Value | Effect |
 |---|---|
-| `rasterize` (default) | Pages are rendered to PNG. Works with every backend that accepts images. |
+| `rasterize` (default) | Pages are rendered to JPEG images. Works with every backend that accepts images. |
 | `native` | The PDF is passed as a file. Anthropic through OpenRouter and OpenAI accept this. Most local servers do not. |
 
 `native` usually costs far fewer tokens, since `rasterize` sends one

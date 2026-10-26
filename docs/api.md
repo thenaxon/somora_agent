@@ -64,7 +64,7 @@ the turn and returns the reply in the response.
 | Base URL | `https://<your-host>.<your-tailnet>.ts.net:18737` with HTTPS set up, else `http://127.0.0.1:18737`. The web client is under `/web/`, the mobile app under `/mobile/`. |
 | Bodies | JSON in, JSON out (`Content-Type: application/json`), unless a route says otherwise. Uploads are raw bytes or `multipart/form-data`, as noted per route. |
 | Errors | A non-2xx response carries `{ "error": "<message>" }`. The message is written for a person. Some routes add fields, noted per route. |
-| Unknown agent or session | `404` on every route that takes one, except `POST /chat/abort`. |
+| Unknown agent or session | `404` on every route that takes one, except `POST /chat/abort` and `POST /server/restart`. |
 | Agent being renamed | `409` with `error: "agent '<name>' is being renamed — try again in a moment"` on every route under `/agents/:agent/` except reads (`GET`), and on `POST /chat/send` and `POST /chat/send-sync`, for the old and the new name. Retry in a moment. |
 | Times | Epoch milliseconds as numbers, or ISO 8601 strings. The examples show which. |
 | Streams | Server-Sent Events with named events. `data` is always JSON. |
@@ -116,9 +116,10 @@ Ten wrong keys from one address within five minutes block that address
 for a minute (`429`). Requests from the server's own machine are not
 blocked. A request without any key does not count.
 
-Open without the key: `GET /healthz`, the `/auth/*` routes below, and
-the files of the web and mobile clients under `/web/` and `/mobile/`,
-which hold no data.
+Open without the key: `GET /healthz`, the `/auth/*` routes below, the
+files of the web and mobile clients under `/web/` and `/mobile/`,
+which hold no data, and the A2A paths (Agent Cards, `/a2a/files/<token>`,
+`POST /a2a/agents/:agent`), which check peer tokens themselves.
 
 With `server.auth: off` in `config.yaml` the server asks for no key.
 Then access is decided by the network alone.
@@ -334,8 +335,8 @@ Top-level blocks:
 | Block | Meaning |
 |---|---|
 | `claudeAuth` | State of the login shared between `~/.claude` and somora's own Claude folder. Expiry times only, never tokens. `identical: false` with both sides present means they have drifted apart. If that stays, run `somora claude status`. |
-| `memoryEmbedder` | The embedding model behind memory search. `state` is `ok`, `loading` or `failed`. With `failed`, `error` says why and every search is keyword only until a retry succeeds. |
-| `sharedIndex` | The search index over vault and wiki that all agents share. `state` is `ready`, `building`, `disabled` (no vault configured) or `failed` with `error`. `built_by` is `seed:<agent>` or `sweep`. `null` until the server has opened it. |
+| `memoryEmbedder` | The embedding model behind memory search. `state` is `idle`, `loading`, `ok` or `failed`. With `failed`, `error` says why and every search is keyword only until a retry succeeds. |
+| `sharedIndex` | The search index over vault and wiki that all agents share. `state` is `opening`, `building`, `ready`, `disabled` (no vault configured) or `failed` with `error`. `built_by` is `seed:<agent>` or `sweep`. `null` until the server has opened it. |
 
 ### `GET /host-stats`
 
@@ -847,8 +848,8 @@ Every entry has the same fields:
 
 | Field | Meaning |
 |---|---|
-| `id` | The work id: a `turnId`, a `call_id`, a `task_id`, the consult id of a question from a call, or a video job id. |
-| `kind` | Where it came from: `human`, `agent`, `subagent`, `sentinel`, `tmux`, `browser`, `voice` or `wake`. A `wake` also has `about` (`a2a`, `subagent`, `job` or `system`). |
+| `id` | The work id: a `turnId`, a `call_id`, a `task_id` (also an A2A task's), the consult id of a question from a call, or a video job id. |
+| `kind` | Where it came from: `human`, `agent`, `subagent`, `sentinel`, `tmux`, `browser`, `voice`, `peer` or `wake`. A `wake` also has `about` (`a2a`, `subagent`, `job` or `system`). |
 | `state` | `queued`, `running`, `done`, `failed`, `cancelled` or `dequeued`. |
 | `preview` | The first 160 characters of the text, line breaks folded to spaces. |
 | `target` | The `{agent, session}` the turn runs on. |
@@ -886,7 +887,7 @@ All events:
 | `heartbeat` | Every `sse.heartbeatMs` (20 s) | The current time in ms |
 | `user_message` | A turn's message was stored: the turn has started. Also for a steered message. | See "The user_message event" |
 | `turn_queued` | A message has to wait behind another turn | `{turnId, ahead, workId?, kind?}` |
-| `turn_dequeued` | A waiting entry was removed with `DELETE /chat/queue/:id` | `{turnId, workId}` |
+| `turn_dequeued` | A waiting entry was removed with `DELETE /chat/queue/:id` | `{turnId, workId?}` |
 | `steer_queued` | A steered message was accepted for the running turn | `{steerId, text, ts, turnId, origin}` |
 | `turn_started` | The engine opened the turn | `{turnId}` |
 | `agent` | The model call starts and ends | `{phase: "start"\|"end", usage?, contextWindow?, provider?, model?, thinking?, fallback?, external?}`. `external: {system}` marks an external agent's turn; `external.unprompted: true` a message it sent on its own, outside a turn. |
@@ -903,7 +904,7 @@ All events:
 | `project` | The session's project changed | `{from, to, via}` |
 | `builder_state` | A builder session's mode, phase or plan file changed | `{mode, phase, planPath}` |
 | `todo_updated` | A builder replaced its task list | `{todos: [{content, status, priority?}], by?}` |
-| `question_asked` | An agent asks the person | `{questionId, question, header?, options, multiple, expiresAt, kind?, from?, async?, parts?, source?}`. `kind: "permission"` and `from: "external"` mark an external agent asking to run something; each option's `description` is then its kind (`allow_once`, `reject_once`, …). `async: true` marks a question that does not wait (`expiresAt` is `0`); `parts` lists several questions asked at once, `source: "codex"` one from Codex's own question tool. |
+| `question_asked` | An agent asks the person | `{questionId, question, header?, options, multiple, expiresAt, kind?, from?, async?, parts?, source?}`. `kind: "permission"` and `from: "external"` mark an external agent asking to run something; each option's `description` is then its kind (`allow_once`, `reject_once`, …). `async: true` marks a question that does not wait (`expiresAt` is `0`); `parts` lists several questions asked at once, `source` is `ask_user`, or `codex` for Codex's own question tool. |
 | `question_answered` | The open question was answered, replaced or ran out of time | `{questionId?, answered, choice?, by?}`. `by: "message"`: a question that does not wait, answered by writing something else. |
 
 Details where the table is not enough:
@@ -983,7 +984,7 @@ HTTPS the connection is also pinged (`sse.h2PingIntervalMs`,
 | `from_agent`, `from_session`, `agent_ask_call_id` | Older fields, derived from an `agent` origin. |
 | `attachments` | `{hash, name, mime, size}` of the files sent with the message. |
 | `attachment_descriptions` | Stored row only. The vision worker's description of each attachment the model could not see, one string per file. |
-| `from_system` | Older field, derived from the origin: `sentinel`, `tmux`, `browser`, `voice`, or for a wake its `about` (`a2a`, `subagent`, `job`, `system`). The shipped clients draw these as a divider, not as a bubble. |
+| `from_system` | Older field, derived from the origin: `sentinel`, `tmux`, `browser`, `voice`, `peer`, or for a wake its `about` (`a2a`, `subagent`, `job`, `system`). The shipped clients draw these as a divider, not as a bubble. |
 
 `origin` is one of:
 
@@ -996,7 +997,8 @@ origin?:
   | { kind: 'tmux';     tmuxSession: string; tmuxKind?: string }
   | { kind: 'browser';  viewId: string; cause: 'handoff' | 'activity'; handoffId?: string }
   | { kind: 'voice';    callId?: string; consultId: string }
-  | { kind: 'wake';     about: 'a2a' | 'subagent' | 'job' | 'system'; ref: string; depth?: number; cause?: string };
+  | { kind: 'wake';     about: 'a2a' | 'subagent' | 'job' | 'system'; ref: string; depth?: number; cause?: string }
+  | { kind: 'peer';     peer: string; contextId: string; taskId: string };
 ```
 
 | `kind` | The turn was started by |
@@ -1006,6 +1008,7 @@ origin?:
 | `subagent` | A brief running in its own `sub-…` session. |
 | `sentinel`, `tmux`, `browser`, `voice` | A trigger, a tmux session that became ready, a browser window handed back, a question from a voice call. |
 | `wake` | Something the agent started earlier has finished: a late answer (`about: "a2a"`, `ref` is the call id), a sub-agent (`subagent`, task id) or a video (`job`, job id). |
+| `peer` | A task from another agent system over A2A ([A2A](a2a.md#taking-work-in)). |
 | `wake` with `about: "system"` | somora itself speaks. `cause` names the occasion. Today that is `restart`, and the text begins `[system: restart]`. |
 
 Stored rows from old sessions may have no `origin`. Read the `from_*`
@@ -1250,7 +1253,7 @@ Every model in `config.yaml`.
 ```json
 [ { "provider": "anthropic", "id": "claude-opus-4-20250514",
     "alias": "claude-opus-4-7", "engine": "claude-cli",
-    "contextWindow": 200000, "capabilities": ["vision", "reasoning"],
+    "contextWindow": 200000, "capabilities": ["text", "image", "reasoning"],
     "ref": "claude-opus-4-7" } ]
 ```
 
@@ -1447,7 +1450,7 @@ and nothing is changed.
 |---|---|
 | `parts` | The pieces of `text` in prompt order: self-pointer, persona, team, tool reminder, wiki overview, skills, session, project. |
 | `tools` | The tools this agent would see on that session's model, and the size of their schemas. They travel beside the prompt, not in `text`. |
-| `tools.catalog` | `openai-compatible` only: what the request carries. `{mode, direct, deferred, sentSchemaChars, listingChars}`. In mode `catalog`, `direct` tools go with their schemas plus `tool_search` and `tool_call` (`sentSchemaChars`), and the `deferred` ones are named at the end of the system prompt (`listingChars`, not part of `text`). |
+| `tools.catalog` | `openai-compatible` only: what the request carries. `{mode: "catalog"|"all", direct, deferred, sentSchemaChars, listingChars}`, where `direct` and `deferred` are tool counts. In `catalog` mode the direct tools go with their schemas plus `tool_search` and `tool_call` (`sentSchemaChars`), and the deferred ones are named at the end of the system prompt (`listingChars`, not part of `text`); in `all` mode every tool goes direct. |
 | `budgets` | `promptBudgets` from the config. |
 | `notIncluded` | What a turn sends in addition. |
 
@@ -1729,7 +1732,7 @@ Starts a task and returns at once.
 |---|---|---|
 | `agent` | yes | The agent that does the work. |
 | `session` | yes | The session to run in. A slug that does not exist is created. An exact id that does not exist answers `404`. |
-| `text` | yes | The brief. |
+| `text` | no | The brief. |
 | `parent_agent`, `parent_session` | no | Who is told when the task ends. Default: `from_agent`, else the agent itself. |
 | `from_agent` | no | Marks the turn as written by that agent. |
 | `subagent_depth` | no | Nesting depth. |
@@ -1806,10 +1809,13 @@ that had already ended are skipped. `404` for an unknown id.
 Agents of kind `builder` keep a mode, a phase, a plan file and a task
 list per session, and at most one open question to the person. The web
 client's task panel uses these routes, and so do the builder's own
-tools `todo_write` and `plan_write`. `POST …/ask` (the `ask_user` tool)
-serves every agent: a chat agent's question outside a turn a person
-started returns `{answered: false}` at once, and waits 10 minutes by
-default instead of 30.
+tools `todo_write` and `plan_write`.
+
+`POST …/ask` (the `ask_user` tool) serves every agent. A builder waits,
+30 minutes by default. For a chat agent: in a turn nobody watches it
+returns `{answered: false}` at once; in a turn a person started it
+returns at once and the question stays open; in a task from another
+system over A2A it waits, 10 minutes by default.
 
 ### `GET /agents/:agent/sessions/:session/builder`
 
@@ -1897,7 +1903,7 @@ turn a person started does not block: it returns at once with
 | `options` | yes | 2 to 6 of `{label, description?}`. |
 | `header` | no | A short title, at most 40 characters. |
 | `multiple` | no | `true` allows several answers. |
-| `timeout_ms` | no | Default 30 minutes, at most 4 hours. |
+| `timeout_ms` | no | Default 30 minutes for a builder, 10 for a chat agent; at most 4 hours. |
 
 Returns `{answered, answers: string[], text?}`. A second question on
 the same session replaces the first, which returns unanswered.
@@ -2166,8 +2172,9 @@ Without `wait`: `{started: true, wait: false, message}`. With it:
 
 These routes move a grown wiki onto the folder template, in steps:
 plan, refine, approve, execute. Plan ids look like `20260929-104047`.
-Each plan has a folder under `~/.somora/wiki-migration/<id>/`. All
-write routes answer `400` when the wiki is off or the id is malformed.
+Each plan has a folder under `~/.somora/wiki-migration/<id>/`. The
+write routes answer `400` when the wiki is off (all but approve) or the
+id is malformed.
 
 ### `POST /wiki/migration/plan`
 
@@ -2520,7 +2527,8 @@ Whether image generation is on. Returns `{enabled: false}`, or
 
 ### `GET /images`
 
-The generated images, newest first.
+Every generated media record, images and videos, newest first;
+`GET /media?kind=image` lists images only.
 
 | Query | Default | Meaning |
 |---|---|---|
@@ -2777,7 +2785,7 @@ session and on its stream like any other. The body is
 | Form field | Required | Meaning |
 |---|---|---|
 | `audio` | yes | The recording. |
-| `agent` | yes | Agent name. When left out, the first agent is used. |
+| `agent` | no | Agent name. When left out, the alphabetically first agent is used. |
 | `session` | no | Default `main`. A slug that does not exist is created. An exact id that does not exist answers `404`. |
 | `voice`, `language` | no | For the spoken reply. Default: `tts.voice`, `tts.language`. |
 
@@ -2796,7 +2804,8 @@ A reply that is mostly code or tables is replaced by a short spoken
 note that points to the chat.
 
 `502` when transcription returned nothing, the agent gave no reply or
-speech failed.
+speech failed. `404` for an unknown agent or an exact session id that
+does not exist.
 
 ### `assistant_audio` SSE event
 
@@ -3236,10 +3245,11 @@ The tool's actions are `create`, `dry_run`, `update`, `list`, `get`,
 ## A2A endpoint
 
 somora's agents as A2A agents ([A2A](a2a.md#taking-work-in)). These
-paths are the only ones the login key does not guard: the cards are
-public, and the JSON-RPC endpoint checks the peer tokens of
-`a2a.peers` (`Authorization: Bearer <token>`). Without peers, all of
-them answer `404`.
+paths are the only data routes the login key does not guard: the
+cards are public, and the JSON-RPC endpoint checks the peer tokens of
+`a2a.peers` (`Authorization: Bearer <token>`). Without peers the cards
+and the endpoint answer `404`; `/a2a/files/<token>` links keep working
+until they expire.
 
 ### `GET /a2a/agents/:agent/.well-known/agent-card.json` · `GET /a2a/agents/:agent/.well-known/agent.json`
 
@@ -3394,7 +3404,8 @@ The configured systems, their agents and open connections.
 ### `GET /external/:system/badge`
 
 The badge image configured for a system (`badge:` with a png, svg or
-webp path, at most 256 KB). `404` when the system has no badge image.
+webp path, at most 256 KB). `404` when the system has no badge image or
+the file is missing, `422` when it is larger than 256 KB or not a file.
 
 ### `GET /agents/:agent/sessions/:session/question`
 
@@ -3439,7 +3450,7 @@ The state of each server.
 
 ```json
 { "enabled": true,
-  "servers": { "<name>": { "state": "connected", "toolCount": 12, "transport": "stdio",
+  "servers": { "<name>": { "state": "connected", "toolCount": 12, "transport": "streamable-http",
                            "lastConnectedAt": 1789299000000, "consecutiveFailures": 0 } } }
 ```
 

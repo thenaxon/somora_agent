@@ -808,10 +808,10 @@ const ToolListPatchSchema = z
   .object({
     add: z.array(z.string().min(1)).optional(),
     remove: z.array(z.string().min(1)).optional(),
-    /** openai-compatible only: `all` sends every tool's schema (the
-     *  default), `catalog` sends the list above plus tool_search and
-     *  tool_call, the rest by name at the end of the system prompt. A
-     *  model's value wins over its engine's. */
+    /** openai-compatible only: `catalog` (the default) sends the list
+     *  above plus tool_search and tool_call, the rest by name at the end
+     *  of the system prompt; `all` sends every tool's schema. A model's
+     *  value wins over its engine's. */
     mode: z.enum(['all', 'catalog']).optional(),
   })
   .strict();
@@ -833,9 +833,9 @@ const ToolSearchSettingsSchema = z
  * Which somora tools sit in the model's direct list instead of behind
  * the engine's tool search (src/tools/catalog.ts). claude-cli marks
  * them alwaysLoad, codex-cli leaves only them undeferred; grok-cli
- * cannot (it offers search_tool/use_tool). openai-compatible sees every
- * tool unless `mode: catalog` is set for it or for a model (then the
- * rest is found with tool_search and run with tool_call). Always cut to
+ * cannot (it offers search_tool/use_tool). openai-compatible gets the
+ * list too, and finds the rest with tool_search and runs it with
+ * tool_call, unless `mode: all` is set for it or for a model. Always cut to
  * the tools a turn offers: a tool the agent may not use never shows up.
  * A builder's whole (small) set is direct.
  */

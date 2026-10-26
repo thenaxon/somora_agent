@@ -159,7 +159,8 @@ user only; somora tightens an older folder at the next start.
 
 Agents are not sandboxed. The `exec` tool runs shell commands as the
 user somora runs as, and the file tools read and write wherever that
-user can. A new agent sees every tool until you restrict it.
+user can. A new chat agent may use every tool until you restrict it; a
+builder gets its short coding set.
 
 The rules below stop accidents and keep secrets out of the model by
 mistake. They are not a boundary against a model that works against

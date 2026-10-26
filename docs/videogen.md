@@ -181,7 +181,7 @@ decides the field name per model, in this order:
 |---|---|
 | `openai` | `first_frame` as `input_reference`. OpenAI's video API takes one opening image and nothing else. |
 | `veo` | `first_frame` as `image`, `last_frame` as `lastFrame`, up to three `reference_image` as `referenceImages`, inside Google's `instances`. |
-| `passthrough` | `first_frame` and `last_frame` under those names, and up to four `reference_image` as `image[]`, exactly as before. |
+| `passthrough` | `first_frame` and `last_frame` under those names, and up to four `reference_image` as `image[]`. |
 
 A type the model does not take is refused before the request goes out,
 with the way to add it.
@@ -300,8 +300,8 @@ Every finished video gets a still, stored beside it as
   (`variant=thumbnail`) has its still downloaded with the video.
 - Otherwise somora cuts a frame a tenth of the way in, with `ffmpeg`
   when the host has it.
-- A video made before that gets its still the first time the gallery
-  shows it.
+- A video without a still gets one the first time the gallery shows
+  it.
 
 Without ffmpeg and without a provider still, the gallery shows the
 video's own first frame instead.
@@ -407,7 +407,7 @@ videoGen:
         variants: [video, thumbnail]
         maxReferences: 1
 
-    - name: veo             # unverified, see "The three dialects"
+    - name: veo
       provider: vertex
       model: veo-3
       wire: veo
@@ -576,7 +576,7 @@ for example `videogen.job_failed` and `videogen.job_timeout`.
   not say whether it stops a running render, so somora does not guess.
 - **No cost metering** on pass-through routes. A proxy that only
   forwards requests does not count cost.
-- **`veo` and live `openai` are unverified.** See "The three dialects".
+- **Live `openai` is unverified.** See "The three dialects".
 - **No upload step.** Files go inline, as multipart parts or `data:`
   URIs. A provider that wants large files uploaded first is not
   supported yet.

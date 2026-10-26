@@ -160,8 +160,9 @@ The wake reads:
 (navigation, clicks or typing) and handed it back to you.
 ```
 
-In the chat a wake shows as a centered divider, `browser · <agent> ·
-handed back` or `browser · <agent> · activity`. Messages carry
+In the chat a wake shows as a centered divider, `browser · <window> ·
+handed back` or `browser · <window> · activity`, with the window's id
+without its `agent:` prefix. Messages carry
 `from_system: 'browser'`, like tmux and sentinel wakes.
 
 ## In the web client

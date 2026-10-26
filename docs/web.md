@@ -130,13 +130,15 @@ window stays in the taskbar.
 
 Maximize (the green button, or a
 double-click on the title bar) fills the desktop above the taskbar;
-click it again, or drag the title bar, and the window returns to its
-old size and place. Arrange windows also brings maximized windows back
+click it again or double-click the title bar, and the window returns to
+its old size and place. Drag the title bar, and it takes its old size
+under the cursor. Arrange windows also brings maximized windows back
 into the tiling. Closing a window never ends the conversation or
 disturbs other clients.
 
-Windows never leave the desktop. Dragging and resizing stop at the
-edges, and no window can cover the taskbar. When the browser gets
+Dragging stops at the top, the left and the taskbar; on the right a
+window can be pushed off until 100 px of it remain visible. Resizing
+stops at the edges, and no window can cover the taskbar. When the browser gets
 smaller, windows that no longer fit are pushed back inside, and shrunk
 only when they are bigger than the desktop. Nothing grows back by
 itself: use **Restore layout** in the screen menu for that.
@@ -446,7 +448,7 @@ Dividers name where the message came from:
 |---|---|
 | `Sentinel · <trigger>` | A sentinel trigger fired. |
 | `tmux · <session>` | The tmux attention watcher. |
-| `browser · <name> · handed back` | You gave the shared browser back. |
+| `browser · <window> · handed back` | You gave the browser window back. |
 | `voice` | A question from a running call. |
 | `agent answer · <agent>` | A late answer to an `agent_ask`. |
 | `subagent · <task>` | A background sub-agent finished. |
@@ -694,7 +696,7 @@ These features have their own pages. In short:
 |---|---|
 | **abilities** | A matrix of tools and skills per agent, plus the health of external MCP servers. A switch takes effect on the agent's next turn. On `codex-cli` the chat shows a `tools changed` marker. The dream tools and the wiki writing tools follow the agent's dreams switch instead; a note in their group says so. |
 | **team** | Drag agents onto their superior, edit titles and rules, and preview the `# Your team` block every agent gets. Saved to `~/.somora/team.yaml`. |
-| **sentinel** | The triggers that wake agents on their own, with history and a test button. A check trigger also shows its checks and wakes, the last check, the decision model's answer, its script (read only), and a dry run in place. |
+| **sentinel** | The triggers that wake agents on their own, with history and a test button. A check trigger also shows its checks and wakes, the last check, the decision model's answer (item by item for a check with `perItem`, with each item's answer in the history), its script (read only), and a dry run in place. |
 | **browser** | One row per agent window of the shared browser. A row opens the live view with tabs, address bar and take-over buttons. A waiting handoff also shows as an **Open browser** notice in its chat. |
 | **media** | The form for generating images and videos, and the gallery. |
 | **wiki** | The shared wiki in three columns: folder tree, page, links and graph. Read-only. `[[wikilinks]]` are clickable. |
@@ -775,6 +777,7 @@ controls on this page:
 | `GET /chat/stream` | Live events of one window |
 | `POST /chat/send`, `POST /chat/abort` | Send and Stop |
 | `DELETE /chat/queue/:id` | ↩ edit and × in the queue |
+| `GET /agents/:agent/sessions/:session/question`, `POST …/questions/:id/answer` | The question card: read on mount, on every question event and after a reconnect; the answer |
 | `GET /agents/:agent/sessions/:session/work` | Work badge and list, refetched on every queue event and every 3 s while the list is open |
 | `PUT /agents/<a>/sessions/<s>/model` | Model switch |
 | `GET /agents/:agent/persona`, `PUT /agents/:agent/dreams`, `PUT /agents/:agent/a2a` | Agent window, its dreams and A2A switches |
