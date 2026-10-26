@@ -68,6 +68,7 @@ const FIELD = {
   cwd: 'create only — working directory of the new session.',
   keys:
     'send only — text to type. Each \\n is an Enter (end with \\n to run a shell command). ' +
+    'Into a Python REPL (3.13+) send lines without leading spaces: it indents by itself. ' +
     'Not together with key.',
   key:
     'send only — key names, space-separated: Escape, C-c, C-u, Tab, BSpace, Up, F1, "C-x C-c" ' +
