@@ -5,7 +5,8 @@
 // names of agents that no longer exist are kept (harmless) until the
 // next save from a client that sends only the agents it shows.
 
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -39,9 +40,23 @@ export function parseAgentOrder(body: unknown): { ok: true; order: string[] } | 
   return { ok: true, order: order as string[] };
 }
 
-export async function writeAgentOrder(order: readonly string[], path = agentOrderPath()): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp.${process.pid}.${Date.now().toString(36)}`;
-  await writeFile(tmp, `${JSON.stringify({ order }, null, 2)}\n`, 'utf8');
-  await rename(tmp, path);
+// One save after the other: two devices saving at once each get their
+// own temp file and their rename in turn — the later one wins whole,
+// never a mix (review 2026-10-26).
+let saving: Promise<void> = Promise.resolve();
+
+export function writeAgentOrder(order: readonly string[], path = agentOrderPath()): Promise<void> {
+  const run = saving.then(async () => {
+    await mkdir(dirname(path), { recursive: true });
+    const tmp = `${path}.tmp.${process.pid}.${randomBytes(6).toString('hex')}`;
+    try {
+      await writeFile(tmp, `${JSON.stringify({ order }, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+      await rename(tmp, path);
+    } catch (err) {
+      await rm(tmp, { force: true }).catch(() => {});
+      throw err;
+    }
+  });
+  saving = run.catch(() => {});
+  return run;
 }

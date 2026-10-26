@@ -2,7 +2,7 @@
 // Returns the list + loading/error states. Re-polls every 30s so
 // newly-added agents show up without a manual reload.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { applyAgentOrder } from './agent-order';
 
 export interface AgentInfo {
@@ -27,12 +27,16 @@ export function useAgents() {
   const [all, setAll] = useState<AgentInfo[]>([]);
   // The tile order, the same on every device (GET/PUT /mobile-agent-order).
   const [order, setOrder] = useState<string[]>([]);
+  // Bumped by every save: a poll that started before it brings an older
+  // order and must not put it back (review 2026-10-26).
+  const orderRev = useRef(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
+      const rev = orderRev.current;
       try {
         const [res, saved] = await Promise.all([
           fetch('/agents'),
@@ -44,7 +48,7 @@ export function useAgents() {
         // Disabled agents are filtered server-side already; defensive
         // filter here just in case. The order is applied below.
         setAll(list.filter((a) => a.enabled !== false));
-        if (saved?.order) setOrder(saved.order);
+        if (saved?.order && rev === orderRev.current) setOrder(saved.order);
         setError(null);
       } catch (err) {
         if (cancelled) return;
@@ -68,6 +72,7 @@ export function useAgents() {
    *  (and the old order back) when the server refuses. */
   const saveOrder = useCallback(async (next: string[]): Promise<string | null> => {
     const before = order;
+    const rev = ++orderRev.current;
     setOrder(next);
     try {
       const res = await fetch('/mobile-agent-order', {
@@ -78,7 +83,8 @@ export function useAgents() {
       if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? `HTTP ${res.status}`);
       return null;
     } catch (err) {
-      setOrder(before);
+      // Back to the old order — unless a newer save came meanwhile.
+      if (rev === orderRev.current) setOrder(before);
       return `Order not saved: ${(err as Error).message}`;
     }
   }, [order]);

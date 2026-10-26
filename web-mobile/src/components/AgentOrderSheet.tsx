@@ -49,7 +49,8 @@ export function AgentOrderSheet({ agents, onClose, onSave }: Props) {
         downOnBackdrop.current = e.target === e.currentTarget;
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget && downOnBackdrop.current) onClose();
+        // Not while saving: the save would close a sheet opened after it.
+        if (e.target === e.currentTarget && downOnBackdrop.current && !saving) onClose();
       }}
     >
       <div className="work-sheet order-sheet" role="dialog" aria-label="Agent order" onClick={(e) => e.stopPropagation()}>
@@ -63,7 +64,7 @@ export function AgentOrderSheet({ agents, onClose, onSave }: Props) {
             </button>
           </div>
           <div className="order-hint">Top of the list is the first tile on the left. The same on every device.</div>
-          <ol className="order-list">
+          <ol className={`order-list ${saving ? 'saving' : ''}`} aria-busy={saving}>
             {list.map((name, i) => {
               const a = byName.get(name);
               const dragging = drag?.index === i;
@@ -77,6 +78,7 @@ export function AgentOrderSheet({ agents, onClose, onSave }: Props) {
                     className="order-handle"
                     aria-label={`Drag ${name}`}
                     onPointerDown={(e) => {
+                      if (saving) return;
                       (e.target as HTMLElement).setPointerCapture(e.pointerId);
                       start.current = { y: e.clientY, index: i };
                       setDrag({ index: i, dy: 0 });
@@ -106,10 +108,10 @@ export function AgentOrderSheet({ agents, onClose, onSave }: Props) {
                     {a?.icon ?? '🤖'}
                   </span>
                   <span className="order-name">{name}</span>
-                  <button type="button" className="order-move" aria-label={`Move ${name} up`} disabled={i === 0} onClick={() => setList((l) => moveItem(l, i, i - 1))}>
+                  <button type="button" className="order-move" aria-label={`Move ${name} up`} disabled={saving || i === 0} onClick={() => setList((l) => moveItem(l, i, i - 1))}>
                     ↑
                   </button>
-                  <button type="button" className="order-move" aria-label={`Move ${name} down`} disabled={i === list.length - 1} onClick={() => setList((l) => moveItem(l, i, i + 1))}>
+                  <button type="button" className="order-move" aria-label={`Move ${name} down`} disabled={saving || i === list.length - 1} onClick={() => setList((l) => moveItem(l, i, i + 1))}>
                     ↓
                   </button>
                 </li>

@@ -1018,7 +1018,9 @@ button { cursor: pointer; }
 /* ── Status banners ─────────────────────────────────────────────── */
 
 .banner {
-  padding: 8px 14px;
+  /* Banners sit between the header and the avatar row, in the top band a
+     side inset covers (iPhone Duo folded) — kept clear like the header. */
+  padding: 8px calc(14px + var(--safe-right)) 8px calc(14px + var(--safe-left));
   font-size: 12px;
   text-align: center;
   border-bottom: 1px solid var(--line);
@@ -1562,3 +1564,4 @@ button { cursor: pointer; }
   font-size: 16px;
 }
 .order-move:disabled { opacity: 0.25; }
+.order-list.saving { opacity: 0.6; pointer-events: none; }
