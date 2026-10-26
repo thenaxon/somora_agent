@@ -260,7 +260,12 @@ export class OAuthRefreshProvider implements CredentialProvider {
         // "A design credential is already stored" while the dead key
         // sits in the file, and nobody should have to hand-edit
         // .credentials.json to get out of that (2026-08-31 report).
-        const retiredAs = await this.retireCredential();
+        const retiredAs = await this.retireCredential(cred.refreshToken);
+        if (retiredAs === null) {
+          // A new login landed while the refresh was on its way: the
+          // rejection was for the old token, the new one stays.
+          throw new Error(`MCP oauth refresh rejected (HTTP ${status}) for "${this.activeKeyLabel()}" — but a newer credential is in place now; the next try uses it.`);
+        }
         throw new Error(
           `MCP oauth refresh rejected (HTTP ${status}) for "${this.activeKeyLabel()}" — refresh token ` +
             `expired/revoked. The stale entry was moved to "${retiredAs}" in ${this.file}; ` +
@@ -312,14 +317,22 @@ export class OAuthRefreshProvider implements CredentialProvider {
    *  The same dead token is never kept twice: when a retired copy with
    *  this refresh token already exists, the entry is just removed. At
    *  most MAX_STALE_PER_KEY copies stay, the newest ones. */
-  private async retireCredential(): Promise<string> {
+  private async retireCredential(attempted: string): Promise<string | null> {
     const key = this.usedKey ?? this.keys()[0]!;
     let retiredAs = `${key}_stale_${new Date().toISOString().replace(/[:.]/g, '-')}`;
     let duplicate = false;
     let pruned = 0;
+    let newer = false;
     await this.rewriteFile((doc) => {
       const entry = doc[key] as OAuthCredential | undefined;
       if (entry === undefined) return;
+      // Only the token whose refresh was refused is dead. A login written
+      // while the refresh was on its way (credential sync from
+      // ~/.claude) is new and must stay (review 2026-10-26).
+      if (entry.refreshToken !== attempted) {
+        newer = true;
+        return;
+      }
       const stale = Object.keys(doc).filter((k) => isStaleKeyOf(k, key));
       const same = entry.refreshToken
         ? stale.find((k) => (doc[k] as OAuthCredential | undefined)?.refreshToken === entry.refreshToken)
@@ -339,6 +352,12 @@ export class OAuthRefreshProvider implements CredentialProvider {
         pruned++;
       }
     });
+    if (newer) {
+      logger.info({ msg: 'mcp.hub.oauth_retire_skipped', key, reason: 'a newer credential replaced the refused one', file: this.file });
+      this.usedKey = null;
+      this.lastExpiresAt = undefined;
+      return null;
+    }
     logger.warn({ msg: 'mcp.hub.oauth_credential_retired', key, retiredAs, duplicate, pruned, file: this.file });
     this.usedKey = null;
     this.lastExpiresAt = undefined;

@@ -44,6 +44,8 @@ void assert;
 // ── fake token endpoint: rotates access+refresh, or rejects ────────
 let tokenSeq = 0;
 let tokenMode: 'ok' | 'reject' = 'ok';
+// Runs while a refresh request is on its way, before the answer.
+let duringRefresh: (() => void) | null = null;
 let tokenExpiresInSec = 3600;
 const refreshCalls: Array<{ refresh_token: string; client_id?: string }> = [];
 const validBearers = new Set<string>(['access-0']);
@@ -54,6 +56,11 @@ const tokenSrv: Server = createServer((req, res) => {
   req.on('end', () => {
     const j = JSON.parse(body || '{}') as { refresh_token: string; client_id?: string; grant_type?: string };
     refreshCalls.push({ refresh_token: j.refresh_token, ...(j.client_id ? { client_id: j.client_id } : {}) });
+    if (duringRefresh) {
+      const hook = duringRefresh;
+      duringRefresh = null;
+      hook();
+    }
     if (tokenMode === 'reject') {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'invalid_grant' }));
@@ -332,6 +339,33 @@ tokenMode = 'ok';
 await internals.keepaliveSweep();
 for (let i = 0; i < 50 && hub.status().design?.state !== 'connected'; i++) await delay(100);
 check('5: new login → connected on its own', hub.status().design?.state === 'connected', JSON.stringify(hub.status().design));
+
+// 6. A login lands while a refused refresh is on its way (review
+// 2026-10-26): the refusal was for the old token, the new login stays.
+{
+  const c = readCreds() as Record<string, unknown>;
+  c.designOauth = { accessToken: 'access-old', refreshToken: 'refresh-old', expiresAt: Date.now() + 1_000 };
+  writeFileSync(credFile, JSON.stringify(c, null, 2));
+}
+tokenMode = 'reject';
+duringRefresh = () => {
+  const c = readCreds() as Record<string, unknown>;
+  c.designOauth = { accessToken: 'access-landed', refreshToken: 'refresh-landed', expiresAt: Date.now() + 3_600_000 };
+  writeFileSync(credFile, JSON.stringify(c, null, 2));
+};
+const callsBefore6 = refreshCalls.length;
+internals.servers.get('design')!.retryNotBefore = 0;
+await hub.reconnect('design').catch(() => undefined);
+for (let i = 0; i < 30 && refreshCalls.length === callsBefore6; i++) await delay(50);
+await delay(150);
+{
+  const c = readCreds();
+  check('6: the refused old token was refreshed', refreshCalls.slice(callsBefore6).some((r) => r.refresh_token === 'refresh-old'), JSON.stringify(refreshCalls.slice(callsBefore6)));
+  check('6: the login that landed meanwhile stays the live key', c.designOauth?.refreshToken === 'refresh-landed', JSON.stringify(c.designOauth));
+  const stale = Object.keys(c).filter((k) => k.startsWith('designOauth_stale_'));
+  check('6: … and is not kept as stale', !stale.some((k) => c[k]?.refreshToken === 'refresh-landed'), stale.join(','));
+}
+tokenMode = 'ok';
 await hub.shutdown();
 
 await upstream.close();
