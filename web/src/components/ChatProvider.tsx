@@ -514,6 +514,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           openedOnce = true;
           return;
         }
+        // A question asked or answered meanwhile: the card reads it again.
+        emitTurnEvent(key, 'question');
         api
           .history(agent, session, { limit: INITIAL_HISTORY_LIMIT, signal: ac.signal })
           .then((res) => {

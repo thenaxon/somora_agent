@@ -862,10 +862,15 @@ export const openAiCompatibleEngine: AgentEngine = {
         if (newCompaction) {
           verifyCompaction = true;
           compactions = [...(compactions ?? []), newCompaction];
-          await metaStore.set(agent, session, {
-            ...meta,
-            compactions,
-          });
+          // Merged into the latest meta, not the snapshot from the turn's
+          // start: compaction takes a while, and a question answered
+          // meanwhile (or a model switch) must not come back (review
+          // 2026-10-26).
+          const added = newCompaction;
+          await metaStore.update(agent, session, (latest) => ({
+            ...latest,
+            compactions: [...((latest as OpenAiCompatibleMeta).compactions ?? []), added],
+          }));
           meta = { ...meta, compactions };
           preTurnCompaction = { compaction: newCompaction };
           logger.info({
@@ -1998,7 +2003,10 @@ export const openAiCompatibleEngine: AgentEngine = {
               route.kind === 'search'
                 ? runToolSearch(catalogPlan!, toolList, parsedArgs)
                 : ({ ok: false, error: route.error } as const);
-            if (!answered.ok) {
+            // A search that found nothing counts as failing too: the same
+            // empty search three times ends the tool use like a refused
+            // call does (docs/tools.md; review 2026-10-26).
+            if (!answered.ok || foundNothing(answered.data)) {
               const sig = `${call.function.name}:${call.function.arguments}`;
               const n = (metaFailures.get(sig) ?? 0) + 1;
               metaFailures.set(sig, n);
@@ -2680,9 +2688,11 @@ export const openAiCompatibleEngine: AgentEngine = {
           }
         }
         if (forced) {
-          const freshMeta = (await metaStore.get(agent, session)) as OpenAiCompatibleMeta;
-          const nextCompactions = [...(freshMeta.compactions ?? []), forced];
-          await metaStore.set(agent, session, { ...freshMeta, compactions: nextCompactions });
+          const added = forced;
+          await metaStore.update(agent, session, (latest) => ({
+            ...latest,
+            compactions: [...((latest as OpenAiCompatibleMeta).compactions ?? []), added],
+          }));
           logger.info({
             msg: 'engine.compaction_done',
             engine: ENGINE,
@@ -2754,3 +2764,13 @@ export const openAiCompatibleEngine: AgentEngine = {
     }
   },
 };
+
+/** A tool_search answer with no tool in it: no match, or only names
+ *  that do not exist. */
+function foundNothing(data: unknown): boolean {
+  const d = data as { matches?: unknown[]; tools?: unknown[] } | null;
+  if (!d) return false;
+  if (Array.isArray(d.matches)) return d.matches.length === 0;
+  if (Array.isArray(d.tools)) return d.tools.length === 0;
+  return false;
+}

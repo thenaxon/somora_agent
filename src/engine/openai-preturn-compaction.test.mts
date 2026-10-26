@@ -26,13 +26,19 @@ function check(name: string, cond: boolean, detail = ''): void {
 }
 
 // Fake backend: the summary request (stream:false) gets a short summary,
-// every chat request a one-word answer.
+// every chat request a one-word answer. `duringSummary` runs while the
+// summary is being written (another writer changing the session meta).
+let duringSummary: (() => void) | null = null;
 const server = createServer((req, res) => {
   let body = '';
   req.on('data', (c: Buffer) => (body += c.toString()));
   req.on('end', () => {
     const parsed = JSON.parse(body) as { stream?: boolean };
     if (!parsed.stream) {
+      if (duringSummary) {
+        duringSummary();
+        duringSummary = null;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -136,6 +142,24 @@ const markersOf = (events: NormalizedEvent[]) =>
   check('after turn_start, before the reply', kinds[0] === 'turn_start' && iMeta > 0 && iMeta < kinds.indexOf('assistant_message'), kinds.join(','));
   check('one compaction stored', (store.data.compactions as unknown[] | undefined)?.length === 1, JSON.stringify(store.data));
   check('the answer still came', (events.find((e) => e.kind === 'assistant_message') as { text?: string } | undefined)?.text === 'pong');
+}
+
+// ── another writer during the summary (review 2026-10-26) ─────────
+{
+  // A question card answered while the summary is written removes the
+  // open question; the compaction must merge into that, not write back
+  // the snapshot from the turn's start (which brought the question back).
+  const store = memStore();
+  store.data = { openQuestion: { id: 'q1' }, model: 'old' } as unknown as SessionMeta;
+  duringSummary = () => {
+    const { openQuestion: _gone, ...rest } = store.data as Record<string, unknown>;
+    store.data = { ...rest, model: 'switched' } as SessionMeta;
+  };
+  await run(historyOf(8, 200), 1_000, store);
+  const d = store.data as Record<string, unknown>;
+  check('answered question stays gone', d.openQuestion === undefined, JSON.stringify(d.openQuestion));
+  check('a change made meanwhile stays', d.model === 'switched', String(d.model));
+  check('the compaction is stored too', (d.compactions as unknown[] | undefined)?.length === 1, JSON.stringify(d.compactions));
 }
 
 // ── the tight case: the cushion covers everything, one exchange kept ──

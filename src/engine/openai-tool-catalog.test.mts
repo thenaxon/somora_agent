@@ -321,6 +321,19 @@ test('the third identical failing tool_call ends the tool use with a forced answ
   assert.deepEqual(invoked, []);
 });
 
+test('the third identical search that finds nothing ends the tool use too', async (t) => {
+  const { server, port } = await backend();
+  t.after(() => server.close());
+  requests.length = 0;
+  const empty = { call: { name: TOOL_SEARCH, args: { queries: ['zzqx flurble'] } } };
+  const missing = { call: { name: TOOL_SEARCH, args: { names: ['no_such_tool'] } } };
+  script = [empty, missing, empty, missing, empty, { text: 'gave up cleanly' }];
+  const events = await run(port, { mode: 'catalog' });
+  assert.equal(requests.length, 6, 'the third identical empty search ends it');
+  assert.equal(requests[5]!.tools, undefined, 'the forced answer is asked without tools');
+  assert.equal((events.find((e) => e.kind === 'assistant_message') as { text?: string }).text, 'gave up cleanly');
+});
+
 test("somora's own deferred tools are found by the words a model uses", () => {
   // Live 2026-10-26: "automation schedule tasks reminder" returned five
   // sub-agent tools and no sentinel; sentinel's first sentence named no

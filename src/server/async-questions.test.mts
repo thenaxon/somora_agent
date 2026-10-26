@@ -13,7 +13,7 @@ import { Hono } from 'hono';
 import { ConfigSchema } from '../config/types.ts';
 import { setConfig } from './server-state.ts';
 import { TURN_ASKER_KEY, TURN_ATTENDED_KEY, askerOf, asksWithoutWaiting } from './ask-attended.ts';
-import { OPEN_QUESTION_KEY, askWithoutWaiting, cleanParts, clearAsyncQuestion, composeAnswerMessage, openAsyncQuestion } from './async-questions.ts';
+import { OPEN_QUESTION_KEY, askWithoutWaiting, askedQuestionSince, cleanParts, clearAsyncQuestion, composeAnswerMessage, openAsyncQuestion } from './async-questions.ts';
 import { pendingQuestion, answerQuestion, type PendingQuestion } from './builder-questions.ts';
 import { registerBuilderRoutes } from './routes/builder.ts';
 import { registerExternalRoutes } from './routes/external.ts';
@@ -132,6 +132,16 @@ test('a click sends the choice as the person’s next message and removes the ca
   const settled = events.find((e) => e.event.event === 'question_answered');
   assert.ok(settled && settled.event.event === 'question_answered' && settled.event.data.choice === 'Stop here');
   assert.equal((await answer(id, questionId, { answers: ['Stop here'] })).status, 404, 'answered once only');
+});
+
+test('a question answered before its turn ends still counts as asked in that turn', async () => {
+  const id = await personTurn('async-answered-early');
+  const start = Date.now();
+  const { questionId } = (await (await ask(id)).json()) as { questionId: string };
+  assert.equal((await answer(id, questionId, { answers: ['Stop here'] })).status, 200);
+  assert.equal(await getQuestion(id), null, 'the card is gone');
+  assert.equal(await askedQuestionSince('ada', id, start), true, 'the turn that asked is still complete');
+  assert.equal(await askedQuestionSince('ada', id, Date.now() + 1000), false, 'a later turn did not ask');
 });
 
 test('an empty answer is refused and the card stays', async () => {

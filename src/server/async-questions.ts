@@ -21,6 +21,10 @@ import type { TurnOrigin } from './turn-origin-kind.ts';
 import { openWork } from './work-ledger.ts';
 
 export const OPEN_QUESTION_KEY = 'openQuestion';
+/** When the session's last non-waiting question was asked — kept after
+ *  the answer, unlike the open question: a turn that only asked stays
+ *  complete even when the card is answered before the turn ends. */
+export const LAST_ASKED_KEY = 'lastQuestionAskedAt';
 
 const MAX_PARTS = 6;
 
@@ -68,6 +72,14 @@ export async function openAsyncQuestion(agent: string, session: string): Promise
   return readStored((await sessionMetaStore.get(agent, session)) as Record<string, unknown>);
 }
 
+/** Did this session ask a non-waiting question at or after `since`
+ *  (ms)? Answered or not. */
+export async function askedQuestionSince(agent: string, session: string, since: number): Promise<boolean> {
+  const meta = (await sessionMetaStore.get(agent, session)) as Record<string, unknown>;
+  const last = typeof meta[LAST_ASKED_KEY] === 'number' ? (meta[LAST_ASKED_KEY] as number) : 0;
+  return Math.max(last, readStored(meta)?.askedAt ?? 0) >= since;
+}
+
 /** The SSE `question_asked` payload of a question. */
 export function questionAskedData(q: PendingQuestion): Extract<SseEvent, { event: 'question_asked' }>['data'] {
   return {
@@ -106,7 +118,7 @@ export async function askWithoutWaiting(args: { agent: string; session: string; 
   let prior: PendingQuestion | null = null;
   await sessionMetaStore.update(agent, session, (m) => {
     prior = readStored(m as Record<string, unknown>);
-    return { ...m, [OPEN_QUESTION_KEY]: q };
+    return { ...m, [OPEN_QUESTION_KEY]: q, [LAST_ASKED_KEY]: q.askedAt };
   });
   const replaced = prior as PendingQuestion | null;
   if (replaced) {

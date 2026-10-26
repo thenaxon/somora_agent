@@ -54,7 +54,7 @@ import { claimWorkdir, describeClaim, noteToolCall, workdirClaimedBy } from './b
 import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import { ASYNC_QUESTIONS_ITEM, type ResolvedAttachment } from '../engine/types.ts';
-import { askWithoutWaiting, cleanParts, openAsyncQuestion } from './async-questions.ts';
+import { askWithoutWaiting, cleanParts, askedQuestionSince } from './async-questions.ts';
 import { turnAlwaysVisible, turnCatalogSettings } from './turn-tool-catalog.ts';
 import { resolveAttachmentForModel } from '../attachments/store.ts';
 import { listRecords as listMediaRecords, readRecord as readMediaRecord } from '../media/records.ts';
@@ -1550,7 +1550,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   // answer, so no text is not an empty answer.
   const askedOnly =
     !errorMessage && !degradedReason && finalText.trim().length === 0
-      ? ((await openAsyncQuestion(agent, session).catch(() => null))?.askedAt ?? 0) >= start
+      ? await askedQuestionSince(agent, session, start).catch(() => false)
       : false;
   const outcome: ChatTurnOutcome = errorMessage
     ? 'failed'

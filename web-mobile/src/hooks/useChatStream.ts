@@ -258,6 +258,9 @@ export function useChatStream(agent: string | null, session: string = 'main'): C
         return;
       }
       void syncHistory();
+      // A question asked or answered while the connection was down sent
+      // its event to nobody: the card reads the open question again.
+      emitTurnEvent('question');
     };
     const onError = () => {
       if (cancelled) return;
