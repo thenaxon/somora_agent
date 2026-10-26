@@ -16,6 +16,13 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     error: 'codex error',
     reconnecting: 'reconnecting',
     transport_fallback: 'transport fallback',
+    context_compacted: 'context compacted',
+  },
+  'claude-cli': {
+    context_compacted: 'context compacted',
+  },
+  'grok-cli': {
+    context_compacted: 'context compacted',
   },
   somora: {
     session_model: 'model switched',

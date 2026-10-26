@@ -811,9 +811,10 @@ export function App({
         return;
       }
       case 'engine_meta': {
-        // somora's own notes (model switched, compacted by hand) are for
-        // the reader, not engine internals: shown with tools hidden too.
-        if (!showToolsRef.current && ev.engine !== 'somora') return;
+        // somora's own notes (model switched, compacted by hand) and
+        // every compaction are for the reader, not engine internals:
+        // shown with tools hidden too.
+        if (!showToolsRef.current && ev.engine !== 'somora' && ev.itemType !== 'context_compacted') return;
         let details: string | undefined;
         try {
           details = JSON.stringify(ev.payload, null, 2);

@@ -28,9 +28,11 @@ import type { AttachmentRef } from '../components/AttachmentPicker';
 //   - 'turn_error' { turnId?, message } — turn failed; error block in that turn
 //   - 'turn_dequeued' { turnId }       — a queued user turn was taken back
 //   - 'assistant_media' { turnId, media } — paired to the row of THAT turn
+//   - 'engine_meta' { itemType, summary? } — only context_compacted: a note row
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  compactionNoteText,
   countMedia,
   findTurnRow,
   historyEventsToMessages,
@@ -563,6 +565,33 @@ export function useChatStream(agent: string | null, session: string = 'main'): C
       });
     };
 
+    // A compaction (before the turn, mid-turn, after an overflow, or
+    // the engine's own) arrives as engine_meta. It goes above the reply
+    // it precedes: before the streaming bubble when one exists, else
+    // before any still-pending user bubble — same rule as the first
+    // delta. The other engine_meta rows are not shown on the phone.
+    const onEngineMeta = (e: MessageEvent) => {
+      bump();
+      let d: { itemType?: string; summary?: string; payload?: unknown } | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d || d.itemType !== 'context_compacted') return;
+      const row: ChatMessage = {
+        id: newId('n'),
+        role: 'note',
+        ts: Date.now(),
+        text: typeof d.summary === 'string' && d.summary ? d.summary : compactionNoteText(d.payload),
+      };
+      const streamId = streamingIdRef.current;
+      setMessages((prev) => {
+        let insertIdx = streamId ? prev.findIndex((m) => m.id === streamId) : -1;
+        if (insertIdx < 0) insertIdx = prev.findIndex((m) => m.role === 'user' && m.pending);
+        if (insertIdx < 0) return [...prev, row];
+        const next = prev.slice();
+        next.splice(insertIdx, 0, row);
+        return next;
+      });
+    };
+
     const onTurnDequeued = (e: MessageEvent) => {
       bump();
       let d: { turnId?: string } | null = null;
@@ -732,6 +761,7 @@ export function useChatStream(agent: string | null, session: string = 'main'): C
     es.addEventListener('turn_started', onTurnStarted);
     es.addEventListener('turn_error', onTurnError);
     es.addEventListener('turn_dequeued', onTurnDequeued);
+    es.addEventListener('engine_meta', onEngineMeta);
     const onSessionModel = () => {
       bump();
       modelListenersRef.current.forEach((fn) => fn());
@@ -754,6 +784,7 @@ export function useChatStream(agent: string | null, session: string = 'main'): C
       es.removeEventListener('turn_started', onTurnStarted);
       es.removeEventListener('turn_error', onTurnError);
       es.removeEventListener('turn_dequeued', onTurnDequeued);
+      es.removeEventListener('engine_meta', onEngineMeta);
       es.close();
     };
   }, [agent, session, reopenTick]);

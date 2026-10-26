@@ -528,8 +528,11 @@ export function ChatWindow({
       const isVoiceRow = m.role === 'engine_meta' && m.meta.engine === 'voice';
       // somora's own notes about the conversation (an agent switched the
       // model, someone compacted by hand) are for the person reading
-      // it, not engine internals: they stay visible too.
-      const isSomoraRow = m.role === 'engine_meta' && m.meta.engine === 'somora';
+      // it, not engine internals: they stay visible too. So does every
+      // compaction, whoever ran it — it is what explains a context gauge
+      // that suddenly dropped (2026-10-19 report).
+      const isSomoraRow =
+        m.role === 'engine_meta' && (m.meta.engine === 'somora' || m.meta.itemType === 'context_compacted');
       if (!showTools && !isVoiceRow && !isSomoraRow && (m.role === 'tool_call' || m.role === 'tool_result' || m.role === 'engine_meta')) return false;
       if (!showMemory && m.role === 'memory_inject') return false;
       return true;

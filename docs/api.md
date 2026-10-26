@@ -1016,7 +1016,7 @@ most notes have a readable `payload.text`.
 | `thread_recreated` | The Codex thread was gone. A new one was started with the history replayed. |
 | `tools_changed` | The agent's tool set changed, so a new Codex thread was started with the history replayed. |
 | `mcp_server_renamed` | The engine session was rebuilt (label `session restarted`). |
-| `context_compacted` | The history was compacted after it outgrew the window. |
+| `context_compacted` | The history was compacted: by somora before a turn (`payload.reason: "auto"`, with `contextBefore`, `contextAfter` and `contextWindow` in tokens), during a turn, after the backend refused the prompt (`"context_overflow"`), or by the engine itself (`"engine_side"`). A compaction by hand has engine `somora`, see below. |
 | `context_trimmed` | The oldest tool results of the running turn were shortened to fit the window. The turn goes on. |
 | `attachments_unsupported` | The engine cannot pass attachments on. |
 | `session_model` | An agent switched this session's model (label `model switched`). |

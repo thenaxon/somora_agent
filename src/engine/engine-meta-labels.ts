@@ -37,16 +37,23 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     // stream codex is reconnecting on its own, and its switch to HTTPS.
     reconnecting: 'reconnecting',
     transport_fallback: 'transport fallback',
+    // somora-emitted from thread/compacted: codex compacted its thread.
+    context_compacted: 'context compacted',
   },
   'claude-cli': {
     mcp_server_renamed: MCP_SERVER_RENAMED,
+    // somora-emitted: Claude Code compacted its own session.
+    context_compacted: 'context compacted',
   },
   'grok-cli': {
     mcp_server_renamed: MCP_SERVER_RENAMED,
+    // somora-emitted: grok compacted its own conversation.
+    context_compacted: 'context compacted',
   },
   'openai-compatible': {
-    // somora-emitted: the backend rejected the prompt as too long, the
-    // engine forced a compaction and retried the turn.
+    // somora-emitted: the history was compacted before a turn, or the
+    // backend rejected the prompt as too long and the engine forced a
+    // compaction and retried the turn.
     context_compacted: 'context compacted',
     // somora-emitted: the backend rejected the reasoning-effort value,
     // the engine retried with a neighbour (or without the param).
@@ -158,13 +165,15 @@ export function summariseEngineMeta(
     return typeof p?.text === 'string' ? p.text : undefined;
   }
   if (itemType === 'context_compacted') {
-    // Both engines write this row: somora's own compaction on
-    // openai-compatible, and codex telling us it compacted its thread.
+    // Every engine writes this row: somora's own compaction on
+    // openai-compatible (before a turn, mid-turn, after an overflow), by
+    // hand on any engine, and codex, Claude and grok saying they
+    // compacted their own conversation.
     const p = payload as { text?: unknown } | null | undefined;
     if (p && typeof p.text === 'string') return p.text;
     return engine === 'codex-cli'
       ? 'codex compacted this thread itself'
-      : 'history compacted after a context overflow';
+      : 'history compacted';
   }
   if (engine === 'codex-cli' && itemType === 'todo_list') {
     const items = extractTodoListItems(payload);

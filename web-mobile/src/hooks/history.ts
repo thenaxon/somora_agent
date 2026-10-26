@@ -36,8 +36,10 @@ export interface ChatMessage {
   id: string;
   /** `error`: the turn ended with an engine/backend error instead of
    *  (or after) an assistant message. Rendered as a compact error
-   *  block inside the turn, so following turns don't shift. */
-  role: 'user' | 'agent' | 'error';
+   *  block inside the turn, so following turns don't shift.
+   *  `note`: a line about the conversation itself — today only "context
+   *  compacted" — drawn as a centered divider; `text` is its sentence. */
+  role: 'user' | 'agent' | 'error' | 'note';
   text: string;
   ts: number;
   /** True while the agent's response is still streaming. */
@@ -116,6 +118,9 @@ export interface HistoryEvent {
   steer?: boolean;
   audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
   media?: Array<{ type: string; id: string; filename: string; mime: string; url: string }>;
+  /** `kind: 'engine_meta'` rows. */
+  itemType?: string;
+  payload?: unknown;
   /** `kind: 'model_fallback'` rows. */
   requested?: string;
   actual?: string;
@@ -171,7 +176,24 @@ export function eventToMessage(ev: HistoryEvent): ChatMessage | null {
       ts: ev.ts ?? 0,
     };
   }
+  if (ev.kind === 'engine_meta' && ev.itemType === 'context_compacted') {
+    return {
+      id: `n-${ev.ts ?? 0}-${msgIdCounter++}`,
+      role: 'note',
+      text: compactionNoteText(ev.payload),
+      ts: ev.ts ?? 0,
+    };
+  }
   return null;
+}
+
+/** The sentence of a context_compacted row (history or live). Every
+ *  engine puts one in `payload.text`; older rows may lack it. The other
+ *  engine_meta rows stay a desktop matter — they are engine internals
+ *  — but a compaction explains why the context dropped. */
+export function compactionNoteText(payload: unknown): string {
+  const text = (payload as { text?: unknown } | null | undefined)?.text;
+  return typeof text === 'string' && text.length > 0 ? text : 'history compacted';
 }
 
 /** Index of the last row of the given turn that can carry media/audio

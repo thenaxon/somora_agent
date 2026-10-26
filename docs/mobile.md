@@ -187,6 +187,7 @@ is open. It is off by default and remembered per browser.
 | `🧠 thinking` | The model's reasoning, when the engine provides it. While it thinks, the newest line peeks below. Tap the row to read all of it. |
 | `⇄ fallback · <model>` | A backup model answered. The tooltip names the models that failed and why. |
 | **⚠** block | The turn ended in an error. |
+| `◌ history compacted …` divider | The history was compacted to fit the window. The line says by how much. |
 | Media line | The reply produced a picture or video. The phone shows a line naming it. Open the web client to see it. |
 | `Image from <host>` with **Show** and **Always show** | A picture from another website, held back until you allow it. See [Security](security.md#pictures-from-other-websites). |
 

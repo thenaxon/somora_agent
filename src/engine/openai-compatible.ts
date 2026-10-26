@@ -814,6 +814,12 @@ export const openAiCompatibleEngine: AgentEngine = {
       ...(tokenRatio !== undefined ? { tokenRatio } : {}),
     });
     compactionTrigger = decision.triggerTokens;
+    /** A compaction ran before this turn: the row that says so goes out
+     *  once the request it shrank is known. Without it the context gauge
+     *  jumped from 87 % to 23 % and nothing in the chat said why
+     *  (2026-10-19 report): this path was the only one of four that
+     *  compacted silently. */
+    let preTurnCompaction: { compaction: Compaction; cushion?: number } | undefined;
     if (decision.shouldCompact) {
       logger.info({
         msg: 'engine.compaction_trigger',
@@ -843,12 +849,16 @@ export const openAiCompatibleEngine: AgentEngine = {
             compactions,
           });
           meta = { ...meta, compactions };
+          preTurnCompaction = { compaction: newCompaction };
           logger.info({
             msg: 'engine.compaction_done',
             engine: ENGINE,
             agent,
             session,
             throughTs: newCompaction.throughTs,
+            // Only the slice that was summarised: the summary prompt and
+            // the summary it produced. The whole request before and after
+            // is in engine.compaction_context.
             tokensBefore: newCompaction.tokensBefore,
             tokensAfter: newCompaction.tokensAfter,
             summaryChars: newCompaction.summary.length,
@@ -873,6 +883,7 @@ export const openAiCompatibleEngine: AgentEngine = {
             compactions = [...(compactions ?? []), tight];
             await metaStore.update(agent, session, (current) => ({ ...current, compactions }));
             meta = { ...meta, compactions };
+            preTurnCompaction = { compaction: tight, cushion: 1 };
             logger.info({
               msg: 'engine.compaction_done',
               engine: ENGINE,
@@ -1011,6 +1022,39 @@ export const openAiCompatibleEngine: AgentEngine = {
     const advertised: ChatTool[] | undefined = tools ? toOpenAiTools(toolList) : undefined;
     const openAiTools: ChatTool[] | undefined = advertised && advertised.length > 0 ? advertised : undefined;
     const toolByName = new Map(toolList.map((t) => [t.name, t]));
+    if (preTurnCompaction) {
+      // Before and after on the gauge's scale: the whole request with
+      // its tool schemas, not the compacted slice (Compaction.tokensBefore
+      // and tokensAfter count only the summary prompt and the summary).
+      // A measured reading already includes the tools; an estimate gets
+      // them added so both numbers mean the same thing.
+      const window = resolvedModel.model.contextWindow;
+      const toolTokens = calibratedEstimate(estimateRequestTokens([], openAiTools), tokenRatio);
+      const before = decision.source === 'measured' ? decision.estimatedTokens : decision.estimatedTokens + toolTokens;
+      const after = calibratedEstimate(estimateRequestTokens(messages, openAiTools), tokenRatio);
+      const pct = (v: number) => `${Math.round((v / window) * 100)}%`;
+      const n = (v: number) => v.toLocaleString('en-US');
+      logger.info({ msg: 'engine.compaction_context', engine: ENGINE, agent, session, contextBefore: before, contextAfter: after, contextWindow: window, source: decision.source });
+      yield {
+        kind: 'engine_meta',
+        ts: ts(),
+        engine: ENGINE,
+        itemType: 'context_compacted',
+        payload: {
+          text:
+            `history compacted before this turn: ${pct(before)} → about ${pct(after)} of the ${n(window)}-token window ` +
+            `(${n(before)} → about ${n(after)} tokens)`,
+          reason: 'auto',
+          contextBefore: before,
+          contextAfter: after,
+          contextWindow: window,
+          source: decision.source,
+          throughTs: preTurnCompaction.compaction.throughTs,
+          worker: preTurnCompaction.compaction.byModel,
+          ...(preTurnCompaction.cushion !== undefined ? { cushion: preTurnCompaction.cushion } : {}),
+        },
+      };
+    }
     const loopMessages = [...messages]; // mutable copy; tool rounds append
     // Where this turn begins in loopMessages: its user message (the
     // last one built) — the mid-turn compaction of a builder turn keeps

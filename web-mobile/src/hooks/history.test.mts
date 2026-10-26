@@ -168,5 +168,24 @@ const img = (id: string) => ({ type: 'image', id, filename: `${id}.png`, mime: '
   t('reconnect: no duplicates', new Set(afterReconnect.map((m) => m.id)).size === afterReconnect.length);
 }
 
+// ── compaction note (2026-10-19): the one engine_meta row the phone shows ──
+{
+  const events: HistoryEvent[] = [
+    { kind: 'user_message', ts: 1, text: 'go on' },
+    { kind: 'turn_start', ts: 2, turnId: 't-0' },
+    { kind: 'engine_meta', ts: 3, itemType: 'context_compacted', payload: { text: 'history compacted before this turn: 87% → about 23% of the 700,000-token window', reason: 'auto' } },
+    { kind: 'engine_meta', ts: 4, itemType: 'todo_list', payload: { items: [] } },
+    { kind: 'assistant_message', ts: 5, text: 'done' },
+    { kind: 'turn_end', ts: 6, turnId: 't-0' },
+    { kind: 'engine_meta', ts: 7, itemType: 'context_compacted', payload: {} },
+  ];
+  const rows = historyEventsToMessages(events);
+  t('note: roles user, note, agent, note', rows.map((r) => r.role).join(',') === 'user,note,agent,note', rows.map((r) => r.role).join(','));
+  t('note: carries the sentence', rows[1]?.text.startsWith('history compacted before this turn: 87%') === true, rows[1]?.text);
+  t('note: other engine_meta rows stay hidden', !rows.some((r) => r.ts === 4));
+  t('note: a row without text still reads', rows[3]?.text === 'history compacted', rows[3]?.text);
+  t('note: the reply keeps its turnId', rows[2]?.turnId === 't-0');
+}
+
 console.log(`\nhistory: ${ok} passed, ${bad} failed`);
 assert.equal(bad, 0);

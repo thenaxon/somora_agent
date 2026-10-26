@@ -652,6 +652,19 @@ button { cursor: pointer; }
 .sentinel-name { color: var(--text-2); }
 .sentinel-time { color: var(--text-3); }
 .sentinel-sep { color: var(--line-2); }
+/* A conversation note (context compacted) is a whole sentence: it
+ * wraps inside the divider instead of pushing the chat sideways. */
+.conversation-note .sentinel-body {
+  white-space: normal;
+  max-width: 80%;
+}
+.conversation-note .sentinel-label {
+  flex-shrink: 1;
+  min-width: 0;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-align: center;
+}
 /* The divider shows one line; a tap opens the full wake text below. */
 .sentinel-wrap { display: flex; flex-direction: column; }
 .sentinel-divider.expandable { cursor: pointer; }

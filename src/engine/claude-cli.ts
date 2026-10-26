@@ -628,6 +628,24 @@ export const claudeCliEngine: AgentEngine = {
             });
             mcpLeakWarned = true;
           }
+        } else if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
+          // Claude Code compacted its own session near the window's end.
+          // Same row as codex and grok write, so the drop in the context
+          // gauge has an explanation in the chat.
+          const cm = msg.compact_metadata;
+          logger.info({ msg: 'engine.claude_compacted', engine: ENGINE, agent, session, trigger: cm.trigger, tokensBefore: cm.pre_tokens, tokensAfter: cm.post_tokens });
+          yield {
+            kind: 'engine_meta',
+            ts: ts(),
+            engine: ENGINE,
+            itemType: 'context_compacted',
+            payload: {
+              text: 'Claude compacted this conversation itself — the context percentage drops accordingly',
+              reason: 'engine_side',
+              ...(typeof cm.pre_tokens === 'number' ? { tokensBefore: cm.pre_tokens } : {}),
+              ...(typeof cm.post_tokens === 'number' ? { tokensAfter: cm.post_tokens } : {}),
+            },
+          };
         } else if (msg.type === 'stream_event') {
           const ev = msg.event;
           // A new request after a result: the SDK is answering the steers

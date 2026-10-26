@@ -41,9 +41,11 @@ Who compacts depends on the engine of the model that answers.
 
 | Engine | Who compacts | When | What you see |
 |---|---|---|---|
-| `openai-compatible` | somora | Before a turn, when the prompt reaches `triggerRatio` times the input budget | Usually nothing. A `context compacted` row when a compaction ran inside or in reaction to a turn |
-| `claude-cli` | Claude Code itself, inside its own session | At Claude Code's own threshold | Nothing from somora |
-| `codex-cli`, `grok-cli` | The CLI itself, inside its own session | At the CLI's own threshold | A `context compacted` row, and the usage display drops |
+| `openai-compatible` | somora | Before a turn, when the prompt reaches `triggerRatio` times the input budget | A `context compacted` row with the context before and after, and the usage display drops |
+| `claude-cli`, `codex-cli`, `grok-cli` | The CLI itself, inside its own session | At the CLI's own threshold | A `context compacted` row, and the usage display drops |
+
+Every `context compacted` row shows in every client, also with the
+tool rows hidden. On the phone it is a divider line in the chat.
 
 The session file `sessions/<id>.jsonl` is never shortened by either
 kind. REM reads it independently.
@@ -134,6 +136,24 @@ points over. The result is one rolling summary, not a chain.
 
 When the last exchanges cover the whole session there is nothing to
 summarise. somora then tries once more and keeps only the last exchange.
+
+The cut is a count of exchanges, not an age. A session that rested for
+weeks and then had four long turns keeps those four verbatim, and the
+summary covers everything up to the day before.
+
+### What the chat shows
+
+A row above the reply says that the history was compacted and by how
+much, for example:
+
+```text
+history compacted before this turn: 87% → about 23% of the 700,000-token window (609,809 → about 162,000 tokens)
+```
+
+Both numbers are the whole request on the scale of the usage display:
+before is the measured size of the last request or the estimate, after
+is the estimate of the request that is about to go out, tool
+definitions included. The next real count can differ a little.
 
 ### What a summary keeps
 

@@ -213,6 +213,7 @@ interface MobileMessageProps {
 
 // One row in the chat scroll. Handles five visual variants:
 //   - sentinel divider (centered, system styling, Bell icon)
+//   - conversation note (context compacted — same divider, no expand)
 //   - peer-agent inbound (right side, sender's color+icon)
 //   - user (right side, neutral — same look as before)
 //   - assistant (left side, active agent's color+icon)
@@ -228,6 +229,7 @@ function MobileMessage({
   onAbort,
   onRecall,
 }: MobileMessageProps) {
+  if (msg.role === 'note') return <ConversationNote text={msg.text} ts={msg.ts} />;
   if (msg.role === 'error') {
     return (
       <div className="msg-row error" role="alert">
@@ -565,6 +567,26 @@ function OriginDivider({ pres, ts }: { pres: OriginPresentation; ts: number }) {
         <span className="sentinel-rule" />
       </div>
       {expanded && <pre className="sentinel-full">{pres.body}</pre>}
+    </div>
+  );
+}
+
+// A line about the conversation itself (today: the history was
+// compacted). Same thin divider as a wake, without the expand — the
+// sentence is the whole content, so it wraps instead.
+function ConversationNote({ text, ts }: { text: string; ts: number }) {
+  return (
+    <div className="sentinel-wrap">
+      <div className="sentinel-divider conversation-note" aria-label={text}>
+        <span className="sentinel-rule" />
+        <span className="sentinel-body">
+          <span className="sentinel-icon" aria-hidden="true">◌</span>
+          <span className="sentinel-label">{text}</span>
+          <span className="sentinel-sep">·</span>
+          <span className="sentinel-time">{formatMobileTime(ts)}</span>
+        </span>
+        <span className="sentinel-rule" />
+      </div>
     </div>
   );
 }
