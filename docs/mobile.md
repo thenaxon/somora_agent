@@ -61,7 +61,7 @@ Otherwise the link points at `127.0.0.1`, which the phone cannot open.
 | Part | What it does |
 |---|---|
 | **Header** | Shows `agent · session ▾ model`. Tap it to switch session or model. On the right: the work badge, the screen-awake toggle and the voice toggle. |
-| **Avatar row** | One tile per agent. Tap to switch. The app remembers the last agent. |
+| **Avatar row** | One tile per agent. Tap to switch. The app remembers the last agent. Long-press a tile to change the order, see below. |
 | **Chat** | The history of the open session, newest first loaded. Scroll to the top, or tap **Load older messages**, for the next older part. Replies are rendered as Markdown. A wide code block scrolls sideways. |
 | **Input bar** | Paperclip, microphone, text field, Send. Enter sends, Shift+Enter starts a new line. |
 
@@ -70,6 +70,18 @@ On a phone whose camera island and status indicator sit at a side
 header moves its buttons out from under them, and the avatar row
 scrolls far enough to bring its first and last agent clear. The rest
 of the screen keeps the full width.
+
+### Agent order
+
+Long-press any agent tile, or tap the header and then **Agent order…**
+at the end of the sheet. Each agent is a row: drag it by its handle
+(☰), or move it with ↑ and ↓. The top of the list is the first tile on
+the left.
+
+**Done** saves the order on the server, so every phone and tablet
+shows the same one, also after the app is installed again. Agents not
+in the saved order, such as a new one, follow at the end by
+name. Without a saved order the tiles are sorted by name.
 
 ## Sessions and model
 

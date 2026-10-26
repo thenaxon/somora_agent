@@ -11,6 +11,7 @@
 //     server-wide DEEP / loop-holder LUCID phase is active
 //   - rem-badge: top-right pending-review counter from REM extraction
 
+import { useRef } from 'react';
 import type { AgentInfo } from '../hooks/useAgents';
 import { computeDreamPulse, type DreamStates } from '../hooks/useDreamStates';
 
@@ -27,7 +28,13 @@ interface Props {
   /** Per-agent REM + global DEEP/LUCID state. Optional — if undefined
    *  the row renders without any dream indicators. */
   dreamStates?: DreamStates;
+  /** A long press on a tile: edit the tiles' order. */
+  onLongPress?: () => void;
 }
+
+const LONG_PRESS_MS = 550;
+/** A finger that moves this far is scrolling the row, not pressing. */
+const LONG_PRESS_SLOP = 10;
 
 export function AvatarRow({
   agents,
@@ -36,7 +43,15 @@ export function AvatarRow({
   streamingAgents,
   unreadAgents,
   dreamStates,
+  onLongPress,
 }: Props) {
+  const press = useRef<{ timer: ReturnType<typeof setTimeout>; x: number; y: number } | null>(null);
+  // The click that ends a long press must not also switch the agent.
+  const longPressed = useRef(false);
+  const cancelPress = () => {
+    if (press.current) clearTimeout(press.current.timer);
+    press.current = null;
+  };
   if (agents.length === 0) return null;
   return (
     <div className="avatar-row" role="tablist">
@@ -55,7 +70,37 @@ export function AvatarRow({
             role="tab"
             aria-selected={active}
             className={`avatar-tile ${active ? 'active' : ''}`}
-            onClick={() => onSelect(a.name)}
+            onClick={() => {
+              if (longPressed.current) {
+                longPressed.current = false;
+                return;
+              }
+              onSelect(a.name);
+            }}
+            onPointerDown={(e) => {
+              if (!onLongPress) return;
+              longPressed.current = false;
+              cancelPress();
+              press.current = {
+                x: e.clientX,
+                y: e.clientY,
+                timer: setTimeout(() => {
+                  press.current = null;
+                  longPressed.current = true;
+                  onLongPress();
+                }, LONG_PRESS_MS),
+              };
+            }}
+            onPointerMove={(e) => {
+              const p = press.current;
+              if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > LONG_PRESS_SLOP) cancelPress();
+            }}
+            onPointerUp={cancelPress}
+            onPointerCancel={cancelPress}
+            onPointerLeave={cancelPress}
+            onContextMenu={(e) => {
+              if (onLongPress) e.preventDefault();
+            }}
           >
             <span
               className={iconClass}

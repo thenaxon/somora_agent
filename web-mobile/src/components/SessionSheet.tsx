@@ -50,6 +50,8 @@ interface Props {
   /** An external agent: its model, thinking and context belong to its
    *  own system, so the sheet offers sessions only. */
   external?: boolean;
+  /** Open the agent order sheet (also reached by a long press on a tile). */
+  onOrderAgents?: () => void;
 }
 
 export function SessionSheet({
@@ -64,6 +66,7 @@ export function SessionSheet({
   onSetModel,
   streaming,
   external = false,
+  onOrderAgents,
 }: Props) {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [models, setModels] = useState<ModelRow[] | null>(null);
@@ -474,6 +477,16 @@ export function SessionSheet({
             );
           })}
         </section>
+        )}
+
+        {onOrderAgents && (
+          <section className="work-section">
+            <button type="button" className="sheet-row more" onClick={onOrderAgents}>
+              <span className="sheet-row-mark" aria-hidden="true">☰</span>
+              <span className="sheet-row-name">Agent order…</span>
+              <span className="sheet-row-meta">or long-press a tile</span>
+            </button>
+          </section>
         )}
       </div>
     </div>

@@ -383,6 +383,18 @@ so that no client parses the file itself.
 
 A custom client may use either as its own defaults.
 
+### `GET /mobile-agent-order` · `PUT /mobile-agent-order`
+
+The order of the agent tiles in the `/mobile` client, the same on every
+device. Kept in `~/.somora/mobile/agent-order.json`.
+
+| Route | Body | Returns |
+|---|---|---|
+| `GET /mobile-agent-order` | | `{order: ["agent", …]}`, an empty list when none was saved |
+| `PUT /mobile-agent-order` | `{order: ["agent", …]}` | the saved `{order}`. `400` when `order` is not a list of agent names, names one twice or holds more than 500. |
+
+Agents missing from the list come after it, by name.
+
 ### `GET /logs`
 
 The tail of the server log for one day.

@@ -2,7 +2,8 @@
 // Returns the list + loading/error states. Re-polls every 30s so
 // newly-added agents show up without a manual reload.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { applyAgentOrder } from './agent-order';
 
 export interface AgentInfo {
   name: string;
@@ -23,7 +24,9 @@ export interface AgentInfo {
 const POLL_INTERVAL_MS = 30_000;
 
 export function useAgents() {
-  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [all, setAll] = useState<AgentInfo[]>([]);
+  // The tile order, the same on every device (GET/PUT /mobile-agent-order).
+  const [order, setOrder] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,16 +34,17 @@ export function useAgents() {
     let cancelled = false;
     const tick = async () => {
       try {
-        const res = await fetch('/agents');
+        const [res, saved] = await Promise.all([
+          fetch('/agents'),
+          fetch('/mobile-agent-order').then((r) => (r.ok ? (r.json() as Promise<{ order?: string[] }>) : null)).catch(() => null),
+        ]);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const list = (await res.json()) as AgentInfo[];
         if (cancelled) return;
-        // Sort alphabetically for stable avatar-row order. Disabled agents
-        // filtered server-side already; defensive filter here just in case.
-        const sorted = [...list]
-          .filter((a) => a.enabled !== false)
-          .sort((a, b) => a.name.localeCompare(b.name));
-        setAgents(sorted);
+        // Disabled agents are filtered server-side already; defensive
+        // filter here just in case. The order is applied below.
+        setAll(list.filter((a) => a.enabled !== false));
+        if (saved?.order) setOrder(saved.order);
         setError(null);
       } catch (err) {
         if (cancelled) return;
@@ -57,5 +61,27 @@ export function useAgents() {
     };
   }, []);
 
-  return { agents, loading, error };
+  // Memoised: effects downstream depend on the list's identity.
+  const agents = useMemo(() => applyAgentOrder(all, order), [all, order]);
+
+  /** Save a new order for every device. Shown at once; an error text
+   *  (and the old order back) when the server refuses. */
+  const saveOrder = useCallback(async (next: string[]): Promise<string | null> => {
+    const before = order;
+    setOrder(next);
+    try {
+      const res = await fetch('/mobile-agent-order', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: next }),
+      });
+      if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? `HTTP ${res.status}`);
+      return null;
+    } catch (err) {
+      setOrder(before);
+      return `Order not saved: ${(err as Error).message}`;
+    }
+  }, [order]);
+
+  return { agents, loading, error, saveOrder };
 }

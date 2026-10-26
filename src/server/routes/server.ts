@@ -14,6 +14,7 @@ import { loadPersona } from '../../persona/loader.ts';
 import { resolveSessionId } from '../../storage/sessions.ts';
 import { SOMORA_VERSION } from '../../version.ts';
 import { getEffectiveEnv } from '../env.ts';
+import { readAgentOrder, parseAgentOrder, writeAgentOrder } from '../agent-order.ts';
 import { logger } from '../logger.ts';
 import { writeRestartIntent } from '../restart-intent.ts';
 import { config, configLoadedAt, configLoadedMtimeMs, setConfig, setConfigLoadedAt, setConfigMtime } from '../server-state.ts';
@@ -279,4 +280,20 @@ export function registerServerRoutes(app: Hono, routeDeps: ServerRoutesDeps): vo
   // themselves.
   app.get('/tui-config', (c) => c.json(config.tui));
   app.get('/mobile-config', (c) => c.json(config.mobile));
+
+  // The order of the agent tiles in /mobile, shared by every device.
+  app.get('/mobile-agent-order', async (c) => c.json({ order: await readAgentOrder() }));
+  app.put('/mobile-agent-order', async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'body must be JSON: {"order": ["agent", ...]}' }, 400);
+    }
+    const parsed = parseAgentOrder(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    await writeAgentOrder(parsed.order);
+    logger.info({ msg: 'mobile.agent_order.saved', count: parsed.order.length });
+    return c.json({ order: parsed.order });
+  });
 }

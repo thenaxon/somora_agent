@@ -17,6 +17,7 @@ import { WorkBadge, WorkSheet } from './WorkSheet';
 import { useSessionWork, type WorkItemDto } from '../hooks/useSessionWork';
 import { useSessionModel } from '../hooks/useSessionModel';
 import { SessionSheet } from './SessionSheet';
+import { AgentOrderSheet } from './AgentOrderSheet';
 import { QuestionCard, useSessionQuestion } from './QuestionCard';
 import { sessionKey } from '../hooks/useActivityStream';
 import { MAIN_SESSION, labelForRef, modelLabel, readLastSession, writeLastSession, type OpenSession } from '../hooks/session-pick';
@@ -31,7 +32,7 @@ function storage(): Storage | null {
 }
 
 export function MobileApp() {
-  const { agents, loading, error } = useAgents();
+  const { agents, loading, error, saveOrder } = useAgents();
   const [lastAgent, setLastAgent] = useLastAgent();
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   // The session each agent is open in. An agent opens where it was
@@ -48,6 +49,7 @@ export function MobileApp() {
   const chat = useChatStream(activeAgent, session.id);
   const sessionModel = useSessionModel(activeAgent, session.id, chat.subscribeModelEvents);
   const [sessionSheetOpen, setSessionSheetOpen] = useState(false);
+  const [orderSheetOpen, setOrderSheetOpen] = useState(false);
 
   // A remembered session may be gone (archived from the desktop), and a
   // jump from the work sheet knows the session only by its reference:
@@ -459,8 +461,13 @@ export function MobileApp() {
           onSetModel={sessionModel.setModel}
           streaming={chat.streaming}
           external={activeExternal !== null}
+          onOrderAgents={() => {
+            setSessionSheetOpen(false);
+            setOrderSheetOpen(true);
+          }}
         />
       )}
+      {orderSheetOpen && <AgentOrderSheet agents={agents} onClose={() => setOrderSheetOpen(false)} onSave={saveOrder} />}
 
       {error && <div className="banner error">{error}</div>}
       {configProblem && (
@@ -479,6 +486,7 @@ export function MobileApp() {
         streamingAgents={mergeStreaming(activity.streamingAgents, chat.streaming ? activeAgent : null)}
         unreadAgents={unreadAgentsShown}
         dreamStates={dreamStates}
+        onLongPress={() => setOrderSheetOpen(true)}
       />
 
       {activeAgent ? (

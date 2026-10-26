@@ -138,6 +138,10 @@ button { cursor: pointer; }
 .avatar-tile {
   display: flex;
   flex-direction: column;
+  /* a long press opens the agent order sheet, not iOS's callout or a text selection */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
@@ -1503,3 +1507,58 @@ button { cursor: pointer; }
 .question-card-send:disabled {
   opacity: 0.5;
 }
+
+/* ── Agent order: long press on a tile, then this sheet ──────────── */
+
+.order-hint { color: var(--text-3); font-size: 11px; margin: 2px 0 8px; }
+.order-list { list-style: none; margin: 0; padding: 0; }
+.order-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-1);
+}
+.order-row.dragging {
+  position: relative;
+  z-index: 1;
+  background: var(--bg-3);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+.order-handle {
+  width: 40px;
+  height: 44px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  font-size: 18px;
+  /* the finger drags the row; the sheet must not scroll meanwhile */
+  touch-action: none;
+  cursor: grab;
+}
+.order-icon {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--bg-3);
+  font-size: 18px;
+}
+.order-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--text-0); }
+.order-move {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  color: var(--text-1);
+  font: inherit;
+  font-size: 16px;
+}
+.order-move:disabled { opacity: 0.25; }
