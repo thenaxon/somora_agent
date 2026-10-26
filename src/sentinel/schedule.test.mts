@@ -106,6 +106,18 @@ const every = (interval: string): TimeSpec => ({ type: 'every', interval } as Ti
   check('previous UTC day → due', isDailyCapResumeDue('2026-07-23', now) === true);
 }
 
+// ── cron weekday 7 = Sunday, like 0 (docs review 2026-10-26) ─────────
+{
+  const cron = (expression: string): TimeSpec => ({ type: 'cron', expression } as TimeSpec);
+  const sat = new Date('2026-10-24T12:00:00Z'); // a Saturday
+  const seven = computeNextFire(cron('0 9 * * 7'), sat);
+  const zero = computeNextFire(cron('0 9 * * 0'), sat);
+  check('7 is accepted and means Sunday', seven !== null && seven.getTime() === zero?.getTime(), `${seven?.toISOString()} vs ${zero?.toISOString()}`);
+  check('Sunday next after Saturday', zero !== null && zero.getDay() === 0, zero?.toISOString());
+  const listed = computeNextFire(cron('0 9 * * 1,7'), sat);
+  check('a list with 7 takes Sunday first', listed !== null && listed.getDay() === 0, listed?.toISOString());
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
 assert.ok(true);

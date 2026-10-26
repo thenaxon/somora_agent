@@ -365,7 +365,7 @@ function sentinelJsonSchema(art2: boolean): Record<string, unknown> {
                   { type: 'object', properties: { type: { const: 'every' }, interval: { type: 'string', description: '30s / 5m / 1h. Minimum 60s.' } }, required: ['type', 'interval'] },
                   { type: 'object', properties: { type: { const: 'daily' }, time: { type: 'string', description: 'HH:MM or HH:MM:SS.' } }, required: ['type', 'time'] },
                   { type: 'object', properties: { type: { const: 'weekly' }, day: { type: 'string', enum: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] }, time: { type: 'string' } }, required: ['type', 'day', 'time'] },
-                  { type: 'object', properties: { type: { const: 'cron' }, expression: { type: 'string', description: '5-field cron: minute hour day month weekday. Allowed: *, N, */N, a,b,c. No ranges (write 1,2,3,4,5, not 1-5) and no names (weekday 1=Mon … 7=Sun). Examples: "0 8 * * *" daily 8:00 · "0 9 1 * *" 1st of the month 9:00 · "*/15 * * * *" every 15 min · "0 9,17 * * *" 9:00 and 17:00.' } }, required: ['type', 'expression'] },
+                  { type: 'object', properties: { type: { const: 'cron' }, expression: { type: 'string', description: '5-field cron: minute hour day month weekday. Allowed: *, N, */N, a,b,c. No ranges (write 1,2,3,4,5, not 1-5) and no names (weekday 0=Sun, 1=Mon … 6=Sat; 7 is Sunday too). Examples: "0 8 * * *" daily 8:00 · "0 9 1 * *" 1st of the month 9:00 · "*/15 * * * *" every 15 min · "0 9,17 * * *" 9:00 and 17:00.' } }, required: ['type', 'expression'] },
                 ],
               },
             },

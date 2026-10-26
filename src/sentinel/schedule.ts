@@ -90,7 +90,14 @@ interface ParsedCron {
   hour: CronField;
   dayOfMonth: CronField;
   month: CronField;     // 1-12
-  dayOfWeek: CronField; // 0-6, 0=Sun (Vixie convention)
+  dayOfWeek: CronField; // 0-6, 0=Sun (Vixie convention); 7 also means Sunday
+}
+
+/** Standard cron takes 7 for Sunday as well as 0. The tool's own text
+ *  once said "1=Mon … 7=Sun", and a model following it got a parse
+ *  error for Sunday (docs review 2026-10-26). Dates give 0 for Sunday. */
+function sundayAsSeven(f: CronField): CronField {
+  return f.isWildcard ? f : { ...f, match: (v) => f.match(v) || (v === 0 && f.match(7)) };
 }
 
 export function parseCron(expr: string): ParsedCron {
@@ -103,7 +110,7 @@ export function parseCron(expr: string): ParsedCron {
     hour:       parseField(parts[1]!, 0, 23),
     dayOfMonth: parseField(parts[2]!, 1, 31),
     month:      parseField(parts[3]!, 1, 12),
-    dayOfWeek:  parseField(parts[4]!, 0, 6),
+    dayOfWeek:  sundayAsSeven(parseField(parts[4]!, 0, 7)),
   };
 }
 
