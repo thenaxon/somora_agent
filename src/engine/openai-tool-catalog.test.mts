@@ -21,7 +21,8 @@ import {
   TOOL_CALL,
   TOOL_SEARCH,
 } from './openai-tool-catalog.ts';
-import { catalogMode } from '../tools/catalog.ts';
+import { catalogMode, DEFAULT_ALWAYS_VISIBLE } from '../tools/catalog.ts';
+import { registerAllTools, ToolRegistry } from '../tools/index.ts';
 import type { SessionMeta, SessionMetaStore, TurnInput } from './types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
@@ -317,4 +318,19 @@ test('the third identical failing tool_call ends the tool use with a forced answ
   const final = events.find((e) => e.kind === 'assistant_message') as { text?: string };
   assert.equal(final.text, 'gave up cleanly');
   assert.deepEqual(invoked, []);
+});
+
+test("somora's own deferred tools are found by the words a model uses", () => {
+  // Live 2026-10-26: "automation schedule tasks reminder" returned five
+  // sub-agent tools and no sentinel; sentinel's first sentence named no
+  // schedule, cron or watch.
+  const reg = new ToolRegistry();
+  registerAllTools(reg);
+  const index = buildSearchIndex(reg.list().filter((d) => !DEFAULT_ALWAYS_VISIBLE.includes(d.name)));
+  const first = (q: string) => index.search([q], 5)[0]?.name;
+  for (const q of ['automation schedule tasks reminder', 'reminder', 'schedule', 'cron job', 'notify when page changes']) {
+    assert.equal(first(q), 'sentinel', q);
+  }
+  assert.equal(first('spawn subagent task'), 'spawn_subagents');
+  assert.ok(index.search(['video generate'], 5).some((h) => h.name === 'video_generate'));
 });

@@ -271,7 +271,7 @@ function enforceLimits(source: NonNullable<SentinelInputT['source']>, policy?: S
 function sentinelDescription(art2: boolean, limits: Config['sentinel']['checks']): string {
   const s = (ms: number) => (ms % 60_000 === 0 ? `${ms / 60_000} min` : `${ms / 1000} s`);
   return (
-    'Install and manage triggers that wake an agent later — instead of waiting, sleeping or polling inside a turn. ' +
+    'Install and manage triggers that wake an agent later: reminders and schedules (one time, every day, cron), and watches that fire when a file, page or job changes — instead of waiting, sleeping or polling inside a turn. ' +
     'A woken agent gets a turn with a [Sentinel trigger fired] block (what fired and why) and the trigger\'s prompt.' +
     '\n\nWhich kind fits:\n' +
     '- TIME (source.type "time"): something should happen at a time — "remind me tomorrow at 9", "report every Monday".\n' +
