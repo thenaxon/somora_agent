@@ -415,7 +415,9 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     'the sessions on a target.\n' +
     '- send: `keys` types text, and \\n presses Enter. In a chat-style input box (Claude Code, ' +
     'codex, opencode) Enter sends the whole message, so set multiline_safe:true there to keep ' +
-    'inner newlines; a shell or a Python REPL runs each line on Enter and needs no flag. `key` ' +
+    'inner newlines; a shell or a Python REPL runs each line on Enter and needs no flag. The ' +
+    'Python REPL from 3.13 on indents by itself: send lines without leading spaces, or start it ' +
+    'with PYTHON_BASIC_REPL=1. `key` ' +
     'sends keys by name: Escape or C-c interrupts a running task, C-u clears the input line.\n' +
     '- capture: returns the pane now, or with wait_pattern waits for a text (see wait_mode).\n' +
     '- wait_idle: waits until the pane stops changing — use it when you do not know what the ' +
