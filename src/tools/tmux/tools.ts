@@ -73,8 +73,10 @@ const FIELD = {
     'send only — key names, space-separated: Escape, C-c, C-u, Tab, BSpace, Up, F1, "C-x C-c" ' +
     '(C- = Ctrl, M- = Alt, S- = Shift). Not together with keys.',
   multiline_safe:
-    'send only — true sends inner \\n as Alt+Enter, a newline that does not submit, for TUIs ' +
-    'where Enter submits. A \\n at the very end still submits. Default false.',
+    'send only — true sends inner \\n as Alt+Enter, a newline that does not submit. Only for ' +
+    'chat-style input boxes (Claude Code, codex, opencode). Not for a shell or a Python REPL: ' +
+    'there every Enter runs the line, so send the lines as they are. A \\n at the very end still ' +
+    'submits. Default false.',
   wait_pattern:
     'capture only — text to wait for. Checked every 200 ms until it matches or ' +
     'wait_timeout_ms runs out. Without it, capture returns the pane at once.',
@@ -411,9 +413,10 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     '\n\n' +
     'Flow: create once → send and capture (or wait_idle) as often as needed → kill. list shows ' +
     'the sessions on a target.\n' +
-    '- send: `keys` types text, and \\n presses Enter. In a TUI where Enter submits, set ' +
-    'multiline_safe:true so inner newlines stay newlines. `key` sends keys by name: Escape or ' +
-    'C-c interrupts a running task, C-u clears the input line.\n' +
+    '- send: `keys` types text, and \\n presses Enter. In a chat-style input box (Claude Code, ' +
+    'codex, opencode) Enter sends the whole message, so set multiline_safe:true there to keep ' +
+    'inner newlines; a shell or a Python REPL runs each line on Enter and needs no flag. `key` ' +
+    'sends keys by name: Escape or C-c interrupts a running task, C-u clears the input line.\n' +
     '- capture: returns the pane now, or with wait_pattern waits for a text (see wait_mode).\n' +
     '- wait_idle: waits until the pane stops changing — use it when you do not know what the ' +
     'output will look like.\n' +
