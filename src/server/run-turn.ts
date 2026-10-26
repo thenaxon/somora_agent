@@ -54,7 +54,7 @@ import { claimWorkdir, describeClaim, noteToolCall, workdirClaimedBy } from './b
 import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import { ASYNC_QUESTIONS_ITEM, type ResolvedAttachment } from '../engine/types.ts';
-import { askWithoutWaiting, cleanParts } from './async-questions.ts';
+import { askWithoutWaiting, cleanParts, openAsyncQuestion } from './async-questions.ts';
 import { turnAlwaysVisible } from './turn-tool-catalog.ts';
 import { resolveAttachmentForModel } from '../attachments/store.ts';
 import { listRecords as listMediaRecords, readRecord as readMediaRecord } from '../media/records.ts';
@@ -1541,11 +1541,18 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
 
   clearTurnOrigin(agent, session);
   const actualForResult = turnFallback ? splitModelRef(turnFallback.actual) : undefined;
+  // A turn that only asked a question that does not wait (ask_user, or
+  // Codex's own question tool) has said what it had to: the card is the
+  // answer, so no text is not an empty answer.
+  const askedOnly =
+    !errorMessage && !degradedReason && finalText.trim().length === 0
+      ? ((await openAsyncQuestion(agent, session).catch(() => null))?.askedAt ?? 0) >= start
+      : false;
   const outcome: ChatTurnOutcome = errorMessage
     ? 'failed'
     : degradedReason
       ? 'degraded'
-      : finalText.trim().length === 0
+      : finalText.trim().length === 0 && !askedOnly
         ? 'degraded'
         : forcedFinal
           ? 'partial'
@@ -1553,7 +1560,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   const outcomeReason =
     outcome === 'failed'
       ? undefined
-      : (degradedReason ?? (finalText.trim().length === 0 ? 'empty_answer' : forcedFinal));
+      : (degradedReason ?? (finalText.trim().length === 0 && !askedOnly ? 'empty_answer' : forcedFinal));
   return {
     finalText,
     outcome,

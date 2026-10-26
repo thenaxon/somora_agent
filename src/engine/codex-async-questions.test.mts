@@ -68,12 +68,14 @@ const config: Config = ConfigSchema.parse({
 setConfig(config);
 const broadcast: SseEvent[] = [];
 configureStartTurn({ chatTurnDeps: {} as never, publish: async (_a, _s, e) => void broadcast.push(e) });
+// What the stand-in engine does: ask (or not) and say the text (or not).
+let script = { ask: true, text: REAL_ITEM.text as string | null };
 (engineRegistry as unknown as Record<string, unknown>)['codex-cli'] = {
   name: 'codex-cli',
   async *runTurn() {
     yield { kind: 'turn_start', ts: 1, engine: 'codex-cli', turnId: 't1' };
-    yield { kind: 'engine_meta', ts: 2, engine: 'codex-cli', itemType: ASYNC_QUESTIONS_ITEM, payload: { questions: asyncQuestionsOf(REAL_ITEM) } };
-    yield { kind: 'assistant_message', ts: 3, engine: 'codex-cli', text: REAL_ITEM.text };
+    if (script.ask) yield { kind: 'engine_meta', ts: 2, engine: 'codex-cli', itemType: ASYNC_QUESTIONS_ITEM, payload: { questions: asyncQuestionsOf(REAL_ITEM) } };
+    if (script.text !== null) yield { kind: 'assistant_message', ts: 3, engine: 'codex-cli', text: script.text };
     yield { kind: 'turn_end', ts: 4, engine: 'codex-cli', turnId: 't1' };
   },
 };
@@ -81,7 +83,7 @@ const tools = { listAvailable: async () => [], list: () => [], invoke: async () 
 
 async function turn(slug: string, origin: TurnOrigin) {
   const sid = await createSession('cody', slug);
-  await runChatTurn({
+  lastResult = await runChatTurn({
     agent: 'cody',
     session: sid,
     text: 'go on?',
@@ -90,6 +92,7 @@ async function turn(slug: string, origin: TurnOrigin) {
   } as Parameters<typeof runChatTurn>[0]);
   return sid;
 }
+let lastResult: Awaited<ReturnType<typeof runChatTurn>> | undefined;
 
 test("in a person's turn Codex's questions become the session's open question, not a row", async () => {
   broadcast.length = 0;
@@ -108,6 +111,18 @@ test("in a person's turn Codex's questions become the session's open question, n
 test('in a turn nobody watches the questions stay in the text only', async () => {
   const sid = await turn('codex-q-agent', { kind: 'agent', from: { agent: 'ada' } });
   assert.equal(await openAsyncQuestion('cody', sid), null);
+});
+
+test('a turn that only asks is complete: the card is its answer', async () => {
+  script = { ask: true, text: null };
+  await turn('codex-q-only', { kind: 'human', via: 'chat' });
+  assert.equal(lastResult!.outcome, 'completed');
+  assert.equal(lastResult!.outcome_reason, undefined);
+  script = { ask: false, text: null };
+  await turn('codex-silent', { kind: 'human', via: 'chat' });
+  assert.equal(lastResult!.outcome, 'degraded', 'no question and no text is still an empty answer');
+  assert.equal(lastResult!.outcome_reason, 'empty_answer');
+  script = { ask: true, text: REAL_ITEM.text };
 });
 
 // The turn opened the agent's memory (and its file watcher).
