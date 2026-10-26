@@ -205,6 +205,9 @@ export function afterRun(args: {
   const pv = preview(a.data);
   if (pv !== undefined) result.dataPreview = pv;
   if (a.final) result.final = a.final;
+  // The script ran: errors in a row end here — unless the data still
+  // waits for the decision model, whose answer decides (a judged check
+  // whose model stays down must still reach the pause, review 2026-10-26).
   let state: CheckState = { ...base, errorStreak: 0, last: result };
 
   if (a.final === 'failed') {
@@ -233,7 +236,7 @@ export function afterRun(args: {
       return { state };
     }
     const max = limits.maxItemsPerCheck ?? DEFAULT_ITEMS_PER_CHECK;
-    return { state, needItems: { items: fresh.slice(0, max), more: Math.max(0, fresh.length - max) } };
+    return { state: { ...state, errorStreak: args.state.errorStreak }, needItems: { items: fresh.slice(0, max), more: Math.max(0, fresh.length - max) } };
   }
 
   if (evaluator.type === 'decision') {
@@ -243,7 +246,7 @@ export function afterRun(args: {
     if (source.mode === 'watch' && !state.baselineTaken) {
       state = { ...state, baselineTaken: true, lastDataHash: hash };
       if (!source.notifyOnFirst) return { state };
-      return { state, needDecision: { data: a.data, hash } };
+      return { state: { ...state, errorStreak: args.state.errorStreak }, needDecision: { data: a.data, hash } };
     }
     if (state.lastDataHash === hash || isEmptyData(a.data)) {
       // Seen, or nothing at all: the decision model is not asked.
@@ -251,7 +254,7 @@ export function afterRun(args: {
       if (pastDeadline) return withWake({ state, wake: { reason: 'deadline', data: a.data }, complete: 'deadline passed' }, now, limits);
       return { state };
     }
-    return { state, needDecision: { data: a.data, hash } };
+    return { state: { ...state, errorStreak: args.state.errorStreak }, needDecision: { data: a.data, hash } };
   }
 
   // Art 1
@@ -293,9 +296,10 @@ export function afterDecision(args: {
     last.errorClass = outcome.permanent ? 'permanent' : 'temporary';
     const streak = args.state.errorStreak + 1;
     const state: CheckState = { ...args.state, errorStreak: streak, last };
-    if (outcome.permanent) return { state, pause: { kind: 'error', reason: last.error } };
-    if (streak >= limits.errorStreak) return { state, pause: { kind: 'error', reason: `${streak} check errors in a row. Last: ${last.error}` } };
-    return { state };
+    const judged = `no answer from the decision model, the data is judged again next check — ${outcome.error}`;
+    if (outcome.permanent) return { state, judged, pause: { kind: 'error', reason: last.error } };
+    if (streak >= limits.errorStreak) return { state, judged, pause: { kind: 'error', reason: `${streak} check errors in a row. Last: ${last.error}` } };
+    return { state, judged };
   }
   last.decision = { question: outcome.question, value: outcome.value, ...(outcome.detail ? { detail: outcome.detail } : {}) };
   const state: CheckState = { ...args.state, lastDataHash: hash, errorStreak: 0, last, lastDecision: { at: now.toISOString(), ...last.decision } };
@@ -336,9 +340,11 @@ export function afterItemDecisions(args: {
     last.errorClass = first?.permanent ? 'permanent' : 'temporary';
     const streak = args.state.errorStreak + 1;
     const state: CheckState = { ...args.state, errorStreak: streak, last };
-    if (first?.permanent) return { state, pause: { kind: 'error', reason: last.error } };
-    if (streak >= limits.errorStreak) return { state, pause: { kind: 'error', reason: `${streak} check errors in a row. Last: ${last.error}` } };
-    return { state };
+    // The history says so too: "each check that asked the model".
+    const judged = `${results.length} item${results.length === 1 ? '' : 's'} (${results.map((r) => r.key).join(', ')}): no answer from the decision model, asked again next check — ${first?.error ?? 'no answer'}`;
+    if (first?.permanent) return { state, judged, pause: { kind: 'error', reason: last.error } };
+    if (streak >= limits.errorStreak) return { state, judged, pause: { kind: 'error', reason: `${streak} check errors in a row. Last: ${last.error}` } };
+    return { state, judged };
   }
   const ok = answered.map((r) => ({ ...r, o: r.outcome as { ok: true; wake: boolean; question: string; value: number | string; detail?: string } }));
   const hits = ok.filter((r) => r.o.wake);
@@ -361,7 +367,10 @@ export function afterItemDecisions(args: {
     seenItems: markSeen(args.state.seenItems, ok.map((r) => r.key), at),
     lastDecision: { at, ...last.decision },
   };
-  const judged = `${question}: ${parts.join('; ')}${hits.length ? ' — wakes' : ''}`;
+  // The history names each item with its answer, so a missing wake can
+  // be traced to one mail (docs/sentinel.md, Troubleshooting).
+  const each = results.map((r) => (r.outcome.ok ? `${r.key} ${short(r.outcome.value)}${r.outcome.wake ? ' (wakes)' : ''}` : `${r.key} no answer`));
+  const judged = `${question}: ${each.join(', ')}; ${hits.length} above the wake rule${more ? `; ${more} more new item${more === 1 ? '' : 's'} next check` : ''}${hits.length ? ' — wakes' : ''}`;
   const pastDeadline = source.mode === 'once' && source.deadline !== undefined && now.getTime() >= new Date(source.deadline).getTime();
   if (hits.length) {
     return withWake({ state, judged, wake: { reason: 'decision', data: hits.map((h) => h.item) }, ...(source.mode === 'once' ? { complete: 'condition met' } : {}) }, now, limits);

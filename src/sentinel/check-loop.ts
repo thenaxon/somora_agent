@@ -16,7 +16,7 @@
 import { createHash } from 'node:crypto';
 import type { Config } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
-import { afterDecision, afterItemDecisions, afterRun, initialCheckState, nextAfterError, type CheckLimits, type CheckStep, type WakeReason } from './check-logic.ts';
+import { afterDecision, afterItemDecisions, afterRun, initialCheckState, nextAfterError, stableJson, type CheckLimits, type CheckStep, type WakeReason } from './check-logic.ts';
 import { judgeCheckData, judgeItems } from './check-judge.ts';
 import { runCheck } from './check-runner.ts';
 import { cachedCheckState, loadCheckState, saveCheckState } from './check-store.ts';
@@ -122,6 +122,11 @@ function nextCheckAfter(source: CheckSource, step: CheckStep, now: Date, limits:
   return new Date(at).toISOString();
 }
 
+/** The same check as when the run started: same source and evaluator. */
+function sameCheck(a: Trigger, b: Trigger): boolean {
+  return stableJson(a.source) === stableJson(b.source) && stableJson(a.evaluator ?? null) === stableJson(b.evaluator ?? null);
+}
+
 /** Start the due check of this trigger without waiting for it. */
 export function startDueCheck(trigger: Trigger, deps: CheckLoopDeps): void {
   const cfg = limitsOf(deps.config());
@@ -191,12 +196,25 @@ export async function runDueCheck(trigger: Trigger, deps: CheckLoopDeps, now: ()
   const at = now();
   const evaluator = fresh.evaluator ?? { type: 'ready' as const };
   let step = afterRun({ source: fresh.source, evaluator, state, run, now: at, limits });
+  const judging = Boolean(step.needDecision || step.needItems);
   if (step.needDecision) {
     const outcome = await judgeCheckData(fresh, step.needDecision.data, config);
     step = afterDecision({ source: fresh.source, state: step.state, hash: step.needDecision.hash, data: step.needDecision.data, outcome, now: at, limits });
   } else if (step.needItems) {
     const results = await judgeItems(fresh, step.needItems.items, config, cfg.parallelDecisions);
     step = afterItemDecisions({ source: fresh.source, state: step.state, results, more: step.needItems.more, now: at, limits });
+  }
+  if (judging) {
+    // Judging takes seconds (one question per item with perItem): the
+    // trigger may have been deleted, paused or changed meanwhile. Its
+    // answer then belongs to what no longer exists — saving it would
+    // overwrite an update's fresh start, wake for a deleted trigger, or
+    // save a deleted once trigger back as completed (review 2026-10-26).
+    const after = getTrigger(trigger.id);
+    if (!after || after.status !== 'active' || !sameCheck(after, fresh)) {
+      logger.info({ msg: 'sentinel.check.discarded', triggerId: trigger.id, reason: !after ? 'deleted while judging' : after.status !== 'active' ? `${after.status} while judging` : 'changed while judging' });
+      return;
+    }
   }
   if (step.judged) {
     await recordFire(fresh.id, { firedAt: at.toISOString(), scheduledFor: at.toISOString(), outcome: 'judged', note: step.judged.slice(0, 1000) });
@@ -247,23 +265,29 @@ export async function runDueCheck(trigger: Trigger, deps: CheckLoopDeps, now: ()
       const cooldownLeft = fresh.policy?.cooldownMs && fresh.lastSuccessAt
         ? fresh.policy.cooldownMs - (at.getTime() - new Date(fresh.lastSuccessAt).getTime())
         : 0;
-      await saveCheckState({
+      const rolledBack: CheckState = {
         ...next,
         lastReady: state.lastReady,
         lastDataHash: state.lastDataHash,
         seenItems: state.seenItems,
         baselineTaken: state.baselineTaken,
         wakeCount: state.wakeCount,
-        ...(state.wakesToday ? { wakesToday: state.wakesToday } : {}),
+        wakesToday: state.wakesToday,
         nextCheckAt: new Date(at.getTime() + Math.max(WAKE_RETRY_MS, cooldownLeft + 1000)).toISOString(),
-      });
+      };
+      // Fields the state had not before the wake was charged go too: the
+      // first wake of a day that could not start must not count against
+      // that day's cap (review 2026-10-26).
+      for (const k of ['lastReady', 'lastDataHash', 'seenItems', 'wakesToday'] as const) if (rolledBack[k] === undefined) delete rolledBack[k];
+      await saveCheckState(rolledBack);
       return;
     }
     if (outcome === 'error') return; // fireTrigger counted it; the trigger stays as it is
   }
 
   if (step.complete) {
-    const latest = getTrigger(fresh.id) ?? fresh;
-    if (latest.status === 'active') await saveTrigger({ ...latest, status: 'completed', statusReason: step.complete });
+    // Deleted meanwhile (the wake's turn may have run long): stays deleted.
+    const latest = getTrigger(fresh.id);
+    if (latest?.status === 'active') await saveTrigger({ ...latest, status: 'completed', statusReason: step.complete });
   }
 }

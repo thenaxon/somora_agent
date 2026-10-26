@@ -154,7 +154,10 @@ export async function dryRunCheck(args: {
       return { ok: false, art, ms: run.ms, error: run.error, errorClass: run.errorClass, ...(stderr ? { stderr } : {}), verdict: 'a check error — never a wake; three in a row pause the trigger.', sha: script.sha256 };
     }
     const asTrigger = { id: args.installed?.id ?? 'dry-run', evaluator: args.evaluator } as Trigger;
-    if (args.evaluator.type === 'decision' && args.evaluator.perItem) {
+    // A script that says it can never succeed: the real check wakes and
+    // ends at once, before any judging — so says the dry run, item by
+    // item or not (review 2026-10-26).
+    if (args.evaluator.type === 'decision' && args.evaluator.perItem && run.answer.final !== 'failed') {
       const all = itemsOf(run.answer.data).map((item) => ({ key: itemKey(item), item }));
       const unique = all.filter((i, n) => all.findIndex((j) => j.key === i.key) === n);
       const asked = unique.slice(0, limits.maxItemsPerCheck);

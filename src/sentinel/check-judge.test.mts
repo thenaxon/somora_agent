@@ -14,7 +14,8 @@ import { applyWakeRule, validateDecisionEvaluator } from './check-judge.ts';
 import { prepareCheckSource } from './check-create.ts';
 import { runDueCheck, type CheckWake, type FireOutcome } from './check-loop.ts';
 import { loadCheckState } from './check-store.ts';
-import { getHistory, getTrigger, loadTriggers, saveTrigger } from './store.ts';
+import { deleteTrigger, getHistory, getTrigger, keepNewest, loadTriggers, saveTrigger } from './store.ts';
+import { dryRunCheck } from './check-dry-run.ts';
 import type { Trigger } from './types.ts';
 
 // ── fake decision model: "urgent" when a mail mentions tonight ──
@@ -187,7 +188,7 @@ test('perItem: each new mail asked about alone and in parallel, a wake carries j
   assert.deepEqual(h.wakes[0]!.data, [m(4, 'Pay by tonight')], 'just the mail above the rule');
   const hist = await getHistory('mail-p', 5);
   assert.equal(hist[0]!.outcome, 'judged');
-  assert.match(hist[0]!.note ?? '', /6 items judged: .*1 above the wake rule — wakes/);
+  assert.equal(hist[0]!.note, 'urgent: id:3 0.08, id:4 0.93 (wakes), id:5 0.08, id:6 0.08, id:7 0.08, id:8 0.08; 1 above the wake rule — wakes', 'each item named with its answer');
   calls = [];
   await check('mail-p', h.deps, 10);
   assert.equal(calls.length, 0, 'judged mails are not asked about again');
@@ -222,4 +223,91 @@ test('without perItem a list of several mails gets a warning in the state and th
   await check('mail-w', h.deps, 5);
   assert.match((await loadCheckState('mail-w'))!.last?.warning ?? '', /list of 2 items, judged as one/);
   assert.match((await getHistory('mail-w', 1))[0]!.note ?? '', /Warning: the data is a list of 2 items/);
+});
+
+// ── review 2026-10-26 ──
+
+const m = (id: number, subject: string) => ({ id, subject });
+
+test('a trigger deleted while its items are judged stays deleted and wakes nobody', async () => {
+  writeFileSync(mails, JSON.stringify([]));
+  await makeArt2('mail-del', withModel, true);
+  // a once trigger: a hit would complete it — and used to save it back
+  const t = getTrigger('mail-del')!;
+  await saveTrigger({ ...t, source: { ...(t.source as object), mode: 'once', deadline: new Date(Date.now() + 3_600_000).toISOString() } as Trigger['source'] });
+  const h = harness(() => withModel);
+  writeFileSync(mails, JSON.stringify([m(1, 'pay by tonight')]));
+  delayMs = 300;
+  const run = check('mail-del', h.deps, 0);
+  await new Promise((r) => setTimeout(r, 150)); // the model is answering now
+  await deleteTrigger('mail-del');
+  await run;
+  delayMs = 0;
+  assert.equal(h.wakes.length, 0, 'no wake for a deleted trigger');
+  assert.equal(getTrigger('mail-del') ?? null, null, 'not saved back as completed');
+});
+
+test('a trigger changed while judging keeps its fresh start', async () => {
+  writeFileSync(mails, JSON.stringify([]));
+  await makeArt2('mail-upd', withModel, true);
+  const h = harness(() => withModel);
+  await check('mail-upd', h.deps, 0); // starting items (none)
+  writeFileSync(mails, JSON.stringify([m(1, 'pay by tonight')]));
+  delayMs = 300;
+  const run = check('mail-upd', h.deps, 5);
+  await new Promise((r) => setTimeout(r, 150));
+  const t = getTrigger('mail-upd')!;
+  await saveTrigger({ ...t, source: { ...(t.source as object), interval: '10m' } as Trigger['source'] });
+  await run;
+  delayMs = 0;
+  assert.equal(h.wakes.length, 0);
+  assert.equal((await loadCheckState('mail-upd'))!.seenItems?.['id:1'], undefined, 'the old run saved nothing');
+});
+
+test('a decision model that stays down pauses the trigger after errorStreak checks', async () => {
+  writeFileSync(mails, JSON.stringify([]));
+  await makeArt2('mail-down', withModel, true);
+  const h = harness(() => withModel);
+  await check('mail-down', h.deps, 0);
+  writeFileSync(mails, JSON.stringify([m(1, 'a'), m(2, 'b')]));
+  mode = 'down';
+  for (const [i, min] of [5, 10, 20].entries()) {
+    await check('mail-down', h.deps, min);
+    if (i < 2) assert.equal((await loadCheckState('mail-down'))!.errorStreak, i + 1, `failure ${i + 1} counted`);
+  }
+  mode = 'ok';
+  const t = getTrigger('mail-down')!;
+  assert.equal(t.status, 'error', 'paused after three checks without an answer');
+  const hist = await getHistory('mail-down', 10);
+  assert.ok(hist.some((e) => e.outcome === 'judged' && /id:1, id:2\): no answer from the decision model/.test(e.note ?? '')), 'the history names the unanswered items');
+});
+
+test('a first wake that cannot start leaves no charge on the day', async () => {
+  writeFileSync(mails, JSON.stringify([]));
+  await makeArt2('mail-skip', withModel, true);
+  const skipped = { config: () => withModel, reschedule: () => {}, fire: async (): Promise<FireOutcome> => 'skipped' };
+  await check('mail-skip', skipped, 0);
+  writeFileSync(mails, JSON.stringify([m(1, 'pay by tonight')]));
+  await check('mail-skip', skipped, 5);
+  const s = (await loadCheckState('mail-skip'))!;
+  assert.equal(s.wakesToday, undefined, 'the skipped wake is not counted');
+  assert.equal(s.seenItems?.['id:1'], undefined, 'and the item stays new');
+});
+
+test('judged entries do not push fires out of the history ring', () => {
+  const fire = (i: number) => JSON.stringify({ firedAt: `t${i}`, outcome: 'success' });
+  const judged = (i: number) => JSON.stringify({ firedAt: `t${i}`, outcome: 'judged' });
+  const lines = [fire(0), ...Array.from({ length: 300 }, (_, i) => judged(i + 1)), fire(301)];
+  const kept = keepNewest(lines, 200);
+  assert.equal(kept.filter((l) => l.includes('success')).length, 2, 'both fires kept');
+  assert.equal(kept.filter((l) => l.includes('judged')).length, 200);
+  assert.equal(kept[0], fire(0), 'file order kept');
+});
+
+test('dry run, item by item: a script that reports final failed says so', async () => {
+  const path = join(work, 'final-failed.py');
+  writeFileSync(path, 'import json\nprint(json.dumps({"final": "failed", "summary": "job cancelled"}))\n');
+  const r = await dryRunCheck({ agent: 'ada', source: { mode: 'watch' }, evaluator: { type: 'decision', questions, wake: { question: 'urgent', minProbability: 0.8 }, perItem: true }, config: withModel, scriptPath: path });
+  assert.match(r.verdict, /final: "failed"/);
+  assert.equal(r.items, undefined);
 });

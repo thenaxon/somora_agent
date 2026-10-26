@@ -227,7 +227,7 @@ export async function recordFire(triggerId: string, entry: FireHistoryEntry): Pr
     const raw = await readFile(historyPath(triggerId), 'utf8');
     const lines = raw.split('\n').filter((l) => l.trim().length > 0);
     if (lines.length > SENTINEL_LIMITS.HISTORY_RING_SIZE * 2) {
-      const kept = lines.slice(-SENTINEL_LIMITS.HISTORY_RING_SIZE).join('\n') + '\n';
+      const kept = keepNewest(lines, SENTINEL_LIMITS.HISTORY_RING_SIZE).join('\n') + '\n';
       const tmp = `${historyPath(triggerId)}.tmp.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}`;
       await writeFile(tmp, kept, 'utf8');
       await rename(tmp, historyPath(triggerId));
@@ -235,6 +235,23 @@ export async function recordFire(triggerId: string, entry: FireHistoryEntry): Pr
   } catch {
     // Read-for-rotation failed (raced rotation?) — next call retries.
   }
+}
+
+/** The newest `size` fires and the newest `size` judged entries, in file
+ *  order. A judged check writes an entry per check that asked the
+ *  decision model; kept in one ring they would push out the fires that
+ *  countFiresToday (maxFiresPerDay) reads (review 2026-10-26). */
+export function keepNewest(lines: readonly string[], size: number): string[] {
+  const judged = (l: string) => l.includes('"outcome":"judged"');
+  const keep = new Set<number>();
+  let fires = 0;
+  let judgedKept = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (judged(lines[i]!)) {
+      if (judgedKept++ < size) keep.add(i);
+    } else if (fires++ < size) keep.add(i);
+  }
+  return lines.filter((_, i) => keep.has(i));
 }
 
 /** Read up to `limit` newest history entries for a trigger. */
