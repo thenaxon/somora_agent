@@ -20,6 +20,12 @@
   /* safe-area-aware insets so PWA respects iOS notch / Android nav bar */
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Side insets: on a phone with the island and status pill at a side
+     (folded iPhone Duo, notch phones in landscape) the device reports the
+     whole side, but only the top rows are under the pill. Only the
+     header and the avatar row use them; the rest stays full width. */
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
 * { box-sizing: border-box; }
@@ -76,7 +82,7 @@ button { cursor: pointer; }
 
 .mobile-header {
   flex-shrink: 0;
-  padding: 10px 16px;
+  padding: 10px calc(16px + var(--safe-right)) 10px calc(16px + var(--safe-left));
   border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
@@ -117,6 +123,17 @@ button { cursor: pointer; }
   -webkit-overflow-scrolling: touch;
 }
 .avatar-row::-webkit-scrollbar { display: none; }
+/* Room at both ends to scroll the first and last agent out from under a
+   side inset; the row itself stays full width. The negative margin
+   takes back the gap, so without an inset nothing changes. (Spacers,
+   not padding: Safari leaves a scroll container's end padding out.) */
+.avatar-row::before,
+.avatar-row::after {
+  content: '';
+  flex: none;
+}
+.avatar-row::before { width: var(--safe-left); margin-right: -10px; }
+.avatar-row::after { width: var(--safe-right); margin-left: -10px; }
 
 .avatar-tile {
   display: flex;

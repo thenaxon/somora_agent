@@ -65,6 +65,12 @@ Otherwise the link points at `127.0.0.1`, which the phone cannot open.
 | **Chat** | The history of the open session, newest first loaded. Scroll to the top, or tap **Load older messages**, for the next older part. Replies are rendered as Markdown. A wide code block scrolls sideways. |
 | **Input bar** | Paperclip, microphone, text field, Send. Enter sends, Shift+Enter starts a new line. |
 
+On a phone whose camera island and status indicator sit at a side
+(a foldable when folded, a phone with a notch held sideways), the
+header moves its buttons out from under them, and the avatar row
+scrolls far enough to bring its first and last agent clear. The rest
+of the screen keeps the full width.
+
 ## Sessions and model
 
 Tap the header. A sheet opens with two lists.
