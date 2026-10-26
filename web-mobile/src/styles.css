@@ -1428,6 +1428,34 @@ button { cursor: pointer; }
   font-size: 12px;
 }
 
+/* A question that does not wait: the turn is over, nothing is at stake
+   until you answer — accent instead of warn. */
+.question-card.async {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-2));
+}
+.question-card.async .question-card-head {
+  color: var(--accent);
+}
+.question-card-part {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.question-card-input {
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 16px;
+  color: var(--text-0);
+  border: 1px solid var(--line-2);
+  background: var(--bg-1);
+}
+.question-card-hint {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
 /* A builder's options explain themselves; several may be picked. */
 .question-card-options button {
   display: flex;

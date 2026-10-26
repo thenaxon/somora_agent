@@ -40,6 +40,11 @@ import { configureExecConcurrencyCaps } from '../tools/exec/index.ts';
 import { registerAllTools, ToolRegistry } from '../tools/index.ts';
 import type { ToolContext } from '../tools/types.ts';
 
+/** Tools Claude Code keeps in the model's list instead of behind its
+ *  tool search (`_meta['anthropic/alwaysLoad']`). Gating still decides
+ *  whether they are listed at all. */
+const ALWAYS_LOADED_TOOLS: ReadonlySet<string> = new Set(['ask_user']);
+
 /**
  * External-MCP proxy mode (design: private/mcp-hub-design.md §4.4).
  * Serves ONE upstream server's tools to the parent CLI: tools/list from
@@ -298,6 +303,10 @@ async function main(): Promise<void> {
       {
         description: persona?.kind === 'builder' ? builderToolDescription(tool.name, tool.description) : tool.description,
         inputSchema,
+        // Claude Code defers MCP tools behind its tool search; these stay
+        // in the model's list (a tool it must search for, it never thinks
+        // of). Other clients ignore the key.
+        ...(ALWAYS_LOADED_TOOLS.has(tool.name) ? { _meta: { 'anthropic/alwaysLoad': true } } : {}),
       },
       async (args: unknown) => {
         const result = await registry.invoke(tool.name, args, ctx);

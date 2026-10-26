@@ -79,6 +79,11 @@ export interface SessionQuestion {
   /** Several options may be chosen ("1,3"). */
   multiple?: boolean;
   expiresAt: number;
+  /** Does not wait (docs/agents.md): the answer is the person's next
+   *  message — an option's number, or anything they write. */
+  async?: boolean;
+  /** Several questions asked at once (async only). */
+  parts?: Array<{ question: string; header?: string; options: Array<{ label: string; description?: string }>; multiple?: boolean }>;
 }
 
 export interface SessionSummary {
@@ -432,6 +437,8 @@ export type StreamEvent =
       kind: 'question-answered';
       questionId: string | null;
       choice: string | null;
+      /** A non-waiting question answered by writing something else. */
+      byMessage?: boolean;
     }
   | {
       // The session's model was set or cleared from somewhere (another

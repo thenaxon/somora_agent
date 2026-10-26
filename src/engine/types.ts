@@ -283,3 +283,8 @@ export interface AgentEngine {
   readonly name: string;
   runTurn(input: TurnInput): AsyncIterable<NormalizedEvent>;
 }
+
+/** engine_meta itemType for questions that do not wait (Codex's own
+ *  request_user_input_async): run-turn.ts makes them the session's open
+ *  question (server/async-questions.ts) and does not persist the row. */
+export const ASYNC_QUESTIONS_ITEM = 'async_questions';

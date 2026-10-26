@@ -340,7 +340,7 @@ turns them off for every thread.
 |---|---|
 | **Pinned binary** | Codex is a bundled dependency with an exact version. A Codex release cannot change the tool surface underneath somora. `somora codex features list` shows the feature flags of the bundled version. |
 | **Features off** | Shell and exec tools, browser and computer use, image generation, apps, multi-agent (`multi_agent`, `multi_agent_v2`, `agents.enabled`), personality, mentions, hooks and plugins, goals, fast mode, `view_image`, `skill_search`. |
-| **Settings** | `web_search="disabled"`, `tools.update_plan.enabled=false`, `tools.experimental_request_user_input.enabled=false`, bundled skills off, `project_doc_max_bytes=0` and `project_root_markers=[]` (no `AGENTS.md` lookup), `notify=[]`, `mcp_servers={}`. |
+| **Settings** | `web_search="disabled"`, `tools.update_plan.enabled=false`, `tools.experimental_request_user_input.enabled=false` (Codex's other question tool, `request_user_input_async`, stays on: its questions arrive as a [card](tools.md#questions-to-you) and change nothing by themselves), bundled skills off, `project_doc_max_bytes=0` and `project_root_markers=[]` (no `AGENTS.md` lookup), `notify=[]`, `mcp_servers={}`. |
 | **Own Codex home** | Codex runs with `CODEX_HOME=~/.somora/codex-home`. Only `auth.json` is copied from `~/.codex`. Your `config.toml`, MCP servers, hooks, plugins, skills and thread store never reach an agent. |
 | **Approvals** | Threads start with `approvalPolicy: never` and `sandbox: danger-full-access`. An approval request that arrives anyway is declined. |
 

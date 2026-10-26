@@ -13,6 +13,9 @@ import type { TurnOrigin } from '../types/turn-origin.ts';
 import { builderSessionAllows, type BuilderSessionState } from './builder-session.ts';
 
 export const TURN_ATTENDED_KEY = 'turnAttended';
+/** Who started the running turn when someone watches: `human` or `peer`
+ *  (null otherwise). Decides whether a chat agent's question waits. */
+export const TURN_ASKER_KEY = 'turnAskedBy';
 
 /** How long a chat agent's question waits by default (a builder's: 30 min). */
 export const CHAT_QUESTION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -24,6 +27,19 @@ export const CHAT_QUESTION_TIMEOUT_MS = 10 * 60 * 1000;
  *  watching. */
 export function isAttendedOrigin(origin: TurnOrigin | undefined): boolean {
   return origin?.kind === 'human' || origin?.kind === 'peer';
+}
+
+/** Who can answer a question in a turn from `origin`. */
+export function askerOf(origin: TurnOrigin | undefined): 'human' | 'peer' | null {
+  return origin?.kind === 'human' ? 'human' : origin?.kind === 'peer' ? 'peer' : null;
+}
+
+/** A chat agent's question in a turn a person started does not wait:
+ *  the turn ends, and the answer comes as the person's next message
+ *  (async-questions.ts). A builder's question and one in a task from
+ *  another agent system wait in the turn (builder-questions.ts). */
+export function asksWithoutWaiting(kind: 'chat' | 'builder' | undefined, meta: Record<string, unknown>): boolean {
+  return kind !== 'builder' && meta[TURN_ATTENDED_KEY] === true && meta[TURN_ASKER_KEY] === 'human';
 }
 
 /** Whether this session offers `toolName` right now, on top of the

@@ -160,7 +160,7 @@ interface ChatContextValue {
   refreshProject: (agent: string, session: string) => Promise<void>;
 }
 
-export type TurnQueueEvent = 'turn_queued' | 'turn_dequeued' | 'turn_started' | 'turn_end' | 'session_model';
+export type TurnQueueEvent = 'turn_queued' | 'turn_dequeued' | 'turn_started' | 'turn_end' | 'session_model' | 'question';
 
 const ChatContext = createContext<ChatContextValue>({
   projectsEnabled: null,
@@ -835,6 +835,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         bump();
         emitTurnEvent(key, 'session_model');
       });
+
+      // A question was asked or settled — the question card re-reads the
+      // open question (a non-waiting one comes and goes between turns).
+      const onQuestion = () => {
+        bump();
+        emitTurnEvent(key, 'question');
+      };
+      es.addEventListener('question_asked', onQuestion);
+      es.addEventListener('question_answered', onQuestion);
 
       es.addEventListener('project', () => {
         bump();

@@ -602,10 +602,20 @@ export type SseEvent =
          *  (docs/external-agents.md). Missing: a builder's ask_user. */
         kind?: 'permission';
         from?: 'external';
+        /** The question does not wait: the turn goes on, and the answer
+         *  arrives as the person's next message (docs/agents.md). */
+        async?: true;
+        /** Several questions asked at once (non-waiting only); the
+         *  top-level fields repeat the first. */
+        parts?: Array<{ question: string; header?: string; options: Array<{ label: string; description?: string }>; multiple: boolean }>;
+        /** Non-waiting: `codex` — Codex's own question tool; the reply
+         *  text carries the question too. */
+        source?: 'ask_user' | 'codex';
       };
     }
-  /** The open question was answered or withdrawn. */
-  | { event: 'question_answered'; data: { questionId?: string; answered: boolean; choice?: string | null } }
+  /** The open question was answered or withdrawn. `by: 'message'`: a
+   *  non-waiting question the person answered by writing something else. */
+  | { event: 'question_answered'; data: { questionId?: string; answered: boolean; choice?: string | null; by?: 'message' } }
   /** Builder: mode / phase / plan path changed. */
   | { event: 'builder_state'; data: { mode: 'attended' | 'unattended'; phase: 'plan' | 'build'; planPath: string | null } }
   | {

@@ -67,6 +67,10 @@ export const TOOL_USAGE_REMINDER = [
   'for a result that will never arrive.',
 ].join('\n');
 
+/** For a chat agent whose turn offers ask_user (a person started it). */
+export const ASK_USER_HINT =
+  'When you would end your reply with a question that has clear choices, ask it with `ask_user` instead of as text: the person gets a button per option.';
+
 /**
  * Build the project-block portion of the system prompt. Returns the
  * empty string when:
@@ -243,8 +247,16 @@ export async function assembleSystemPrompt(args: {
   const teamBlock = teamText ? `\n\n---\n\n${teamText}` : '';
   // Tool-usage reminder — constant text, BEFORE the more volatile
   // skills/project blocks. Gated on the agent actually having tools.
+  // The ask_user line follows the tool list: offered only in a turn a
+  // person started, and the list itself changes with it, so it costs no
+  // cache the tools have not already cost.
+  const askHint = args.toolNames?.includes('ask_user') ? `\n\n${ASK_USER_HINT}` : '';
   const toolsBlock =
-    deps.config.agentLoop.toolUsageReminder && toolCount > 0 ? `\n\n---\n\n${TOOL_USAGE_REMINDER}` : '';
+    deps.config.agentLoop.toolUsageReminder && toolCount > 0
+      ? `\n\n---\n\n${TOOL_USAGE_REMINDER}${askHint}`
+      : askHint
+        ? `\n\n---\n\n${ASK_USER_HINT}`
+        : '';
   // Wiki overview — session-static by construction (snapshotted on the
   // first turn, then frozen), so it sits ABOVE skills and project.
   const wikiBlock = await buildWikiOverviewBlock(agent, session, sessionMeta, deps, args.persistWikiSnapshot !== false);

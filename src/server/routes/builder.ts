@@ -12,7 +12,8 @@ import { checkWriteAllowed, expandHome } from '../../tools/file/policy.ts';
 import { registerAskCall } from '../ask-calls.ts';
 import { claimOfSession, describeClaim, listWorkdirClaims, workdirClaimedBy } from '../builder-busy.ts';
 import { answerQuestion, askQuestion, pendingQuestion } from '../builder-questions.ts';
-import { CHAT_QUESTION_TIMEOUT_MS, TURN_ATTENDED_KEY } from '../ask-attended.ts';
+import { CHAT_QUESTION_TIMEOUT_MS, TURN_ATTENDED_KEY, asksWithoutWaiting } from '../ask-attended.ts';
+import { askWithoutWaiting } from '../async-questions.ts';
 import { type BuilderMode, type BuilderPhase, DEFAULT_PLAN_FILE, type TodoItem, archiveNameFor, patchBuilderState, readBuilderState } from '../builder-session.ts';
 import { logger } from '../logger.ts';
 import { config } from '../server-state.ts';
@@ -295,6 +296,8 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
 
   // ask_user: blocks until the person answers (POST …/answer) or the wait
   // runs out. The tool's own timeout is a little longer than `timeout_ms`.
+  // A chat agent's question in a turn a person started returns at once
+  // instead (async-questions.ts).
   app.post('/agents/:agent/sessions/:session/ask', async (c) => {
     const r = await builderSessionOf(c);
     if (r instanceof Response) return r;
@@ -325,6 +328,28 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
       const meta = (await sessionMetaStore.get(r.agent, r.session)) as Record<string, unknown>;
       if (meta[TURN_ATTENDED_KEY] !== true) {
         return c.json({ answered: false, answers: [], text: 'nobody is watching this turn — decide yourself and say what you decided' });
+      }
+      // A person started this turn: the question does not wait. It stays
+      // on the session as a card; the answer is their next message.
+      if (asksWithoutWaiting(r.persona.kind, meta)) {
+        const q = await askWithoutWaiting({
+          agent: r.agent,
+          session: r.session,
+          source: 'ask_user',
+          parts: [
+            {
+              question: body.question.trim().slice(0, 2000),
+              ...(typeof body.header === 'string' && body.header.trim() ? { header: body.header.trim().slice(0, 40) } : {}),
+              options,
+              multiple: body.multiple === true,
+            },
+          ],
+        });
+        return c.json({
+          asked: true,
+          questionId: q.id,
+          note: 'The person sees your question with its options. End your turn now; their answer arrives as their next message.',
+        });
       }
     }
     const answer = await askQuestion(

@@ -47,13 +47,14 @@ import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
 import { drainSteer, frameSteerMessage, markSteerable, requeueSteer, unmarkSteerable } from './steer-inbox.ts';
 import { BUILDER_LOOP_DEFAULTS } from './builder-prompt.ts';
 import { ensureBuilderState, type BuilderSessionState } from './builder-session.ts';
-import { TURN_ATTENDED_KEY, isAttendedOrigin, sessionToolAllows } from './ask-attended.ts';
+import { TURN_ASKER_KEY, TURN_ATTENDED_KEY, askerOf, isAttendedOrigin, sessionToolAllows } from './ask-attended.ts';
 import { builderToolDescription } from '../tools/builder/short-descriptions.ts';
 import { workdirFromMeta } from './session-workdir.ts';
 import { claimWorkdir, describeClaim, noteToolCall, workdirClaimedBy } from './builder-busy.ts';
 import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
-import type { ResolvedAttachment } from '../engine/types.ts';
+import { ASYNC_QUESTIONS_ITEM, type ResolvedAttachment } from '../engine/types.ts';
+import { askWithoutWaiting, cleanParts } from './async-questions.ts';
 import { resolveAttachmentForModel } from '../attachments/store.ts';
 import { listRecords as listMediaRecords, readRecord as readMediaRecord } from '../media/records.ts';
 import {
@@ -975,11 +976,15 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       claimWorkdir({ agent, session, turnId, workdir: folder });
     } else {
       // A chat agent may ask the person (ask_user) only in a turn the
-      // person started. Written before the engine starts: the MCP child
-      // reads it from here (ask-attended.ts).
+      // person started — or another agent system that waits for the
+      // answer; who it was decides whether the question waits. Written
+      // before the engine starts: the MCP child reads it from here
+      // (ask-attended.ts).
       const attended = isAttendedOrigin(origin);
-      if ((sessionMeta as Record<string, unknown>)[TURN_ATTENDED_KEY] !== attended) {
-        sessionMeta = await deps.sessionMetaStore.update(agent, session, (m) => ({ ...m, [TURN_ATTENDED_KEY]: attended }));
+      const asker = askerOf(origin);
+      const m0 = sessionMeta as Record<string, unknown>;
+      if (m0[TURN_ATTENDED_KEY] !== attended || (m0[TURN_ASKER_KEY] ?? null) !== asker) {
+        sessionMeta = await deps.sessionMetaStore.update(agent, session, (m) => ({ ...m, [TURN_ATTENDED_KEY]: attended, [TURN_ASKER_KEY]: asker }));
       }
     }
     const availableTools = (await deps.tools.listAvailable(toolCtx))
@@ -1189,6 +1194,20 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
               },
             });
           }
+        }
+        continue;
+      }
+      if (ev.kind === 'engine_meta' && ev.itemType === ASYNC_QUESTIONS_ITEM) {
+        // Questions the engine asks without waiting (Codex's own question
+        // tool): the session's open question, shown as a card. Only when a
+        // person started the turn — nobody else would see the card. The
+        // text of the message carries them too, so nothing is lost.
+        const raw = (ev.payload as { questions?: Array<{ question: string; options: string[] }> } | undefined)?.questions;
+        const parts = cleanParts((raw ?? []).map((q) => ({ question: q.question, options: q.options })));
+        if (parts.length > 0 && askerOf(origin) === 'human' && persona.kind !== 'builder') {
+          await askWithoutWaiting({ agent, session, parts, source: 'codex' });
+        } else {
+          logger.info({ msg: 'turn.async_questions_ignored', turnId, agent, session, parts: parts.length, origin: origin ? originKind(origin) : null });
         }
         continue;
       }

@@ -60,6 +60,19 @@ interface SessionRow {
   lastActivity: string | null;
 }
 
+/** A non-waiting question as reply text: each question with its
+ *  options, for the person to answer with the next prompt. */
+export function asyncQuestionText(q: { question?: unknown; options?: unknown; parts?: unknown }): string {
+  type Part = { question: string; options: Array<{ label: string }> };
+  const parts: Part[] = Array.isArray(q.parts) && q.parts.length > 0
+    ? (q.parts as Part[])
+    : [{ question: typeof q.question === 'string' ? q.question : '', options: Array.isArray(q.options) ? (q.options as Array<{ label: string }>) : [] }];
+  const blocks = parts
+    .filter((p) => p && typeof p.question === 'string' && p.question)
+    .map((p) => [`❓ ${p.question}`, ...(p.options ?? []).map((o) => `- ${o.label}`)].join('\n'));
+  return `\n\n${blocks.join('\n\n')}`;
+}
+
 /** A question's option → the ACP option kind (the server sends the kind
  *  as description for permission requests; a builder's ask_user option
  *  is a plain choice). */
@@ -384,7 +397,11 @@ export class SomoraAcpAgent implements Agent {
           break;
         }
         if (f.event === 'question_asked') {
-          await this.ask(sessionId, target, f.data, tr);
+          // A question that does not wait has no dialog: it goes into the
+          // reply as text (Codex's own is there already), and the editor
+          // answers with the next prompt.
+          if (f.data.async !== true) await this.ask(sessionId, target, f.data, tr);
+          else if (f.data.source !== 'codex') await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: asyncQuestionText(f.data) } });
           continue;
         }
         for (const u of tr.update(f)) await send(u);

@@ -52,9 +52,18 @@ const HISTORY_MAX = 100;
  *  number)". */
 export function questionNotice(agent: string, q: SessionQuestion): string {
   const kinds = new Set(['allow_once', 'allow_always', 'reject_once', 'reject_always']);
-  const lines = q.options.map((o, i) => `   ${i + 1} ${o.label}${o.description && !kinds.has(o.description) ? ` — ${o.description}` : ''}`);
-  const how = q.multiple ? 'type the numbers, e.g. 1,3' : 'type the number';
-  return `❓ ${q.question}\n${lines.join('\n')}\n   ${how} (${agent} waits)`;
+  const optionLines = (options: SessionQuestion['options']): string[] =>
+    options.map((o, i) => `   ${i + 1} ${o.label}${o.description && !kinds.has(o.description) ? ` — ${o.description}` : ''}`);
+  // Several questions at once (async only): each with its options; the
+  // answer is whatever you write next.
+  if (q.async && q.parts && q.parts.length > 1) {
+    const blocks = q.parts.map((p) => [`❓ ${p.question}`, ...optionLines(p.options)].join('\n'));
+    return `${blocks.join('\n')}\n   answer in your own words (${agent} asks; answer any time)`;
+  }
+  const lines = optionLines(q.options);
+  const how = q.options.length === 0 ? 'answer in your own words' : q.multiple ? 'type the numbers, e.g. 1,3' : 'type the number';
+  const tail = !q.async ? `(${agent} waits)` : `${lines.length > 0 ? 'or write your own answer ' : ''}(${agent} asks; answer any time)`;
+  return `❓ ${q.question}${lines.length > 0 ? `\n${lines.join('\n')}` : ''}\n   ${how} ${tail}`;
 }
 
 function fallbackNotice(fb: {
@@ -937,7 +946,11 @@ export function App({
         const q = openQuestionRef.current;
         if (q && (ev.questionId === null || ev.questionId === q.id)) {
           setOpenQuestion(null);
-          appendTurn({ kind: 'system', id: nextId(), text: `→ ${ev.choice ?? 'no answer — the safest option was taken'}`, tone: 'info' });
+          // A non-waiting question answered in words (or replaced) needs
+          // no line: the message itself is the answer.
+          if (!q.async || ev.choice) {
+            appendTurn({ kind: 'system', id: nextId(), text: `→ ${ev.choice ?? 'no answer — the safest option was taken'}`, tone: 'info' });
+          }
         }
         return;
       }
@@ -1051,8 +1064,10 @@ export function App({
     const trimmed = text.trim();
     if (!trimmed) return;
     setInput('');
-    // An open question takes its option's number ("1", "2", …).
-    if (openQuestion && (openQuestion.multiple ? /^\d+(\s*[, ]\s*\d+)*$/ : /^\d+$/).test(trimmed)) {
+    // An open question takes its option's number ("1", "2", …). One that
+    // does not wait takes anything else too: it goes out as a message.
+    const numbered = openQuestion && !(openQuestion.async && openQuestion.parts && openQuestion.parts.length > 1) && openQuestion.options.length > 0;
+    if (openQuestion && numbered && (openQuestion.multiple ? /^\d+(\s*[, ]\s*\d+)*$/ : /^\d+$/).test(trimmed)) {
       const picks = [...new Set(trimmed.split(/[\s,]+/).map(Number))].map((n) => openQuestion.options[n - 1]);
       if (picks.every(Boolean)) {
         const q = openQuestion;
@@ -1068,8 +1083,10 @@ export function App({
         }
         return;
       }
-      appendTurn({ kind: 'system', id: nextId(), text: `no option ${trimmed} — type 1 to ${openQuestion.options.length}`, tone: 'warn' });
-      return;
+      if (!openQuestion.async) {
+        appendTurn({ kind: 'system', id: nextId(), text: `no option ${trimmed} — type 1 to ${openQuestion.options.length}`, tone: 'warn' });
+        return;
+      }
     }
     pushHistory(trimmed);
     if (trimmed.startsWith('/')) {

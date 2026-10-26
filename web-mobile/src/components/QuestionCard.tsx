@@ -1,11 +1,15 @@
 // An open question of the session, as a card above the input — the
 // phone version of the web's QuestionCard (docs/external-agents.md): an
 // external agent asks "may I run this?", one button per option. Polled
-// while a turn runs; a question only ever comes up during one. Without
-// an answer the server takes the safest option when the time runs out.
+// while a turn runs, re-read on question events. Without an answer the
+// server takes the safest option when the time runs out. A question that
+// does not wait (docs/agents.md) stays between turns: a tap sends the
+// choice as your next message, and writing anything else answers it too.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SessionQuestion } from '../../../web/src/lib/api';
+import type { SessionQuestion, SessionQuestionAnswer } from '../../../web/src/lib/api';
+import { answersOnClick, buildAnswer, questionParts } from '../../../web/src/lib/question';
+import type { TurnQueueEvent } from '../hooks/useChatStream';
 
 const POLL_MS = 1500;
 
@@ -23,7 +27,12 @@ function tone(description: string | undefined): string {
   return description.startsWith('allow') ? 'allow' : 'reject';
 }
 
-export function useSessionQuestion(agent: string | null, session: string, streaming: boolean): { question: SessionQuestion | null; refresh: () => void } {
+export function useSessionQuestion(
+  agent: string | null,
+  session: string,
+  streaming: boolean,
+  subscribeTurnEvents?: (handler: (event: TurnQueueEvent) => void) => () => void,
+): { question: SessionQuestion | null; refresh: () => void } {
   const [question, setQuestion] = useState<SessionQuestion | null>(null);
   const current = useRef({ agent, session });
   current.current = { agent, session };
@@ -48,10 +57,25 @@ export function useSessionQuestion(agent: string | null, session: string, stream
     const t = setInterval(refresh, POLL_MS);
     return () => clearInterval(t);
   }, [streaming, refresh]);
+  useEffect(() => subscribeTurnEvents?.((event) => event === 'question' && refresh()), [subscribeTurnEvents, refresh]);
   return { question, refresh };
 }
 
+async function postAnswer(agent: string, session: string, questionId: string, body: SessionQuestionAnswer): Promise<void> {
+  const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/questions/${encodeURIComponent(questionId)}/answer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`);
+}
+
 export function QuestionCard({ agent, session, question, onAnswered }: { agent: string; session: string; question: SessionQuestion; onAnswered: () => void }) {
+  if (question.async) return <AsyncQuestionCard agent={agent} session={session} question={question} onAnswered={onAnswered} />;
+  return <WaitingQuestionCard agent={agent} session={session} question={question} onAnswered={onAnswered} />;
+}
+
+function WaitingQuestionCard({ agent, session, question, onAnswered }: { agent: string; session: string; question: SessionQuestion; onAnswered: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A question with several answers allowed: tap to pick, then send.
@@ -60,12 +84,7 @@ export function QuestionCard({ agent, session, question, onAnswered }: { agent: 
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/questions/${encodeURIComponent(question.id)}/answer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answers: labels }),
-      });
-      if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`);
+      await postAnswer(agent, session, question.id, { answers: labels });
       onAnswered();
     } catch (err) {
       setError((err as Error).message);
@@ -105,6 +124,87 @@ export function QuestionCard({ agent, session, question, onAnswered }: { agent: 
           Send {picked.length > 0 ? `(${picked.length})` : ''}
         </button>
       )}
+      {error && <div className="question-card-error">{error}</div>}
+    </div>
+  );
+}
+
+/** A question that does not wait: one or several, each with options (or
+ *  a line for your own words). The answer goes out as your next message. */
+function AsyncQuestionCard({ agent, session, question, onAnswered }: { agent: string; session: string; question: SessionQuestion; onAnswered: () => void }) {
+  const parts = questionParts(question);
+  const oneClick = answersOnClick(question);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [picks, setPicks] = useState<string[][]>(() => parts.map(() => []));
+  const [texts, setTexts] = useState<string[]>(() => parts.map(() => ''));
+  const send = async (body: SessionQuestionAnswer) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await postAnswer(agent, session, question.id, body);
+      onAnswered();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const pick = (i: number, label: string, multiple: boolean) => {
+    if (oneClick) return void send({ answers: [label] });
+    setPicks((all) =>
+      all.map((p, j) => (j !== i ? p : multiple ? (p.includes(label) ? p.filter((x) => x !== label) : [...p, label]) : p[0] === label ? [] : [label])),
+    );
+  };
+  const body = buildAnswer(question, picks, texts);
+  return (
+    <div className="question-card async" data-testid="question-card" data-async="true" role="group" aria-label={question.header ?? 'Question'}>
+      <div className="question-card-head">
+        <span>{question.header ?? (parts.length > 1 ? `${parts.length} questions` : 'Question')}</span>
+        <span className="question-card-wait">answer any time</span>
+      </div>
+      {parts.map((p, i) => (
+        <div key={i} className="question-card-part">
+          <div className="question-card-text">{p.question}</div>
+          {p.options.length > 0 ? (
+            <div className="question-card-options">
+              {p.options.map((o) => {
+                const on = (picks[i] ?? []).includes(o.label);
+                return (
+                  <button
+                    key={o.label}
+                    type="button"
+                    disabled={busy}
+                    className={on ? 'picked' : ''}
+                    aria-pressed={oneClick ? undefined : on}
+                    data-testid={`question-option-${o.label}`}
+                    onClick={() => pick(i, o.label, p.multiple)}
+                  >
+                    <span>{o.label}</span>
+                    {o.description && <span className="question-option-note">{o.description}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <input
+              type="text"
+              className="question-card-input"
+              value={texts[i] ?? ''}
+              disabled={busy}
+              placeholder="Your answer"
+              data-testid={`question-text-${i}`}
+              onChange={(e) => setTexts((all) => all.map((t, j) => (j === i ? e.target.value : t)))}
+            />
+          )}
+        </div>
+      ))}
+      {!oneClick && (
+        <button type="button" className="question-card-send" data-testid="question-send" disabled={busy || !body} onClick={() => body && void send(body)}>
+          Send
+        </button>
+      )}
+      <div className="question-card-hint">or write your own answer below</div>
       {error && <div className="question-card-error">{error}</div>}
     </div>
   );

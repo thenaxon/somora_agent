@@ -13,6 +13,7 @@ import { IMAGE_TYPES, badgeIsImage, externalBadge } from '../../external/badge.t
 import { connectionSnapshot, knownInfo } from '../../external/connection.ts';
 import { externalNameClashes, getExternalAgent, listExternalAgents, type ExternalAgent } from '../../external/registry.ts';
 import { resolveSessionId } from '../../storage/sessions.ts';
+import { answerWithoutWaiting, openAsyncQuestion, sendAsPerson } from '../async-questions.ts';
 import { answerQuestion, pendingQuestion } from '../builder-questions.ts';
 import { logger } from '../logger.ts';
 import { config } from '../server-state.ts';
@@ -100,22 +101,43 @@ export function registerExternalRoutes(app: Hono, routeDeps: ExternalRoutesDeps)
     const agent = c.req.param('agent');
     const session = await resolveSessionId(agent, c.req.param('session'));
     if (!session) return c.json({ error: 'session not found' }, 404);
-    const q = pendingQuestion(agent, session);
+    const q = pendingQuestion(agent, session) ?? (await openAsyncQuestion(agent, session));
     return c.json({ question: q });
   });
 
-  // Answer the open question of a session (any agent kind).
+  // Answer the open question of a session (any agent kind). A waiting
+  // question resolves its tool call; one that does not wait is sent as
+  // the person's next message (async-questions.ts).
   app.post('/agents/:agent/sessions/:session/questions/:id/answer', async (c) => {
     const agent = c.req.param('agent');
     const session = await resolveSessionId(agent, c.req.param('session'));
     if (!session) return c.json({ error: 'session not found' }, 404);
     const id = c.req.param('id');
-    const body = (await c.req.json().catch(() => null)) as { answers?: unknown; text?: unknown } | null;
-    const answers = Array.isArray(body?.answers) ? (body!.answers as unknown[]).filter((a): a is string => typeof a === 'string') : [];
-    const ok = answerQuestion(agent, session, id, { answers, ...(typeof body?.text === 'string' ? { text: body.text } : {}) });
-    if (!ok) return c.json({ error: 'no open question with that id on this session' }, 404);
-    logger.info({ msg: 'question.answered', agent, session, questionId: id, answers });
-    await publish(agent, session, { event: 'question_answered', data: { questionId: id, answered: true, choice: answers[0] ?? null } });
-    return c.json({ ok: true });
+    const body = (await c.req.json().catch(() => null)) as { answers?: unknown; text?: unknown; parts?: unknown } | null;
+    const strings = (v: unknown): string[] => (Array.isArray(v) ? (v as unknown[]).filter((a): a is string => typeof a === 'string') : []);
+    const answers = strings(body?.answers);
+    const text = typeof body?.text === 'string' ? body.text : undefined;
+    if (answerQuestion(agent, session, id, { answers, ...(text !== undefined ? { text } : {}) })) {
+      logger.info({ msg: 'question.answered', agent, session, questionId: id, answers });
+      await publish(agent, session, { event: 'question_answered', data: { questionId: id, answered: true, choice: answers[0] ?? null } });
+      return c.json({ ok: true });
+    }
+    // A question that does not wait: the answer becomes the person's
+    // next message, sent the way a typed one is.
+    const parts = Array.isArray(body?.parts)
+      ? (body!.parts as unknown[]).map((p) => {
+          const x = (p && typeof p === 'object' ? p : {}) as { answers?: unknown; text?: unknown };
+          return { answers: strings(x.answers), ...(typeof x.text === 'string' ? { text: x.text } : {}) };
+        })
+      : undefined;
+    const r = await answerWithoutWaiting(agent, session, id, { answers, ...(text !== undefined ? { text } : {}), ...(parts ? { parts } : {}) });
+    if ('error' in r) {
+      return r.error === 'empty'
+        ? c.json({ error: 'empty answer — choose an option or type a text' }, 400)
+        : c.json({ error: 'no open question with that id on this session' }, 404);
+    }
+    await publish(agent, session, { event: 'question_answered', data: { questionId: id, answered: true, choice: r.choice } });
+    const turnId = sendAsPerson(agent, session, r.text);
+    return c.json({ ok: true, sent: true, turnId, text: r.text });
   });
 }

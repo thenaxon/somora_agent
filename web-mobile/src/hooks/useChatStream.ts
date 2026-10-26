@@ -128,7 +128,7 @@ export interface ChatStream {
   connectionError: string | null;
 }
 
-export type TurnQueueEvent = 'turn_queued' | 'turn_dequeued' | 'turn_started' | 'turn_end';
+export type TurnQueueEvent = 'turn_queued' | 'turn_dequeued' | 'turn_started' | 'turn_end' | 'question';
 
 /** History events per page — the same as the web client. A long
  *  session (tens of MB of history) loads in a fraction of a second. */
@@ -767,6 +767,14 @@ export function useChatStream(agent: string | null, session: string = 'main'): C
       modelListenersRef.current.forEach((fn) => fn());
     };
     es.addEventListener('session_model', onSessionModel);
+    // A question was asked or settled: the question card re-reads it (a
+    // non-waiting one comes and goes between turns).
+    const onQuestion = () => {
+      bump();
+      emitTurnEvent('question');
+    };
+    es.addEventListener('question_asked', onQuestion);
+    es.addEventListener('question_answered', onQuestion);
 
     return () => {
       cancelled = true;
@@ -785,6 +793,8 @@ export function useChatStream(agent: string | null, session: string = 'main'): C
       es.removeEventListener('turn_error', onTurnError);
       es.removeEventListener('turn_dequeued', onTurnDequeued);
       es.removeEventListener('engine_meta', onEngineMeta);
+      es.removeEventListener('question_asked', onQuestion);
+      es.removeEventListener('question_answered', onQuestion);
       es.close();
     };
   }, [agent, session, reopenTick]);

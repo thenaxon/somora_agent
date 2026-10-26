@@ -32,7 +32,7 @@ import {
   type EngineLastSeen,
   capReplayDelta,
 } from './replay.ts';
-import type { AgentEngine, TurnInput } from './types.ts';
+import { ASYNC_QUESTIONS_ITEM, type AgentEngine, type TurnInput } from './types.ts';
 import { buildCodexAttachments } from '../multimodal/user-content.ts';
 import {
   codexReasoningEffort,
@@ -486,6 +486,14 @@ export const codexCliEngine: AgentEngine = {
           }
           if (type === 'agentMessage') {
             if (typeof item.text === 'string') assistant.set(itemId, item.text);
+            // Codex's own question tool (request_user_input_async) answers
+            // itself `{accepted: true}` and hands the questions over on
+            // the message. somora shows them as a card; the text stays.
+            const questions = asyncQuestionsOf(item);
+            if (questions) {
+              logger.info({ msg: 'engine.codex_async_questions', ...logCtx, count: questions.length });
+              queue.push({ kind: 'engine_meta', ts: ts(), engine: ENGINE, itemType: ASYNC_QUESTIONS_ITEM, payload: { questions } });
+            }
           } else if (type === 'reasoning') {
             const parts = Array.isArray(item.summary)
               ? item.summary.filter((s): s is string => typeof s === 'string')
@@ -1085,4 +1093,20 @@ export async function compactCodexThread(args: {
     clearTimeout(timer);
     client.close();
   }
+}
+
+/** The questions of an agentMessage item that Codex delivers async
+ *  (`delivery: "async"`, `questions: [{title, options?}]`, app-server
+ *  v2 AgentMessageThreadItem since 0.161), or null. */
+export function asyncQuestionsOf(item: Record<string, unknown>): Array<{ question: string; options: string[] }> | null {
+  if (item.delivery !== 'async' || !Array.isArray(item.questions)) return null;
+  const out: Array<{ question: string; options: string[] }> = [];
+  for (const q of item.questions as unknown[]) {
+    if (!q || typeof q !== 'object') continue;
+    const x = q as { title?: unknown; options?: unknown };
+    if (typeof x.title !== 'string' || !x.title.trim()) continue;
+    const options = Array.isArray(x.options) ? (x.options as unknown[]).filter((o): o is string => typeof o === 'string' && o.trim().length > 0) : [];
+    out.push({ question: x.title, options });
+  }
+  return out.length > 0 ? out : null;
 }

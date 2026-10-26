@@ -770,6 +770,7 @@ providers:
 #     - subagent_result
 #     - somora_docs_list
 #     - somora_docs_read
+#     - ask_user              # listed only when the turn offers it
 
 # memory:
 #   embedding:

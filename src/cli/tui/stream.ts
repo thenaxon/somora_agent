@@ -31,7 +31,7 @@ function isFromSystemKind(v: unknown): v is FromSystemKind {
 function isTurnOrigin(v: unknown): v is TurnOrigin {
   return typeof v === 'object' && v !== null && typeof (v as { kind?: unknown }).kind === 'string';
 }
-import type { StreamEvent } from './types.ts';
+import type { SessionQuestion, StreamEvent } from './types.ts';
 
 export interface StreamHandle {
   events: AsyncIterable<StreamEvent>;
@@ -321,6 +321,8 @@ export function openStream(
               .map((o) => ({ label: o.label as string, ...(typeof o.description === 'string' ? { description: o.description } : {}) })),
             ...(data.multiple === true ? { multiple: true } : {}),
             expiresAt: typeof data.expiresAt === 'number' ? data.expiresAt : Date.now() + 600_000,
+            ...(data.async === true ? { async: true } : {}),
+            ...(Array.isArray(data.parts) ? { parts: data.parts as NonNullable<SessionQuestion['parts']> } : {}),
           },
         };
       case 'question_answered':
@@ -328,6 +330,7 @@ export function openStream(
           kind: 'question-answered',
           questionId: typeof data.questionId === 'string' ? data.questionId : null,
           choice: typeof data.choice === 'string' ? data.choice : null,
+          ...(data.by === 'message' ? { byMessage: true } : {}),
         };
       case 'project':
         return {

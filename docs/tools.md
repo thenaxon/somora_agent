@@ -173,7 +173,7 @@ Toolset `agents`.
 | `session_list` | Lists chat sessions: the agent's own, another agent's with `agent`, everyone's with `"*"`. |
 | `session_model` | Switches the model of an existing session, or clears the override with `clear:true`. |
 | `builder_dispatch` | Hands a build order to a builder agent and returns a `call_id`. |
-| `ask_user` | Asks you a question with options and waits for your answer. |
+| `ask_user` | Asks you a question with options, shown as a card with a button per option. |
 
 A sub-agent session does not get the tools in `subagents.tools.deny`,
 by default `agent_ask`, `agent_ask_result` and `agent_ask_cancel`: its
@@ -408,25 +408,35 @@ says, and the window does not offer them.
 ### Questions to you
 
 `ask_user` lets an agent ask you a question with two to six options,
-each with a short explanation, and wait for your answer. It can allow
-several answers at once (`multiple`) and carries a short `header` for
-the card. A free-text answer works over the API (`text`), or from a
-system that sent the task over A2A.
-
-The question
+each with a short explanation. It can allow several answers at once
+(`multiple`) and carries a short `header` for the card. The question
 appears as a card above the input in the web client and on the phone,
-and with numbered options in the TUI. It is offered only while someone
-watches:
+and with numbered options in the TUI.
 
-| Agent | Offered when |
+It is offered only while someone watches, and who that is decides
+whether the question waits:
+
+| Turn | The question |
 |---|---|
-| Chat agent | The turn was started by you, typed or spoken, or it works on a task another system sent over [A2A](a2a.md#taking-work-in): then the question goes back to that system. Never in a turn from Sentinel, another agent or a sub-agent: nobody would answer. |
-| Builder | The session is attended (see [Builder agents](builder.md)). |
+| A chat agent's turn you started, typed or spoken | Does not wait. The agent's turn ends; the card stays until you answer, also after a reload or a restart. A click sends the option as your next message. Writing anything else in the chat answers it too. |
+| A chat agent working on a task another system sent over [A2A](a2a.md#taking-work-in) | Waits, and goes back to that system. |
+| A builder's turn while the session is attended (see [Builder agents](builder.md)) | Waits in the task panel. |
+| A turn from Sentinel, another agent or a sub-agent | Not offered: nobody would answer. |
 
-A chat agent's question waits 10 minutes, a builder's 30, unless the
-agent asks for another time. Without an answer the agent decides
-itself and says what it decided. Like any tool, `tools.deny:
-[ask_user]` in `agent.yaml` keeps an agent from it.
+A waiting question waits 10 minutes for a chat agent and 30 for a
+builder, unless the agent asks for another time. Without an answer the
+agent decides itself and says what it decided. Like any tool,
+`tools.deny: [ask_user]` in `agent.yaml` keeps an agent from it.
+
+A chat agent is told in its instructions to ask with `ask_user`
+whenever it would end a reply with a question that has clear choices.
+On `claude-cli` and `codex-cli` the tool is always in the model's list
+when it is offered, not behind the tool search.
+
+Codex has a question tool of its own. Its questions arrive as the same
+card, without waiting; one card can then hold several questions, some
+answered in your own words. The answer goes out as one message with
+each question and its answer.
 
 ## How a tool reaches the model
 

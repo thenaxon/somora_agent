@@ -502,6 +502,20 @@ type refuses the upload with a hint to switch models. Uploaded files
 are stored once as `~/.somora/attachments/<sha256>.<ext>`. The files
 guide has the details.
 
+### Questions from the agent
+
+When an agent asks you something with options, a card appears above
+the input. A question from a chat agent in a conversation with you does
+not hold the turn: the card stays until you answer, also after a
+reload. Click an option to send it as your next message, or write
+anything else, which answers it too. A card with several questions,
+or several answers allowed, has a **Send** button.
+
+A question that waits says how long it still waits:
+an external agent's permission request, or a question in a task from
+another system. The [tools guide](tools.md#questions-to-you) says which
+question waits when.
+
 ### While the agent is working
 
 You can keep typing. With the pill on **queue**, a message waits behind
@@ -809,6 +823,7 @@ guide.
 | `project` | `{from, to, via}` | The session's project changed. |
 | `assistant_audio` | `{turnId, url, mime, durationMs?, cacheKey}` | A spoken reply for the turn. Drives the Play button. |
 | `assistant_media` | `{turnId, media: [{type, id, prompt, mime, filename, url}]}` | Media the turn produced. An unknown `type` is skipped. |
+| `question_asked`, `question_answered` | see the API guide | An agent asked, or the question was answered or replaced. The question card reads the open question again. |
 
 A message you type is echoed as `user_message` to every client on the
 session, so the terminal client and a second browser tab show it too.

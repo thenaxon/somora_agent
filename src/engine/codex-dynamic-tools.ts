@@ -53,6 +53,9 @@ export const DEFAULT_CODEX_DIRECT_TOOLS: readonly string[] = [
   'subagent_result',
   'somora_docs_list',
   'somora_docs_read',
+  // Only listed when the turn offers it (a person started it); a model
+  // that has to search for it does not think of asking.
+  'ask_user',
 ];
 
 /** Tools whose ToolResult may carry image content blocks. */

@@ -59,6 +59,12 @@ export function configureStartTurn(deps: StartTurnDeps): void {
   injected = deps;
 }
 
+/** Broadcast into a session's SSE subscribers from outside a route —
+ *  the server-wide publisher wired at boot; nothing before that. */
+export async function broadcastToSession(agent: string, session: string, event: SseEvent): Promise<void> {
+  await injected?.publish(agent, session, event);
+}
+
 /** What a stopped turn reports to whoever asked for it. The asker
  *  (agent_ask, subagent_result, sentinel history) sees this as the
  *  error and must not read it as a model failure worth a retry. */

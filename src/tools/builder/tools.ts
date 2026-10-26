@@ -127,7 +127,7 @@ const AskInput = z
       .min(10_000)
       .max(MAX_QUESTION_TIMEOUT_MS)
       .optional()
-      .describe(`How long to wait for the person (default ${DEFAULT_QUESTION_TIMEOUT_MS / 60000} min for a builder, ${CHAT_QUESTION_TIMEOUT_MS / 60000} min for other agents).`),
+      .describe(`How long a waiting question waits (default ${DEFAULT_QUESTION_TIMEOUT_MS / 60000} min for a builder, ${CHAT_QUESTION_TIMEOUT_MS / 60000} min for other agents).`),
   })
   .strict();
 
@@ -136,12 +136,16 @@ export const askUser: ToolDefinition<z.infer<typeof AskInput>> = {
   // Every agent's, not only a builder's: asking the person is talking,
   // like agent_ask. Offered only while someone watches (sessionOffersAsk).
   toolset: 'agents',
+  // The long text is a chat agent's; a builder sees its short one
+  // (short-descriptions.ts), which keeps "only for a real fork".
   description:
-    'Ask the person watching this session a question with options; the call waits for the answer (or a ' +
-    'timeout) and returns it. Use it for a real fork in the road you cannot decide from the code or the ' +
-    'task — never for "should I proceed?" or routine choices. If you recommend an option, put it first and ' +
-    'add "(Recommended)" to its label. Returns {answered, answers[], text?}; when unanswered, decide ' +
-    'yourself and note the decision in your report. Only offered while the session is attended.',
+    'Ask the person a question with 2-6 options; they see it as a card with a button per option and can ' +
+    'also answer in their own words. Use it whenever you would end your reply with a question that has ' +
+    'clear choices — "go on or stop here?", "which of these two?" — instead of writing the question as ' +
+    'text. In a conversation with a person the call returns at once ({asked: true}): end your turn then; ' +
+    'the answer arrives as their next message. When another agent system sent the task, the call waits ' +
+    'and returns {answered, answers[], text?}; when unanswered, decide yourself and say what you decided. ' +
+    'If you recommend an option, put it first and add "(Recommended)" to its label.',
   inputSchema: AskInput,
   jsonSchema: {
     type: 'object',
@@ -161,7 +165,7 @@ export const askUser: ToolDefinition<z.infer<typeof AskInput>> = {
         },
       },
       multiple: { type: 'boolean', description: 'Allow more than one choice.' },
-      timeout_ms: { type: 'integer', description: 'Wait time in ms (default 30 min for a builder, 10 min for other agents).' },
+      timeout_ms: { type: 'integer', description: 'How long a waiting question waits, in ms (default 30 min for a builder, 10 min for other agents).' },
     },
     required: ['question', 'options'],
     additionalProperties: false,
@@ -170,7 +174,7 @@ export const askUser: ToolDefinition<z.infer<typeof AskInput>> = {
   maxTimeoutMs: MAX_QUESTION_TIMEOUT_MS + 5_000,
   async handler(input, ctx) {
     const session = sessionOf(ctx, 'ask_user');
-    return call<{ answered: boolean; answers: string[]; text?: string }>(
+    return call<{ answered: boolean; answers: string[]; text?: string } | { asked: true; questionId: string; note: string }>(
       'ask_user',
       'POST',
       `/agents/${encodeURIComponent(ctx.agent)}/sessions/${encodeURIComponent(session)}/ask`,

@@ -17,6 +17,7 @@ import { paginateHistory } from '../history-page.ts';
 import { logger } from '../logger.ts';
 import { config } from '../server-state.ts';
 import { DequeuedError, getSessionLockStatus, listSessionWaiters } from '../session-queue.ts';
+import { clearAsyncQuestion } from '../async-questions.ts';
 import { streamSSEH2Safe } from '../sse-h2-safe.ts';
 import { destroySocketOf, remoteOf, startSseHeartbeat } from '../sse-liveness.ts';
 import { startTurn } from '../start-turn.ts';
@@ -528,6 +529,9 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
       : subagentDepth > 0
         ? { kind: 'subagent', depth: subagentDepth }
         : { kind: 'human', via: body.input_modality === 'voice' ? 'voice-stt' : 'chat' };
+    // A question that does not wait (async-questions.ts) is answered by
+    // whatever the person writes next — typed, dictated or steered in.
+    if (origin.kind === 'human') await clearAsyncQuestion(agent, session);
     // Steering: with `steer: true` and a turn running that can read its
     // letterbox, the text goes INTO that turn (before its next step)
     // instead of waiting behind it. Otherwise it queues as usual and the

@@ -24,6 +24,24 @@ export interface PendingQuestion {
   multiple: boolean;
   askedAt: number;
   expiresAt: number;
+  /** Does not wait (async-questions.ts): the turn goes on, the answer
+   *  comes as the person's next message. expiresAt is 0 then. */
+  async?: true;
+  /** Several questions asked at once (non-waiting only); the fields
+   *  above repeat the first. */
+  parts?: QuestionPart[];
+  /** Who asked a non-waiting question: an agent's ask_user, or the
+   *  engine's own question tool (Codex) — then the reply text carries
+   *  the question as well. */
+  source?: 'ask_user' | 'codex';
+}
+
+/** One of several questions asked together. */
+export interface QuestionPart {
+  question: string;
+  header?: string;
+  options: QuestionOption[];
+  multiple: boolean;
 }
 
 export interface QuestionAnswer {

@@ -59,6 +59,29 @@ export interface SessionQuestion {
   options: Array<{ label: string; description?: string }>;
   multiple: boolean;
   expiresAt: number;
+  /** Does not wait: the turn has gone on, the answer is sent as the
+   *  person's next message (expiresAt is 0). */
+  async?: boolean;
+  /** Several questions asked at once (async only); the fields above
+   *  repeat the first. */
+  parts?: SessionQuestionPart[];
+  /** `codex`: Codex's own question tool — the reply text has it too. */
+  source?: 'ask_user' | 'codex';
+}
+
+export interface SessionQuestionPart {
+  question: string;
+  header?: string;
+  options: Array<{ label: string; description?: string }>;
+  multiple: boolean;
+}
+
+/** What the person answered: option labels and/or own words, per part
+ *  for a question with several. */
+export interface SessionQuestionAnswer {
+  answers?: string[];
+  text?: string;
+  parts?: Array<{ answers?: string[]; text?: string }>;
 }
 
 export interface SessionSummary {
@@ -843,12 +866,13 @@ export const api = {
     const r = await getJson<{ question: SessionQuestion | null }>(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/question`);
     return r.question;
   },
-  /** Answer a session's open question (any agent kind) with the chosen option label(s). */
-  answerSessionQuestion: async (agent: string, session: string, questionId: string, answers: string[]): Promise<void> => {
+  /** Answer a session's open question (any agent kind) with the chosen
+   *  option label(s), or a full answer (own words, several parts). */
+  answerSessionQuestion: async (agent: string, session: string, questionId: string, answer: string[] | SessionQuestionAnswer): Promise<void> => {
     const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/questions/${encodeURIComponent(questionId)}/answer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answers }),
+      body: JSON.stringify(Array.isArray(answer) ? { answers: answer } : answer),
     });
     if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `answer ${res.status}`);
   },

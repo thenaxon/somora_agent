@@ -136,6 +136,14 @@ running any more, a steered message queues as usual.
   streaming reply. Both do the same: they cancel the running turn only.
   Queued messages keep their place.
 
+### Questions from the agent
+
+A question with options appears as a card above the text field. A chat
+agent's question in a conversation with you does not hold the turn: the
+card stays until you answer. Tap an option to send it as your next
+message, or write anything else, which answers it too. A card with
+several questions has a **Send** button.
+
 ### The work badge
 
 The badge in the header counts everything on the session, whoever

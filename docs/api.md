@@ -527,7 +527,9 @@ a turn runs waits in that session's queue.
 ### `POST /chat/send`
 
 Sends a message and returns at once. The turn runs in the background
-and its events arrive on `GET /chat/stream`.
+and its events arrive on `GET /chat/stream`. A message from the person
+answers an open question that does not wait and removes it
+(`question_answered` with `by: "message"`).
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
@@ -889,8 +891,8 @@ All events:
 | `project` | The session's project changed | `{from, to, via}` |
 | `builder_state` | A builder session's mode, phase or plan file changed | `{mode, phase, planPath}` |
 | `todo_updated` | A builder replaced its task list | `{todos: [{content, status, priority?}], by?}` |
-| `question_asked` | A builder or an external agent waits for the person | `{questionId, question, header?, options, multiple, expiresAt, kind?, from?}`. `kind: "permission"` and `from: "external"` mark an external agent asking to run something; each option's `description` is then its kind (`allow_once`, `reject_once`, …). |
-| `question_answered` | The open question was answered or ran out of time | `{questionId?, answered, choice?}` |
+| `question_asked` | An agent asks the person | `{questionId, question, header?, options, multiple, expiresAt, kind?, from?, async?, parts?, source?}`. `kind: "permission"` and `from: "external"` mark an external agent asking to run something; each option's `description` is then its kind (`allow_once`, `reject_once`, …). `async: true` marks a question that does not wait (`expiresAt` is `0`); `parts` lists several questions asked at once, `source: "codex"` one from Codex's own question tool. |
+| `question_answered` | The open question was answered, replaced or ran out of time | `{questionId?, answered, choice?, by?}`. `by: "message"`: a question that does not wait, answered by writing something else. |
 
 Details where the table is not enough:
 
@@ -1871,7 +1873,10 @@ that file. `400` when the write policy forbids the path.
 ### `POST /agents/:agent/sessions/:session/ask`
 
 Asks the person a question and **blocks** until they answer or the
-wait runs out. Sends `question_asked`.
+wait runs out. Sends `question_asked`. A chat agent's question in a
+turn a person started does not block: it returns at once with
+`{asked: true, questionId, note}` and stays open on the session (see
+[the question routes](#get-agentsagentsessionssessionquestion)).
 
 | Body field | Required | Meaning |
 |---|---|---|
@@ -3375,9 +3380,12 @@ webp path, at most 256 KB). `404` when the system has no badge image.
 
 ### `GET /agents/:agent/sessions/:session/question`
 
-The session's open question, or `{ "question": null }`. Used for
-external agents' permission requests; a builder's `ask_user` question
-shows here as well.
+The session's open question, or `{ "question": null }`: an external
+agent's permission request, a builder's `ask_user` question, or a
+question that does not wait. That last kind carries `async: true` and
+`expiresAt: 0`, and with several questions asked at once `parts`
+(`[{question, header?, options, multiple}]`, the first repeated at the
+top). It stays open between turns, after a reload and a restart.
 
 ```json
 { "question": { "id": "…", "question": "claw asks for permission: exec: rm -rf /tmp/x",
@@ -3393,6 +3401,14 @@ labels of the chosen options, and optionally `text`, a free-text answer.
 Returns `{ ok: true }`; every client of the session gets
 `question_answered`. `404` for an unknown session, or when no question
 with that id is open (answered already, or timed out).
+
+A question that does not wait takes the same body, or `parts` with one
+`{answers?, text?}` per question. The answer is sent as the person's
+next message, the way `POST /chat/send` sends a typed one: the chosen
+labels for one question, each question with its answer for several.
+Returns `{ ok: true, sent: true, turnId, text }`; `400` when nothing
+was chosen or typed. Any message the person sends to the session with
+`POST /chat/send` answers such a question too and removes it.
 
 ## External MCP servers
 

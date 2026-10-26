@@ -3,7 +3,9 @@
 // (typed or spoken), never in a turn from Sentinel, another agent or a
 // sub-agent; a builder keeps its attended switch. The route refuses a
 // chat agent's question outside such a turn at once instead of waiting,
-// and a chat agent's question waits 10 minutes by default.
+// and a chat agent's waiting question (a task from another agent system)
+// waits 10 minutes by default. In a turn a person started it does not
+// wait at all (async-questions.test.mts).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -12,7 +14,7 @@ import { Hono } from 'hono';
 import { ConfigSchema } from '../config/types.ts';
 import { setConfig } from './server-state.ts';
 import { effectiveToolGating, isToolAllowed } from '../tools/gating.ts';
-import { CHAT_QUESTION_TIMEOUT_MS, TURN_ATTENDED_KEY, isAttendedOrigin, sessionToolAllows } from './ask-attended.ts';
+import { CHAT_QUESTION_TIMEOUT_MS, TURN_ASKER_KEY, TURN_ATTENDED_KEY, isAttendedOrigin, sessionToolAllows } from './ask-attended.ts';
 import { registerBuilderRoutes } from './routes/builder.ts';
 import { pendingQuestion, answerQuestion } from './builder-questions.ts';
 import { createSession, sessionMetaStore } from '../storage/sessions.ts';
@@ -73,9 +75,9 @@ test("the route: a chat agent's question outside a person's turn returns at once
   assert.equal(pendingQuestion('ada', id), null);
 });
 
-test("the route: in a person's turn the question waits for the answer, 10 minutes by default", async () => {
+test('the route: in a task from another agent system the question waits for the answer, 10 minutes by default', async () => {
   const id = await createSession('ada', 'talk');
-  await sessionMetaStore.update('ada', id, (m) => ({ ...m, [TURN_ATTENDED_KEY]: true }));
+  await sessionMetaStore.update('ada', id, (m) => ({ ...m, [TURN_ATTENDED_KEY]: true, [TURN_ASKER_KEY]: 'peer' }));
   const pending = ask(id);
   let q = null;
   for (let i = 0; i < 50 && !q; i++) {
