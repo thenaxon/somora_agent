@@ -40,6 +40,10 @@ export function somoraMemoryServerSpawn(args: {
    *  gated tools (file_read polymorph) can decide whether to return
    *  multimodal content blocks. */
   activeModelRef?: string;
+  /** The turn's tool catalog (src/tools/catalog.ts): tools the child
+   *  marks `anthropic/alwaysLoad`. Left out: the child works it out
+   *  from config itself. */
+  alwaysVisibleTools?: readonly string[];
 }): {
   command: string;
   args: string[];
@@ -59,6 +63,7 @@ export function somoraMemoryServerSpawn(args: {
         ? { SOMORA_SUBAGENT_DEPTH: String(args.subagentDepth) }
         : {}),
       ...(args.activeModelRef ? { SOMORA_ACTIVE_MODEL: args.activeModelRef } : {}),
+      ...(args.alwaysVisibleTools ? { SOMORA_ALWAYS_VISIBLE_TOOLS: JSON.stringify(args.alwaysVisibleTools) } : {}),
       // SOMORA_HOST/PORT/TLS are inherited via filterEnv (the parent
       // server process has them), so spawn_subagent's HTTP-fallback can
       // find the endpoint and pick the right scheme. Belt-and-suspenders

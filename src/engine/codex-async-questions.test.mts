@@ -18,7 +18,8 @@ import { configureStartTurn } from '../server/start-turn.ts';
 import { openAsyncQuestion } from '../server/async-questions.ts';
 import { createSession, getHistory, sessionMetaStore } from '../storage/sessions.ts';
 import { asyncQuestionsOf } from './codex-cli.ts';
-import { DEFAULT_CODEX_DIRECT_TOOLS, buildCodexToolCatalog } from './codex-dynamic-tools.ts';
+import { buildCodexToolCatalog } from './codex-dynamic-tools.ts';
+import { DEFAULT_ALWAYS_VISIBLE } from '../tools/catalog.ts';
 import { engineRegistry } from './registry.ts';
 import { shutdownMemoryRegistry } from '../memory/registry.ts';
 import { ASYNC_QUESTIONS_ITEM } from './types.ts';
@@ -47,7 +48,7 @@ test('the questions of an async agentMessage', () => {
 });
 
 test('ask_user is in the direct list, but only listed when the turn offers it', () => {
-  assert.ok(DEFAULT_CODEX_DIRECT_TOOLS.includes('ask_user'));
+  assert.ok(DEFAULT_ALWAYS_VISIBLE.includes('ask_user'));
   const def = (name: string): ToolDefinition =>
     ({ name, description: name, inputSchema: z.object({}), jsonSchema: { type: 'object', properties: {} }, toolset: 'agents', async handler() { return {}; } }) as unknown as ToolDefinition;
   assert.ok(buildCodexToolCatalog([def('ask_user'), def('exec')]).directNames.includes('ask_user'));

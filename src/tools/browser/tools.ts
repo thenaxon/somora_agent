@@ -22,22 +22,42 @@ const REF_RE = /^(?:f\d+)?e\d+$/;
 const OPS = BROWSER_OPS;
 const NEEDS_TAB = new Set(['snapshot', 'act', 'screenshot', 'close_tab']);
 
+/** Field texts, shared by the zod schema and the JSON schema's
+ *  top-level properties (src/tools/schema-parity.test.mts). */
+const FIELD = {
+  op: 'open | tabs | status | snapshot | act | screenshot | request_handoff | close_tab | stop',
+  url: 'open: http(s) URL. Public hosts, plus private hosts the operator listed.',
+  tab: 'Tab id like "t3" (from open/tabs). Required for snapshot/act/screenshot/close_tab; optional for open (navigate that tab).',
+  ephemeral: 'open: use a throw-away profile (no saved logins).',
+  device:
+    'open: emulate a device on this tab like DevTools device mode — user agent, viewport, touch, pixel ratio (Playwright names: "iPhone 15", "Pixel 7", "iPad Pro 11"). Use when the user asks for the mobile version or to appear as a phone.',
+  locale: 'open: language of this tab (BCP-47, e.g. "de-AT") — Accept-Language and navigator.language.',
+  full: 'snapshot: raw accessibility tree instead of the compact one (bigger).',
+  max_chars: 'snapshot: cap on the returned tree.',
+  action: 'act: what to do.',
+  ref: 'act: element ref from the latest snapshot of this tab (e.g. "e12" or "f3e12").',
+  value: 'act — fill: text · press: key name (Enter, Tab, Escape, ArrowDown) · scroll: pixels (default 600) · select: option value/label.',
+  generation: 'act: the `generation` the snapshot returned — refused if the tab navigated since.',
+  reason: 'request_handoff: why the user must take over (credentials you were not given, a 2FA code, a passkey, a decision that is theirs).',
+  resume_note: 'request_handoff: what you will do once you get the browser back — shown to you in the wake-up message.',
+};
+
 const BrowserInput = z
   .object({
-    op: z.enum(OPS).describe('open | tabs | status | snapshot | act | screenshot | request_handoff | close_tab | stop'),
-    url: z.string().url().optional().describe('open: http(s) URL. Public hosts, plus private hosts the operator listed.'),
-    tab: z.string().regex(TAB_RE).optional().describe('Tab id like "t3" (from open/tabs). Required for snapshot/act/screenshot/close_tab; optional for open (navigate that tab).'),
-    ephemeral: z.boolean().optional().describe('open: use a throw-away profile (no saved logins).'),
-    device: z.string().min(1).max(60).optional().describe('open: emulate a device on this tab like DevTools device mode — user agent, viewport, touch, pixel ratio (Playwright names: "iPhone 15", "Pixel 7", "iPad Pro 11"). Use when the user asks for the mobile version or to appear as a phone.'),
-    locale: z.string().regex(/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/).optional().describe('open: language of this tab (BCP-47, e.g. "de-AT") — Accept-Language and navigator.language.'),
-    full: z.boolean().optional().describe('snapshot: raw accessibility tree instead of the compact one (bigger).'),
-    max_chars: z.number().int().min(1000).max(200_000).optional().describe('snapshot: cap on the returned tree.'),
-    action: z.enum(['click', 'fill', 'press', 'scroll', 'select']).optional().describe('act: what to do.'),
-    ref: z.string().regex(REF_RE).optional().describe('act: element ref from the latest snapshot of this tab (e.g. "e12" or "f3e12").'),
-    value: z.string().max(20_000).optional().describe('act — fill: text · press: key name (Enter, Tab, Escape, ArrowDown) · scroll: pixels (default 600) · select: option value/label.'),
-    generation: z.number().int().optional().describe('act: the `generation` the snapshot returned — refused if the tab navigated since.'),
-    reason: z.string().min(3).max(500).optional().describe('request_handoff: why the user must take over (credentials you were not given, a 2FA code, a passkey, a decision that is theirs).'),
-    resume_note: z.string().max(2000).optional().describe('request_handoff: what you will do once you get the browser back — shown to you in the wake-up message.'),
+    op: z.enum(OPS).describe(FIELD.op),
+    url: z.string().url().optional().describe(FIELD.url),
+    tab: z.string().regex(TAB_RE).optional().describe(FIELD.tab),
+    ephemeral: z.boolean().optional().describe(FIELD.ephemeral),
+    device: z.string().min(1).max(60).optional().describe(FIELD.device),
+    locale: z.string().regex(/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/).optional().describe(FIELD.locale),
+    full: z.boolean().optional().describe(FIELD.full),
+    max_chars: z.number().int().min(1000).max(200_000).optional().describe(FIELD.max_chars),
+    action: z.enum(['click', 'fill', 'press', 'scroll', 'select']).optional().describe(FIELD.action),
+    ref: z.string().regex(REF_RE).optional().describe(FIELD.ref),
+    value: z.string().max(20_000).optional().describe(FIELD.value),
+    generation: z.number().int().optional().describe(FIELD.generation),
+    reason: z.string().min(3).max(500).optional().describe(FIELD.reason),
+    resume_note: z.string().max(2000).optional().describe(FIELD.resume_note),
   });
 
 /** Per-op requirements — checked in the handler, not via superRefine:
@@ -100,20 +120,20 @@ export const browserTool: ToolDefinition<BrowserInputT, BrowserOpResult> = {
   jsonSchema: {
     type: 'object',
     properties: {
-      op: { type: 'string', enum: [...OPS] },
-      url: { type: 'string', description: 'open: http(s) URL.' },
-      tab: { type: 'string', pattern: '^t\\d+$', description: 'Tab id from open/tabs.' },
-      ephemeral: { type: 'boolean' },
-      device: { type: 'string', minLength: 1, maxLength: 60, description: 'open: emulate a device on this tab (Playwright device name, e.g. "iPhone 15").' },
-      locale: { type: 'string', description: 'open: BCP-47 language tag for this tab, e.g. "de-AT".' },
-      full: { type: 'boolean' },
-      max_chars: { type: 'integer', minimum: 1000, maximum: 200000 },
-      action: { type: 'string', enum: ['click', 'fill', 'press', 'scroll', 'select'] },
-      ref: { type: 'string', pattern: '^(f\\d+)?e\\d+$' },
-      value: { type: 'string' },
-      generation: { type: 'integer' },
-      reason: { type: 'string', minLength: 3, maxLength: 500 },
-      resume_note: { type: 'string', maxLength: 2000 },
+      op: { type: 'string', enum: [...OPS], description: FIELD.op },
+      url: { type: 'string', description: FIELD.url },
+      tab: { type: 'string', pattern: '^t\\d+$', description: FIELD.tab },
+      ephemeral: { type: 'boolean', description: FIELD.ephemeral },
+      device: { type: 'string', minLength: 1, maxLength: 60, description: FIELD.device },
+      locale: { type: 'string', description: FIELD.locale },
+      full: { type: 'boolean', description: FIELD.full },
+      max_chars: { type: 'integer', minimum: 1000, maximum: 200000, description: FIELD.max_chars },
+      action: { type: 'string', enum: ['click', 'fill', 'press', 'scroll', 'select'], description: FIELD.action },
+      ref: { type: 'string', pattern: '^(f\\d+)?e\\d+$', description: FIELD.ref },
+      value: { type: 'string', description: FIELD.value },
+      generation: { type: 'integer', description: FIELD.generation },
+      reason: { type: 'string', minLength: 3, maxLength: 500, description: FIELD.reason },
+      resume_note: { type: 'string', maxLength: 2000, description: FIELD.resume_note },
     },
     required: ['op'],
     additionalProperties: false,

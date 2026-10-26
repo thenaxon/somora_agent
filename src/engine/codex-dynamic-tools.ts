@@ -20,6 +20,7 @@
 //                      resolve() maps back to the registry name. Nothing
 //                      outside this engine sees the renamed shape.
 
+import { DEFAULT_ALWAYS_VISIBLE } from '../tools/catalog.ts';
 import type { ToolDefinition, ToolResult } from '../tools/types.ts';
 
 export const CODEX_NS = 'somora';
@@ -29,34 +30,8 @@ export const CODEX_MCP_NS_PREFIX = 'somora_mcp_';
 const NAME_RE = /^[a-zA-Z0-9_-]+$/;
 const NAME_MAX = 128;
 
-/** Tools kept in the model's direct tool list (schemas in context). The
- *  rest is deferred behind Codex tool search / Code Mode discovery.
- *  Overridable via config `codexCli.directTools`. */
-export const DEFAULT_CODEX_DIRECT_TOOLS: readonly string[] = [
-  'memory_search',
-  'memory_get',
-  'memory_write',
-  'memory_edit',
-  'file_read',
-  'file_write',
-  'file_patch',
-  'file_list',
-  'file_search',
-  'exec',
-  'tmux',
-  'web_search',
-  'web_fetch',
-  'time_now',
-  'agent_ask',
-  'agent_ask_result',
-  'spawn_subagent',
-  'subagent_result',
-  'somora_docs_list',
-  'somora_docs_read',
-  // Only listed when the turn offers it (a person started it); a model
-  // that has to search for it does not think of asking.
-  'ask_user',
-];
+/** Which tools are not deferred comes from the shared tool catalog
+ *  (src/tools/catalog.ts, config.yaml `toolCatalog`), per turn. */
 
 /** Tools whose ToolResult may carry image content blocks. */
 export const CODEX_MULTIMODAL_RESULT_TOOLS: ReadonlySet<string> = new Set([
@@ -98,7 +73,7 @@ const MCP_RE = /^mcp__([^_].*?)__(.+)$/;
 
 export function buildCodexToolCatalog(
   tools: readonly ToolDefinition[],
-  directTools: readonly string[] = DEFAULT_CODEX_DIRECT_TOOLS,
+  directTools: readonly string[] = DEFAULT_ALWAYS_VISIBLE,
 ): CodexToolCatalog {
   const direct = new Set(directTools);
   const regular: CodexDynamicFunctionSpec[] = [];

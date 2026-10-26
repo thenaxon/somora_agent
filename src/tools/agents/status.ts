@@ -209,7 +209,7 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
   jsonSchema: {
     type: 'object',
     properties: {
-      task_id: { type: 'string' },
+      task_id: { type: 'string', description: 'task_id from a wait:false spawn_subagent return value.' },
       wait_until_done: { type: 'boolean', description: 'Block until task finishes. Default false.' },
       timeout_ms: {
         type: 'integer',
@@ -438,7 +438,7 @@ export const subagentList: ToolDefinition<z.infer<typeof ListInput>> = {
         default: 'all',
         description: 'Filter by task state.',
       },
-      limit: { type: 'integer', minimum: 1, maximum: 500, default: 50 },
+      limit: { type: 'integer', minimum: 1, maximum: 500, default: 50, description: 'Max entries to return after sort. Newest tasks come first.' },
     },
     additionalProperties: false,
   },

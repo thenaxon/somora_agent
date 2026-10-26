@@ -101,9 +101,10 @@ What is special about this engine:
   against it and compacts by itself. `contextWindow` only decides
   whether the model is picked as a compaction worker and what the
   header percentage shows.
-- **Tools are found on demand.** somora's tools reach the model through
-  `ToolSearch`, so the first tool call in a session is preceded by a
-  `ToolSearch` row. That is normal.
+- **Most tools are found on demand.** The everyday tools of
+  `toolCatalog` stay in the model's list; the others reach it through
+  `ToolSearch`, so a call to one of them is preceded by a `ToolSearch`
+  row. That is normal.
 - **Thinking levels map to the SDK's `effort`.** `low`, `medium` and
   `high` go through as they are, `off` disables thinking. A
   `reasoning.levels` block has no effect on this engine.
@@ -216,9 +217,10 @@ reaches the same tools as on the other engines.
 | `somora_direct` | tools whose results can carry images |
 | `somora_mcp_<server>` | tools of an external MCP server |
 
-The tools named in `codexCli.directTools` sit in the model's direct
-list on every turn. The rest is deferred and found through Codex tool
-search. The developer instructions list their names.
+The tools of the shared list `toolCatalog` (docs/tools.md, "Always in
+the list, or found on demand") sit in the model's direct list on every
+turn. The rest is deferred and found through Codex tool search. The
+developer instructions list their names.
 
 **Code Mode.** The GPT-5.6 family and GPT-6 are `code_mode_only`. The
 model writes a JavaScript cell that calls `tools.somora.<tool>(...)`
@@ -631,7 +633,7 @@ not in `user`.
 | `fallback` | unset | `agent.yaml` | One model or an ordered list. Used on every engine when the model fails before it wrote text or ran a tool. |
 | `fallback.retryUnavailableMinutes` | 60 | `config.yaml` | A model that was unreachable is skipped for this many minutes. |
 | `compaction.triggerRatio` | 0.8 | `config.yaml` | Share of the window at which somora compacts. `openai-compatible` only. |
-| `codexCli.directTools` | the everyday core tools | `config.yaml` | somora tools in the Codex model's direct list. Needs a restart. |
+| `toolCatalog` | the everyday core tools | `config.yaml` | somora tools in the model's direct list on `claude-cli` and `codex-cli`. Takes effect on the next turn. |
 
 ## Minimum versions
 

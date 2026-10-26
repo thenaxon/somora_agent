@@ -355,7 +355,7 @@ somora exposes, and those run on the somora server under the same rules
 as on every other engine.
 
 **What stays on.** Codex's `tool_search` stays enabled: the model finds
-the somora tools that are not in its direct list through it.
+the somora tools that are not in its direct list (`toolCatalog`) through it.
 `apply_patch` cannot be switched off, because Codex has no setting for
 it. The three `list_mcp_resource*` helpers only read MCP resources, and
 no MCP server is configured.

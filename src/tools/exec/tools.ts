@@ -82,6 +82,28 @@ import {
 // exec
 // ─────────────────────────────────────────────────────────────────────
 
+/** Field texts shared by the zod schema and the JSON schema, so every
+ *  engine reads the same (src/tools/schema-parity.test.mts). */
+const EXEC_FIELD = {
+  env: 'Extra environment variables to merge into the command shell. Local target only in v1.',
+  background:
+    'true = fire-and-forget. Returns a job_id immediately; output streams to disk; ' +
+    'use process tool to poll/kill/read. Only supported on target="local" in v1.',
+  timeout_ms:
+    'Sync only. Kill after this. Default 60s, max 1h. Ignored when background:true. ' +
+    'When you intentionally run a long-blocking command, set this above the expected ' +
+    'duration — e.g. for `sleep N` use `timeout_ms: (N+5)*1000`. The 60s default exists ' +
+    'so a runaway command can\'t lock a tool slot for an hour.',
+  pty:
+    'Allocate a pseudo-terminal so TUI tools and tools that check isatty() ' +
+    '(vim, htop, claude, codex, color/cursor handling, progress bars) work correctly. ' +
+    'Works on both target=local (via node-pty) and target=<resource> (via ssh2 native ' +
+    'pty allocation). When pty is on, stdout and stderr merge into one stream ' +
+    '(= same behavior as a real terminal). Background mode ignores this flag — ' +
+    'TUI tools running in the background nobody can see; use tmux for that.',
+  description: 'Short human-readable label for this command. Surfaces in process_list and logs.',
+};
+
 const ExecInput = z
   .object({
     command: z
@@ -109,43 +131,28 @@ const ExecInput = z
     env: z
       .record(z.string(), z.string())
       .optional()
-      .describe('Extra environment variables to merge into the command shell. Local target only in v1.'),
+      .describe(EXEC_FIELD.env),
     background: z
       .boolean()
       .default(false)
-      .describe(
-        'true = fire-and-forget. Returns a job_id immediately; output streams to disk; ' +
-          'use process tool to poll/kill/read. Only supported on target="local" in v1.',
-      ),
+      .describe(EXEC_FIELD.background),
     timeout_ms: z
       .number()
       .int()
       .min(100)
       .max(3_600_000)
       .default(60_000)
-      .describe(
-        'Sync only. Kill after this. Default 60s, max 1h. Ignored when background:true. ' +
-          'When you intentionally run a long-blocking command, set this above the expected ' +
-          'duration — e.g. for `sleep N` use `timeout_ms: (N+5)*1000`. The 60s default exists ' +
-          'so a runaway command can\'t lock a tool slot for an hour.',
-      ),
+      .describe(EXEC_FIELD.timeout_ms),
     pty: z
       .boolean()
       .default(false)
-      .describe(
-        'Allocate a pseudo-terminal so TUI tools and tools that check isatty() ' +
-          '(vim, htop, claude, codex, color/cursor handling, progress bars) work correctly. ' +
-          'Works on both target=local (via node-pty) and target=<resource> (via ssh2 native ' +
-          'pty allocation). When pty is on, stdout and stderr merge into one stream ' +
-          '(= same behavior as a real terminal). Background mode ignores this flag — ' +
-          'TUI tools running in the background nobody can see; use tmux for that.',
-      ),
+      .describe(EXEC_FIELD.pty),
     description: z
       .string()
       .min(1)
       .max(200)
       .optional()
-      .describe('Short human-readable label for this command. Surfaces in process_list and logs.'),
+      .describe(EXEC_FIELD.description),
     inherit_agent_env: z
       .boolean()
       .default(false)
@@ -278,11 +285,11 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
         description:
           'Working directory. Absolute, "~/..." or relative-to-target-home; must exist. Default: the folder of the project pinned to this session (when it has a workdir), else the server process cwd.',
       },
-      env: { type: 'object', additionalProperties: { type: 'string' } },
-      background: { type: 'boolean', default: false },
-      timeout_ms: { type: 'integer', minimum: 100, maximum: 3_600_000, default: 60_000 },
-      pty: { type: 'boolean', default: false },
-      description: { type: 'string', maxLength: 200 },
+      env: { type: 'object', additionalProperties: { type: 'string' }, description: EXEC_FIELD.env },
+      background: { type: 'boolean', default: false, description: EXEC_FIELD.background },
+      timeout_ms: { type: 'integer', minimum: 100, maximum: 3_600_000, default: 60_000, description: EXEC_FIELD.timeout_ms },
+      pty: { type: 'boolean', default: false, description: EXEC_FIELD.pty },
+      description: { type: 'string', maxLength: 200, description: EXEC_FIELD.description },
       inherit_agent_env: {
         type: 'boolean',
         default: false,
@@ -574,34 +581,39 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
 // process — action enum for interacting with background exec jobs
 // ─────────────────────────────────────────────────────────────────────
 
+const PROCESS_FIELD = {
+  action: 'list (no other fields) | poll (job_id) | log (job_id, tail_lines?) | write (job_id, text) | kill (job_id, signal?)',
+  job_id: 'Required for poll/log/write/kill. From the job_id returned by exec({background:true}).',
+  text: 'write only — text to send to the job\'s stdin. Append \\n yourself if needed.',
+  tail_lines: 'log only — how many lines from the END of stdout/stderr each. Default 50.',
+  signal: 'kill only — signal to send. Default SIGTERM (graceful).',
+};
+
 const ProcessInput = z
   .object({
     action: z
       .enum(['list', 'poll', 'log', 'write', 'kill'])
-      .describe(
-        'list (no other fields) | poll (job_id) | log (job_id, tail_lines?) | ' +
-          'write (job_id, text) | kill (job_id, signal?)',
-      ),
+      .describe(PROCESS_FIELD.action),
     job_id: z
       .string()
       .min(1)
       .optional()
-      .describe('Required for poll/log/write/kill. From the job_id returned by exec({background:true}).'),
+      .describe(PROCESS_FIELD.job_id),
     text: z
       .string()
       .optional()
-      .describe('write only — text to send to the job\'s stdin. Append \\n yourself if needed.'),
+      .describe(PROCESS_FIELD.text),
     tail_lines: z
       .number()
       .int()
       .min(1)
       .max(2000)
       .default(50)
-      .describe('log only — how many lines from the END of stdout/stderr each. Default 50.'),
+      .describe(PROCESS_FIELD.tail_lines),
     signal: z
       .enum(['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGHUP'])
       .default('SIGTERM')
-      .describe('kill only — signal to send. Default SIGTERM (graceful).'),
+      .describe(PROCESS_FIELD.signal),
   })
   .strict();
 
@@ -687,14 +699,15 @@ export const processTool: ToolDefinition<z.infer<typeof ProcessInput>, ProcessRe
   jsonSchema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['list', 'poll', 'log', 'write', 'kill'] },
-      job_id: { type: 'string' },
-      text: { type: 'string' },
-      tail_lines: { type: 'integer', minimum: 1, maximum: 2000, default: 50 },
+      action: { type: 'string', enum: ['list', 'poll', 'log', 'write', 'kill'], description: PROCESS_FIELD.action },
+      job_id: { type: 'string', description: PROCESS_FIELD.job_id },
+      text: { type: 'string', description: PROCESS_FIELD.text },
+      tail_lines: { type: 'integer', minimum: 1, maximum: 2000, default: 50, description: PROCESS_FIELD.tail_lines },
       signal: {
         type: 'string',
         enum: ['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGHUP'],
         default: 'SIGTERM',
+        description: PROCESS_FIELD.signal,
       },
     },
     required: ['action'],

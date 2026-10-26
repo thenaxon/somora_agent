@@ -447,8 +447,33 @@ each question and its answer.
 | `openai-compatible` | as function definitions, run inside the server |
 
 All paths are filled from the same catalog and pass the same per-agent
-filter, so the set is identical on every engine. The `claude-cli` and
+filter, so the set is identical on every engine. Every engine also
+reads the same input description of each tool. The `claude-cli` and
 `grok-cli` engines see the names with a prefix, `mcp__somora__<tool>`.
+
+### Always in the list, or found on demand
+
+`claude-cli` and `codex-cli` keep most tools behind a tool search: the
+model sees their names only after it searches. A short list stays in
+the model's list on every turn, so it never has to search for the tools
+used most:
+
+`exec`, `process`, `tmux`, `file_read`, `file_write`, `file_patch`,
+`file_list`, `file_search`, `web_search`, `web_fetch`, `memory_search`,
+`memory_get`, `memory_write`, `time_now`, `agent_ask`,
+`agent_ask_result`, `spawn_subagent`, `subagent_result`,
+`somora_docs_read`, `skill` and `ask_user`.
+
+The list only ever picks from the tools the agent is offered in that
+turn. A tool switched off for the agent never shows up, and `ask_user`
+only in a turn a person started. During a dream review the review
+tools join it: `dream_list`, `dream_get`, `dream_apply`,
+`dream_dismiss`, `dream_review` and `wiki_edit`. A builder's whole
+tool set is in the list, because it is small.
+
+`grok-cli` always finds tools through its own search, and
+`openai-compatible` models get every tool directly. The list is
+`toolCatalog` in `config.yaml`, see Settings.
 
 ## Results, limits and timeouts
 
@@ -511,6 +536,10 @@ Settings that shape how tools run:
 | `agentLoop.toolCallTimeoutMs` | `30000` | Time limit of one tool call, unless the tool sets its own. |
 | `agentLoop.longTaskMaxTimeoutMs` | `1800000` | Longest wait of the tools that wait for other work. |
 | `wiki.lucid.maxCallsPerTurn` | `3` | `wiki_*` calls per turn inside a review loop. |
+| `toolCatalog.alwaysVisible` | the list above | Tools kept in the model's list on `claude-cli` and `codex-cli` instead of behind the tool search. Takes effect on the next turn. |
+| `toolCatalog.engines` | none | Per engine, `add` and `remove` lists on top of it, for example `codex-cli: {add: [sentinel]}`. |
+| `toolCatalog.models` | none | The same per model alias or `<provider>/<modelId>`, for example more tools for a model that searches poorly. |
+| `codexCli.directTools` | unset | Old form of the list for `codex-cli` only. When set it replaces `toolCatalog.alwaysVisible` there, and the server log says so once. |
 
 Per agent, in `agent.yaml`:
 

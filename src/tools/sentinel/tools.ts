@@ -344,6 +344,7 @@ function sentinelJsonSchema(art2: boolean): Record<string, unknown> {
       action: {
         type: 'string',
         enum: ['create', 'dry_run', 'update', 'list', 'get', 'pause', 'resume', 'delete', 'test', 'history', 'purge_completed'],
+        description: 'What to do — the actions and their fields are listed in the tool description.',
       },
       // create
       name: { type: 'string', maxLength: 100, description: 'create / update — human label.' },
@@ -390,6 +391,7 @@ function sentinelJsonSchema(art2: boolean): Record<string, unknown> {
       },
       policy: {
         type: 'object',
+        description: 'create only, optional — limits on how often the trigger fires.',
         properties: {
           cooldownMs: { type: 'integer', minimum: 0, description: 'Minimum ms between fires.' },
           maxFiresPerDay: { type: 'integer', minimum: 1, maximum: SENTINEL_LIMITS.MAX_FIRES_PER_DAY },

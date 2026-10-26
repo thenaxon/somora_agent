@@ -750,27 +750,37 @@ providers:
 #                             # (PATH/HOME/USER/LANG only). Use only after
 #                             # auditing every skill — declared env_vars will
 #                             # silently appear missing inside shells.
-#   directTools:              # somora tools kept in Codex's DIRECT tool list
-#     - memory_search         # (schemas in context every turn). Everything
-#     - memory_get            # else is a deferred dynamic tool the model
-#     - memory_write          # reaches via Codex tool search / Code Mode
-#     - memory_edit           # discovery. Default = this everyday core;
-#     - file_read             # add tools an agent needs in nearly every
-#     - file_write            # turn, drop what it rarely uses.
-#     - file_patch
+#   directTools: [...]        # LEGACY — use toolCatalog below. When set it
+#                             # replaces toolCatalog.alwaysVisible for codex-cli
+#                             # only (the server logs that once).
+
+# toolCatalog:                # docs/tools.md "Always in the list, or found on demand"
+#   alwaysVisible:            # kept in the model's list on claude-cli and codex-cli
+#     - exec                  # instead of behind the tool search. Always cut to
+#     - process               # the tools a turn offers: a tool switched off for
+#     - tmux                  # the agent never shows up. Default = this list.
+#     - file_read             # A builder's whole (small) set is always in it;
+#     - file_write            # during a dream review dream_list/get/apply/
+#     - file_patch            # dismiss/review and wiki_edit join.
 #     - file_list
 #     - file_search
-#     - exec
-#     - tmux
 #     - web_search
 #     - web_fetch
+#     - memory_search
+#     - memory_get
+#     - memory_write
 #     - time_now
 #     - agent_ask
+#     - agent_ask_result
 #     - spawn_subagent
 #     - subagent_result
-#     - somora_docs_list
 #     - somora_docs_read
+#     - skill
 #     - ask_user              # listed only when the turn offers it
+#   engines:                  # per engine: add / remove on top of the list
+#     codex-cli: { add: [sentinel] }
+#   models:                   # per model alias or <provider>/<modelId>
+#     some-small-model: { add: [sentinel, browser] }
 
 # memory:
 #   embedding:

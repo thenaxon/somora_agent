@@ -335,7 +335,7 @@ export function applyCodexCliEnv(config: Config): void {
   ) {
     process.env.SOMORA_CODEX_SHELL_ENV_POLICY = c.shellEnvironmentPolicy;
   }
-  // Read by the codex-cli engine when it builds the dynamic tool catalog
-  // (deferLoading per tool). Always mirrors config — no operator env knob.
-  process.env.SOMORA_CODEX_DIRECT_TOOLS = JSON.stringify(c.directTools);
+  // Which tools Codex keeps undeferred is no longer bridged here: run-turn
+  // hands each turn its list from config.yaml `toolCatalog`
+  // (src/server/turn-tool-catalog.ts), so it follows a config reload.
 }

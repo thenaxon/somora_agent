@@ -14,19 +14,20 @@
 // otherwise tool calls would have no clear target agent.
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import type { ZodObject, ZodRawShape } from 'zod';
 import { loadConfig } from '../config/loader.ts';
 import { MCP_SERVER_NAME } from './config.ts';
 import { resolveAnyRef } from '../config/types.ts';
 import { setMaxWikiCallsPerTurn } from '../dream/loop-state.ts';
 import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts';
-import { mcpInputSchemaFor } from './tool-schema.ts';
+import { mcpAdvertisedSchema, unknownInputKeys } from './tool-schema.ts';
+import { isLoopHolder } from '../dream/loop-state.ts';
+import { alwaysVisibleTools } from '../tools/catalog.ts';
+import type { ToolDefinition } from '../tools/types.ts';
 import { loadPersona } from '../persona/loader.ts';
 import { logger } from '../server/logger.ts';
 import { isToolAllowed, sessionToolDeny, withSessionDeny } from '../tools/gating.ts';
@@ -40,10 +41,18 @@ import { configureExecConcurrencyCaps } from '../tools/exec/index.ts';
 import { registerAllTools, ToolRegistry } from '../tools/index.ts';
 import type { ToolContext } from '../tools/types.ts';
 
-/** Tools Claude Code keeps in the model's list instead of behind its
- *  tool search (`_meta['anthropic/alwaysLoad']`). Gating still decides
- *  whether they are listed at all. */
-const ALWAYS_LOADED_TOOLS: ReadonlySet<string> = new Set(['ask_user']);
+/** The turn's tool catalog as the engine handed it over
+ *  (SOMORA_ALWAYS_VISIBLE_TOOLS, src/tools/catalog.ts), or null. */
+function alwaysVisibleFromEnv(): string[] | null {
+  const raw = process.env.SOMORA_ALWAYS_VISIBLE_TOOLS;
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * External-MCP proxy mode (design: private/mcp-hub-design.md §4.4).
@@ -261,7 +270,13 @@ async function main(): Promise<void> {
     config,
   };
 
-  const server = new McpServer(
+  // The low-level server, not McpServer.registerTool: registerTool
+  // advertises a schema derived from zod, while codex-cli and
+  // openai-compatible get each tool's hand-written jsonSchema — two
+  // texts for one tool (sentinel had no field texts here, tmux had
+  // none there). Every engine now reads the same JSON schema; zod
+  // still validates every call (registry.invoke).
+  const server = new Server(
     { name: MCP_SERVER_NAME, version: '0.0.1' },
     { capabilities: { tools: {} } },
   );
@@ -290,73 +305,93 @@ async function main(): Promise<void> {
   // Evaluated once per child, which is once per turn — the launcher
   // passes SOMORA_ACTIVE_MODEL per turn — so this tracks config
   // changes at the same rate the openai-compatible path does.
+  const offered: ToolDefinition[] = [];
   for (const tool of await registry.listAvailable(ctx)) {
     if (!isToolAllowed(tool.name, tool.toolset, toolGating) || !sessionToolAllows(persona?.kind, builderState, sessionMeta, tool.name)) {
       logger.debug({ msg: 'mcp.tool_gated', agent, tool: tool.name });
       continue;
     }
-    // The full schema, strict for objects — see src/mcp/tool-schema.ts.
-    const inputSchema = mcpInputSchemaFor(tool);
-
-    server.registerTool(
-      tool.name,
-      {
-        description: persona?.kind === 'builder' ? builderToolDescription(tool.name, tool.description) : tool.description,
-        inputSchema,
-        // Claude Code defers MCP tools behind its tool search; these stay
-        // in the model's list (a tool it must search for, it never thinks
-        // of). Other clients ignore the key.
-        ...(ALWAYS_LOADED_TOOLS.has(tool.name) ? { _meta: { 'anthropic/alwaysLoad': true } } : {}),
-      },
-      async (args: unknown) => {
-        const result = await registry.invoke(tool.name, args, ctx);
-        if (!result.ok) {
-          return {
-            content: [{ type: 'text', text: result.error ?? 'tool failed' }],
-            isError: true,
-          };
-        }
-        // Multimodal results forward as MCP-spec content array. MCP
-        // supports `text` and `image` content types in tool results;
-        // claude-agent-sdk and codex-cli pass these through to the
-        // model natively. PDFs come in as image-blocks (rasterized
-        // pages) because MCP has no `document` content type — the
-        // file_read polymorph handles the rasterization upstream.
-        if (result.contentBlocks) {
-          return {
-            content: result.contentBlocks.map((b) => {
-              if (b.type === 'image') {
-                return {
-                  type: 'image' as const,
-                  data: b.source.data,
-                  mimeType: b.source.mediaType,
-                };
-              }
-              if (b.type === 'document') {
-                // Should not happen post-rasterization; defensive
-                // fallback to text describing the gap.
-                return {
-                  type: 'text' as const,
-                  text: `[document ${b.source.mediaType} — MCP cannot forward natively, this is a bug; tool should rasterize]`,
-                };
-              }
-              return { type: 'text' as const, text: b.text };
-            }),
-          };
-        }
-        return {
-          content: [{ type: 'text', text: JSON.stringify(result.data, null, 2) }],
-        };
-      },
-    );
+    offered.push(tool);
   }
+  // Claude Code defers MCP tools behind its tool search; the catalog's
+  // tools stay in the model's list (`anthropic/alwaysLoad`). Other
+  // clients ignore the key. Cut to what this child offers: the engine's
+  // list was worked out from the same gates.
+  const offeredNames = offered.map((t) => t.name);
+  const wanted =
+    alwaysVisibleFromEnv() ??
+    alwaysVisibleTools(offeredNames, {
+      kind: persona?.kind ?? 'chat',
+      inReviewLoop: isLoopHolder(agent),
+      ...(activeModelRef ? { modelRefs: [activeModelRef, ...(activeModel?.model.alias ? [activeModel.model.alias] : [])] } : {}),
+      catalog: config.toolCatalog,
+    });
+  const alwaysLoad = new Set(wanted.filter((n) => offeredNames.includes(n)));
+  const byName = new Map(offered.map((t) => [t.name, t]));
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: offered.map((tool) => ({
+      name: tool.name,
+      description: persona?.kind === 'builder' ? builderToolDescription(tool.name, tool.description) : tool.description,
+      inputSchema: mcpAdvertisedSchema(tool),
+      ...(alwaysLoad.has(tool.name) ? { _meta: { 'anthropic/alwaysLoad': true } } : {}),
+    })),
+  }));
+
+  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    const tool = byName.get(req.params.name);
+    if (!tool) {
+      return { content: [{ type: 'text' as const, text: `unknown tool '${req.params.name}'` }], isError: true };
+    }
+    const args: unknown = req.params.arguments ?? {};
+    // A key the tool does not know is refused, as the SDK's strict zod
+    // did (2026-09-25: exec's `resource` was stripped and a remote
+    // command ran locally) — never silently dropped.
+    const unknown = unknownInputKeys(tool, args);
+    if (unknown.length > 0) {
+      return {
+        content: [{ type: 'text' as const, text: `invalid input for ${tool.name}: unknown key(s) ${unknown.map((k) => `'${k}'`).join(', ')}` }],
+        isError: true,
+      };
+    }
+    const result = await registry.invoke(tool.name, args, ctx);
+    if (!result.ok) {
+      return { content: [{ type: 'text' as const, text: result.error ?? 'tool failed' }], isError: true };
+    }
+    // Multimodal results forward as MCP-spec content array. MCP
+    // supports `text` and `image` content types in tool results;
+    // claude-agent-sdk and grok-cli pass these through to the model
+    // natively. PDFs come in as image-blocks (rasterized pages) because
+    // MCP has no `document` content type — the file_read polymorph
+    // handles the rasterization upstream.
+    if (result.contentBlocks) {
+      return {
+        content: result.contentBlocks.map((b) => {
+          if (b.type === 'image') {
+            return { type: 'image' as const, data: b.source.data, mimeType: b.source.mediaType };
+          }
+          if (b.type === 'document') {
+            // Should not happen post-rasterization; defensive fallback
+            // to text describing the gap.
+            return {
+              type: 'text' as const,
+              text: `[document ${b.source.mediaType} — MCP cannot forward natively, this is a bug; tool should rasterize]`,
+            };
+          }
+          return { type: 'text' as const, text: b.text };
+        }),
+      };
+    }
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result.data, null, 2) }] };
+  });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
   logger.info({
     msg: 'mcp.server_started',
     agent,
-    tools: registry.list().map((t) => t.name),
+    tools: offeredNames,
+    alwaysLoad: [...alwaysLoad],
   });
 
   // Pino + the stdio transport both use process.stdout. We need to make

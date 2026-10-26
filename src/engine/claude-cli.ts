@@ -458,6 +458,7 @@ export const claudeCliEngine: AgentEngine = {
               session,
               subagentDepth: input.subagentDepth,
               activeModelRef: `${resolvedModel.providerName}/${resolvedModel.modelId}`,
+              ...(input.alwaysVisibleTools ? { alwaysVisibleTools: input.alwaysVisibleTools(resolvedModel) } : {}),
             }),
             // One proxy child per external MCP server (design §4.4):
             // serves the hub's catalog snapshot, forwards calls to the

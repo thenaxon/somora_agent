@@ -116,6 +116,14 @@ export interface TurnInput {
    *  mid-turn and gets a checkpoint notice every 100 rounds. */
   agentKind?: 'chat' | 'builder';
   /**
+   * The tool catalog for this turn (src/tools/catalog.ts): which of the
+   * offered tools sit in the model's direct list, for the model that
+   * answers (a fallback may run on another engine). codex-cli defers the
+   * rest; claude-cli and grok-cli hand it to the MCP child, which marks
+   * these tools `anthropic/alwaysLoad`. Left out: the catalog's default.
+   */
+  alwaysVisibleTools?: (model: ResolvedModel) => readonly string[];
+  /**
    * Steering: messages sent to this session while the turn runs. An
    * engine that supports it calls `drain()` at each step boundary
    * (before the next model call), feeds every message to the model as

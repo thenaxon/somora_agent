@@ -623,6 +623,12 @@ export const fileSearch: ToolDefinition<z.infer<typeof SearchInput>> = {
 // file_list
 // ─────────────────────────────────────────────────────────────────────
 
+/** Shared by the zod and the JSON schema (src/tools/schema-parity.test.mts). */
+const LIST_FIELD = {
+  sortBy: 'Sort order. mtime = newest first, size = largest first, name = lexicographic.',
+  limit: 'Max entries to return after sort. Default 200, hard cap 5000.',
+};
+
 const ListInput = z
   .object({
     path: z
@@ -637,14 +643,14 @@ const ListInput = z
     sortBy: z
       .enum(['mtime', 'name', 'size'])
       .default('name')
-      .describe('Sort order. mtime = newest first, size = largest first, name = lexicographic.'),
+      .describe(LIST_FIELD.sortBy),
     limit: z
       .number()
       .int()
       .min(1)
       .max(5000)
       .default(200)
-      .describe('Max entries to return after sort. Default 200, hard cap 5000.'),
+      .describe(LIST_FIELD.limit),
     glob: z
       .string()
       .min(1)
@@ -679,8 +685,8 @@ export const fileList: ToolDefinition<z.infer<typeof ListInput>> = {
       path: { type: 'string', description: 'Directory path (relative to workspace, or absolute).' },
       target: { type: 'string', description: 'local (default) or a resource name.', default: 'local' },
       recursive: { type: 'boolean', default: false, description: 'Walk subdirectories.' },
-      sortBy: { type: 'string', enum: ['mtime', 'name', 'size'], default: 'name' },
-      limit: { type: 'integer', minimum: 1, maximum: 5000, default: 200 },
+      sortBy: { type: 'string', enum: ['mtime', 'name', 'size'], default: 'name', description: LIST_FIELD.sortBy },
+      limit: { type: 'integer', minimum: 1, maximum: 5000, default: 200, description: LIST_FIELD.limit },
       glob: { type: 'string', description: 'Filter pattern. *, **, ? supported. Without `/` matches basenames, with `/` relative paths.' },
       respect_gitignore: {
         type: 'boolean',

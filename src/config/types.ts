@@ -3,7 +3,7 @@
 // Providers are concrete instances of an engine with baseUrl/apiKey and a model list.
 // Personas reference models as `<provider>/<modelId>`.
 
-import { DEFAULT_CODEX_DIRECT_TOOLS } from '../engine/codex-dynamic-tools.ts';
+import { DEFAULT_ALWAYS_VISIBLE } from '../tools/catalog.ts';
 import { z } from 'zod';
 
 // Model capabilities. `text` is universal. `image` enables Vision (image
@@ -791,20 +791,45 @@ export const CodexCliConfigSchema = z
      */
     shellEnvironmentPolicy: z.enum(['inherit-all', 'core-only']).default('inherit-all'),
     /**
-     * somora tools kept in the model's DIRECT tool list on the Codex
-     * app-server (schemas in context every turn). Every other tool is a
-     * deferred dynamic tool the model reaches via Codex tool search /
-     * Code Mode discovery. Default: the everyday core (memory, files,
-     * exec, tmux, web, time, A2A, docs).
+     * Legacy: the somora tools kept in Codex's direct list. Replaced by
+     * `toolCatalog` (one list for claude-cli and codex-cli). When set it
+     * still replaces the catalog's base list for codex-cli, and the
+     * server logs that once at start.
      */
-    directTools: z.array(z.string()).default([...DEFAULT_CODEX_DIRECT_TOOLS]),
+    directTools: z.array(z.string()).optional(),
   })
   .default({
     toolTimeoutSec: 1800,
     shellEnvironmentPolicy: 'inherit-all',
-    directTools: [...DEFAULT_CODEX_DIRECT_TOOLS],
   });
 export type CodexCliConfig = z.infer<typeof CodexCliConfigSchema>;
+
+const ToolListPatchSchema = z
+  .object({
+    add: z.array(z.string().min(1)).optional(),
+    remove: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
+/**
+ * Which somora tools sit in the model's direct list instead of behind
+ * the engine's tool search (src/tools/catalog.ts). claude-cli marks
+ * them alwaysLoad, codex-cli leaves only them undeferred; grok-cli
+ * cannot (it offers search_tool/use_tool) and openai-compatible sees
+ * every tool. Always cut to the tools a turn offers: a tool the agent
+ * may not use never shows up. A builder's whole (small) set is direct.
+ */
+export const ToolCatalogConfigSchema = z
+  .object({
+    alwaysVisible: z.array(z.string().min(1)).default([...DEFAULT_ALWAYS_VISIBLE]),
+    /** Per engine (claude-cli, codex-cli, grok-cli, openai-compatible). */
+    engines: z.record(z.string(), ToolListPatchSchema).default({}),
+    /** Per model alias or `<provider>/<modelId>` — e.g. more direct tools for a weak model. */
+    models: z.record(z.string(), ToolListPatchSchema).default({}),
+  })
+  .strict()
+  .default({ alwaysVisible: [...DEFAULT_ALWAYS_VISIBLE], engines: {}, models: {} });
+export type ToolCatalogSettings = z.infer<typeof ToolCatalogConfigSchema>;
 
 // Workspace — default cwd for the file_* tools. NOT a sandbox: agents
 // can also write outside the workspace (their own persona files, the
@@ -2710,6 +2735,7 @@ export const ConfigSchema = z.object({
   tmux: TmuxConfigSchema,
   claudeCli: ClaudeCliConfigSchema,
   codexCli: CodexCliConfigSchema,
+  toolCatalog: ToolCatalogConfigSchema,
   tui: TuiConfigSchema,
   mobile: MobileConfigSchema,
   web: WebConfigSchema,

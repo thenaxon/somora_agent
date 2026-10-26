@@ -295,6 +295,7 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
     properties: {
       tasks: {
         type: 'array',
+        description: 'Up to 8 tasks. Run in parallel; results returned together.',
         minItems: 1,
         maxItems: 8,
         items: {

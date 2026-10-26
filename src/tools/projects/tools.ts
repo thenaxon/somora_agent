@@ -225,9 +225,9 @@ const CreateInput = z
       .string()
       .min(1)
       .describe('Entity slug — MUST match one of config.projects.entities. Call entity_list first if unsure.'),
-    description: z.string().optional(),
+    description: z.string().optional().describe('Short description of the project.'),
     color: z.string().optional().describe('CSS color (hex like "#4f46e5" or name).'),
-    tags: z.array(z.string().min(1)).default([]),
+    tags: z.array(z.string().min(1)).default([]).describe('Tags for filtering.'),
     expires: z.string().nullable().optional().describe('ISO date string for soft-expiry, or null.'),
     paths: z.array(ProjectPathSchema).default([]).describe('Initial pointer list (can be empty).'),
     workdir: z
@@ -258,12 +258,13 @@ export const projectCreate: ToolDefinition<z.infer<typeof CreateInput>> = {
         type: 'string',
         description: 'Entity slug — MUST match one of config.projects.entities.',
       },
-      description: { type: 'string' },
+      description: { type: 'string', description: 'Short description of the project.' },
       color: { type: 'string', description: 'CSS color (hex like "#4f46e5" or name).' },
-      tags: { type: 'array', items: { type: 'string' } },
+      tags: { type: 'array', items: { type: 'string' }, description: 'Tags for filtering.' },
       expires: { type: ['string', 'null'], description: 'ISO date for soft-expiry, or null.' },
       paths: {
         type: 'array',
+        description: 'Initial pointer list (can be empty).',
         items: {
           type: 'object',
           properties: {
@@ -358,7 +359,7 @@ type UpdateOp = z.infer<typeof UpdateOpSchema>;
 
 const UpdateInput = z
   .object({
-    slug: z.string().regex(PROJECT_SLUG_RE),
+    slug: z.string().regex(PROJECT_SLUG_RE).describe('Slug of the project to update.'),
     ops: z.array(UpdateOpSchema).min(1).describe('Mutations to apply, in order. Transactional.'),
   })
   .strict();
@@ -479,7 +480,7 @@ export const projectUpdate: ToolDefinition<z.infer<typeof UpdateInput>> = {
   jsonSchema: {
     type: 'object',
     properties: {
-      slug: { type: 'string' },
+      slug: { type: 'string', description: 'Slug of the project to update.' },
       ops: {
         type: 'array',
         minItems: 1,

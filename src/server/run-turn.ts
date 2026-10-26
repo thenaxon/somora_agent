@@ -55,6 +55,7 @@ import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import { ASYNC_QUESTIONS_ITEM, type ResolvedAttachment } from '../engine/types.ts';
 import { askWithoutWaiting, cleanParts } from './async-questions.ts';
+import { turnAlwaysVisible } from './turn-tool-catalog.ts';
 import { resolveAttachmentForModel } from '../attachments/store.ts';
 import { listRecords as listMediaRecords, readRecord as readMediaRecord } from '../media/records.ts';
 import {
@@ -1064,6 +1065,12 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         availableModels: listAllModels(deps.config),
         compactionConfig: resolveCompactionConfig(deps.config),
         tools: toolInvoker,
+        alwaysVisibleTools: turnAlwaysVisible({
+          config: deps.config,
+          agent,
+          kind: persona.kind,
+          offered: availableTools.map((t) => t.name),
+        }),
         // External MCP servers → CLI engines add one somora-<name>
         // proxy child per entry (design §4.4). Per-agent gating happens
         // inside the child (same matcher as the toolInvoker filter

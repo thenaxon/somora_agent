@@ -46,11 +46,11 @@ import { codexChildEnv, somoraCodexHome, syncCodexAuth } from './codex-home.ts';
 import {
   buildCodexToolCatalog,
   codexToolGuidance,
-  DEFAULT_CODEX_DIRECT_TOOLS,
   toolResultToCodexResponse,
   type CodexToolCatalog,
 } from './codex-dynamic-tools.ts';
 import { buildCodexThreadConfig } from './codex-thread-config.ts';
+import { DEFAULT_ALWAYS_VISIBLE } from '../tools/catalog.ts';
 import type { Compaction } from '../compaction/index.ts';
 
 const ENGINE = 'codex-cli';
@@ -109,19 +109,6 @@ function catalogFingerprint(catalog: CodexToolCatalog): string {
   return h.digest('hex').slice(0, 16);
 }
 
-/** Config bridged through process.env by applyCodexCliEnv (config.yaml
- *  codexCli.*), so the engine stays free of the Config type. */
-function codexDirectTools(): readonly string[] {
-  const raw = process.env.SOMORA_CODEX_DIRECT_TOOLS;
-  if (!raw) return DEFAULT_CODEX_DIRECT_TOOLS;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')) return parsed as string[];
-  } catch {
-    /* fall through */
-  }
-  return DEFAULT_CODEX_DIRECT_TOOLS;
-}
 
 function codexToolTimeoutMs(): number {
   const raw = Number(process.env.SOMORA_CODEX_TOOL_TIMEOUT_SEC);
@@ -265,7 +252,7 @@ export const codexCliEngine: AgentEngine = {
 
     // ---- tool catalog + developer instructions -------------------------
     const toolDefs: readonly ToolDefinition[] = input.tools?.list() ?? [];
-    const catalog: CodexToolCatalog = buildCodexToolCatalog(toolDefs, codexDirectTools());
+    const catalog: CodexToolCatalog = buildCodexToolCatalog(toolDefs, input.alwaysVisibleTools?.(resolvedModel) ?? DEFAULT_ALWAYS_VISIBLE);
     if (catalog.skipped.length > 0) {
       logger.warn({ msg: 'engine.codex_tools_skipped', ...logCtx, skipped: catalog.skipped });
     }

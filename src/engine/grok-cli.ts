@@ -139,6 +139,7 @@ function buildMcpServers(args: {
   session: string;
   subagentDepth?: number;
   activeModelRef?: string;
+  alwaysVisibleTools?: readonly string[];
   externalMcpServers?: Array<{ name: string; timeoutMs: number }>;
 }): AcpMcpServer[] {
   const toAcpEnv = (env: Record<string, string>) =>
@@ -149,6 +150,9 @@ function buildMcpServers(args: {
     session: args.session,
     subagentDepth: args.subagentDepth,
     activeModelRef: args.activeModelRef,
+    // grok-cli offers search_tool/use_tool only and ignores alwaysLoad;
+    // passed so the child's list is the same on every engine.
+    ...(args.alwaysVisibleTools ? { alwaysVisibleTools: args.alwaysVisibleTools } : {}),
   });
   const servers: AcpMcpServer[] = [
     {
@@ -772,6 +776,7 @@ export const grokCliEngine: AgentEngine = {
         session: input.session,
         subagentDepth: input.subagentDepth,
         activeModelRef: `${input.resolvedModel.providerName}/${input.resolvedModel.modelId}`,
+        ...(input.alwaysVisibleTools ? { alwaysVisibleTools: input.alwaysVisibleTools(input.resolvedModel) } : {}),
         externalMcpServers: input.externalMcpServers,
       });
       const mcpServerNames = new Set(mcpServers.map((s) => s.name));

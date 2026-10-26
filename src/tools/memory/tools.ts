@@ -333,10 +333,11 @@ export const memoryEdit: ToolDefinition<z.infer<typeof EditInput>> = {
       frontmatter: {
         type: 'object',
         properties: {
-          description: { type: 'string' },
-          tags: { type: 'array', items: { type: 'string' } },
+          description: { type: 'string', description: 'Short description (shown by memory_list).' },
+          tags: { type: 'array', items: { type: 'string' }, description: 'Tags for filtering.' },
         },
         additionalProperties: true,
+        description: 'Optional. Any additional fields are persisted as-is.',
       },
     },
     required: ['slug', 'content'],
