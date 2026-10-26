@@ -4,10 +4,10 @@
 import '../../testing/own-home.mts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConfigSchema } from '../../config/types.ts';
-import { checkStateDir } from '../../sentinel/check-store.ts';
+import { checkScriptDir, checkStateDir } from '../../sentinel/check-store.ts';
 import { getHistory } from '../../sentinel/store.ts';
 import { sentinel } from './tools.ts';
 
@@ -111,6 +111,60 @@ test('update: a new script needs its dry run, then replaces the copy and is note
   assert.equal(t.ok, true);
   assert.equal(t.answer.summary, 'v2');
   assert.deepEqual(readdirSync(checkStateDir(id)), [], 'state folder untouched');
+});
+
+test('update with a new version inside the trigger\'s own folder, or the copy itself, keeps a working script', async () => {
+  const watch = (path: string) => src(path, { mode: 'watch', interval: '1m', deadline: undefined });
+  const v1 = script('own.sh', 'echo \'{"ready": false, "summary": "v1"}\'');
+  await call({ action: 'dry_run', source: watch(v1) });
+  const made = await call({ action: 'create', name: 'own', source: watch(v1), dispatch: { agent: 'ada', prompt: 'x' } });
+  assert.equal(made.ok, true, JSON.stringify(made));
+  const id = made.trigger.id;
+  const dir = checkScriptDir(id);
+
+  // The 2026-10-20 case: check-v2.sh next to check.sh, then update.
+  const v2 = join(dir, 'check-v2.sh');
+  writeFileSync(v2, 'echo \'{"ready": false, "summary": "v2"}\'');
+  await call({ action: 'dry_run', source: watch(v2) });
+  const up = await call({ action: 'update', id, source: watch(v2) });
+  assert.equal(up.ok, true, JSON.stringify(up));
+  assert.deepEqual(readdirSync(dir), ['check.sh'], 'the copy keeps its name, the handed-in file is gone with the old folder');
+  assert.match(readFileSync(join(dir, 'check.sh'), 'utf8'), /v2/);
+  assert.equal((await call({ action: 'test', id })).answer.summary, 'v2');
+
+  // Source = target: the copy itself, edited in place.
+  writeFileSync(join(dir, 'check.sh'), 'echo \'{"ready": false, "summary": "v3"}\'');
+  await call({ action: 'dry_run', source: watch(join(dir, 'check.sh')) });
+  const same = await call({ action: 'update', id, source: watch(join(dir, 'check.sh')) });
+  assert.equal(same.ok, true, JSON.stringify(same));
+  assert.equal((await call({ action: 'test', id })).answer.summary, 'v3');
+  assert.deepEqual(readdirSync(join(home, 'sentinel', 'scripts')).filter((d) => d.startsWith(`${id}.`)), [], 'no swap folders left');
+});
+
+test('a failed script swap leaves the old copy and the trigger as they were, and says so in the history', async () => {
+  const watch = (path: string) => src(path, { mode: 'watch', interval: '1m', deadline: undefined });
+  const v1 = script('keep.sh', 'echo \'{"ready": false, "summary": "old"}\'');
+  await call({ action: 'dry_run', source: watch(v1) });
+  const made = await call({ action: 'create', name: 'keep', source: watch(v1), dispatch: { agent: 'ada', prompt: 'x' } });
+  const id = made.trigger.id;
+  const v2 = script('keep2.sh', 'echo \'{"ready": false, "summary": "new"}\'');
+  await call({ action: 'dry_run', source: watch(v2) });
+  // No room for the swap folder: the scripts folder is read-only.
+  const scripts = join(home, 'sentinel', 'scripts');
+  chmodSync(scripts, 0o500);
+  try {
+    const up = await call({ action: 'update', id, source: watch(v2) });
+    assert.equal(up.ok, false);
+    assert.match(up.error, /script not replaced.*keeps its old script/);
+  } finally {
+    chmodSync(scripts, 0o700);
+  }
+  const got = await call({ action: 'get', id });
+  assert.equal(got.trigger.source.script.sha256, made.trigger.source.script.sha256);
+  assert.equal((await call({ action: 'test', id })).answer.summary, 'old');
+  const hist = await getHistory(id, 10);
+  assert.equal(hist[0]!.outcome, 'error');
+  assert.match(hist[0]!.error ?? '', /update by ada failed.*old script still runs/);
 });
 
 test('Art 2: the decision block is offered and accepted only with a decision model', async () => {

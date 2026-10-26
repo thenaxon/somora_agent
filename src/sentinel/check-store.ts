@@ -54,18 +54,24 @@ export function sha256(bytes: Buffer | string): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+/** The copy's name: `check.<ext>` by the source's language. A JS file
+ *  keeps its module kind: `.cjs` stays CommonJS. */
+function copyNameFor(sourcePath: string): { file: string; lang: CheckScriptLang } {
+  const lang = langOf(sourcePath);
+  if (!lang) throw new Error(`unsupported script type: ${extname(sourcePath) || 'no extension'} — use .sh, .py or .js/.mjs`);
+  const ext = lang === 'node' && extname(sourcePath).toLowerCase() === '.cjs' ? 'cjs' : EXT[lang];
+  return { file: `check.${ext}`, lang };
+}
+
 /** Copy the agent's script into somora's folder; returns what the
- *  trigger records. A JS file keeps its module kind: `.cjs` stays CommonJS. */
+ *  trigger records. */
 export async function installCheckScript(
   id: string,
   sourcePath: string,
 ): Promise<{ file: string; lang: CheckScriptLang; sha256: string }> {
-  const lang = langOf(sourcePath);
-  if (!lang) throw new Error(`unsupported script type: ${extname(sourcePath) || 'no extension'} — use .sh, .py or .js/.mjs`);
+  const { file, lang } = copyNameFor(sourcePath);
   const dir = checkScriptDir(id);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const ext = lang === 'node' && extname(sourcePath).toLowerCase() === '.cjs' ? 'cjs' : EXT[lang];
-  const file = `check.${ext}`;
   const target = join(dir, file);
   await copyFile(sourcePath, target);
   await chmod(target, 0o600);
@@ -74,10 +80,39 @@ export async function installCheckScript(
 }
 
 /** A new version of a trigger's script: the old copy goes, the state
- *  folder stays (the script may keep what it has seen). */
+ *  folder stays (the script may keep what it has seen). The source is
+ *  read before anything is touched, the new copy goes into a folder of
+ *  its own and is swapped in by rename. An agent may hand in a file
+ *  inside the trigger's own folder, even the copy itself; clearing the
+ *  folder first lost both files (2026-10-20 report). Any failure leaves
+ *  the old copy where it was. */
 export async function replaceCheckScript(id: string, sourcePath: string): Promise<{ file: string; lang: CheckScriptLang; sha256: string }> {
-  await rm(checkScriptDir(id), { recursive: true, force: true });
-  return installCheckScript(id, sourcePath);
+  const { file, lang } = copyNameFor(sourcePath);
+  const bytes = await readFile(sourcePath);
+  const dir = checkScriptDir(id);
+  const stamp = `${process.pid}.${Date.now().toString(36)}`;
+  const fresh = `${dir}.new.${stamp}`;
+  const old = `${dir}.old.${stamp}`;
+  try {
+    mkdirSync(fresh, { recursive: true, mode: 0o700 });
+    await writeFile(join(fresh, file), bytes, { mode: 0o600 });
+    if (sha256(await readFile(join(fresh, file))) !== sha256(bytes)) throw new Error('the new script copy does not match its source');
+  } catch (err) {
+    await rm(fresh, { recursive: true, force: true });
+    throw err;
+  }
+  const hadOld = existsSync(dir);
+  if (hadOld) await rename(dir, old);
+  try {
+    await rename(fresh, dir);
+  } catch (err) {
+    if (hadOld) await rename(old, dir).catch(() => {});
+    await rm(fresh, { recursive: true, force: true });
+    throw err;
+  }
+  if (hadOld) await rm(old, { recursive: true, force: true });
+  mkdirSync(checkStateDir(id), { recursive: true, mode: 0o700 });
+  return { file, lang, sha256: sha256(bytes) };
 }
 
 /** The script's text when it still matches its fingerprint, else why not. */

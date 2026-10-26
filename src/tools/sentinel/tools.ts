@@ -681,7 +681,20 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
           if ((scriptChanged || artChanged) && !(await hasRecentDryRun(ctx.agent, v.sha256, v.evaluator.type === 'decision' ? 2 : 1))) {
             return { action: 'update', ok: false, id: t.id, error: NO_DRY_RUN };
           }
-          const script = scriptChanged ? await replaceCheckScript(t.id, r.input.scriptPath) : t.source.script;
+          let script = t.source.script;
+          if (scriptChanged) {
+            try {
+              script = await replaceCheckScript(t.id, r.input.scriptPath);
+            } catch (err) {
+              // The old copy is still in place and the trigger unchanged;
+              // the history says so (a failed swap was only in the reply).
+              const error = `script not replaced: ${(err as Error).message}`;
+              const at = new Date().toISOString();
+              await recordFire(t.id, { firedAt: at, scheduledFor: at, outcome: 'error', error: `update by ${ctx.agent} failed, ${error}; the old script still runs` });
+              logger.warn({ msg: 'sentinel.tool.update_failed', triggerId: t.id, by: ctx.agent, error });
+              return { action: 'update', ok: false, id: t.id, error: `${error} — the trigger keeps its old script` };
+            }
+          }
           updated = { ...updated, source: buildCheckSource(r.input, v.deadline, script), evaluator: v.evaluator };
           // A fresh start: new starting state, new deadline; today's wakes still count.
           const old = await loadCheckState(t.id);

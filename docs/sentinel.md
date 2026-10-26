@@ -361,7 +361,16 @@ fingerprint. The copy is what runs: the agent editing its file later
 changes nothing. To run a new version, the agent dry-runs it and calls
 `update` with the trigger id and the new `source`. Changing only
 settings (interval, deadline, description) with the same script and
-kind needs no dry run.
+kind needs no dry run, and `prompt`, `name` or `intent` alone need no
+`source` at all.
+
+`update` replaces somora's copy: the trigger's folder under
+`~/.somora/sentinel/scripts/<id>/` then holds only the new version,
+named `check.sh`, `check.py` or `check.mjs` by its language. Keep your
+versions in your workspace and pass that path; a file you put into the
+trigger's folder yourself is gone after the update. The new copy is
+written aside first and swapped in whole, so a failed update leaves the
+old script running and says so in the trigger's history.
 
 Every `source` update starts the check over:
 a new starting state, the deadline counted from now, the counters at
