@@ -469,13 +469,14 @@ never has to search for the tools used most:
 
 The list only ever picks from the tools the agent is offered in that
 turn. A tool switched off for the agent never shows up, and `ask_user`
-only in a turn someone watches (a person, or a task sent over A2A). During a dream review the review
-tools join it: `dream_list`, `dream_get`, `dream_apply`,
+only in a turn someone watches (a person, or a task sent over A2A).
+During a dream review the review tools join it: `dream_list`, `dream_get`, `dream_apply`,
 `dream_dismiss`, `dream_review` and `wiki_edit`. A builder's whole
 tool set is in the list, because it is small.
 
 `grok-cli` always finds tools through its own search. The list is
-`toolCatalog` in `config.yaml`, see Settings.
+`toolCatalog` in `config.yaml`, see [Per engine and per
+model](#per-engine-and-per-model).
 
 ### Found on demand on `openai-compatible`
 
@@ -505,6 +506,33 @@ use of the turn with an answer.
 Only offered tools are listed, found or run, in either mode: a tool
 switched off for the agent is refused by name. A builder always gets
 all of its tools.
+
+### Per engine and per model
+
+The list above is the same for every engine. `toolCatalog` in
+`config.yaml` changes it for one engine or one model:
+
+```yaml
+toolCatalog:
+  engines:
+    codex-cli: { add: [sentinel] }      # always in the list on codex-cli
+    claude-cli: { remove: [tmux] }      # on claude-cli only through the search
+    openai-compatible: { mode: all }    # every tool with its schema, no catalog
+  models:
+    small-local: { mode: all }          # this model only; wins over its engine
+    big-local: { add: [sentinel] }      # one more tool in this model's list
+```
+
+| Setting | Effect |
+|---|---|
+| `add`, `remove` | Tool names put into the list or taken out of it, for that engine or model. The model's lists apply after the engine's. |
+| `mode` | `openai-compatible` only: `catalog` (the default) or `all`. A model's `mode` wins over its engine's. |
+| a model's name | Its alias or `<provider>/<modelId>`. |
+
+To replace the whole list for every engine, set
+`toolCatalog.alwaysVisible`. A tool the agent may not use stays out
+whatever the list says, a builder keeps all its tools, and `grok-cli`
+cannot be changed. A change applies from the agent's next turn.
 
 ## Results, limits and timeouts
 
