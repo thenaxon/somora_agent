@@ -1208,10 +1208,13 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         // Questions the engine asks without waiting (Codex's own question
         // tool): the session's open question, shown as a card. Only when a
         // person started the turn — nobody else would see the card. The
-        // text of the message carries them too, so nothing is lost.
+        // text of the message carries them too, so nothing is lost. A
+        // builder too: Codex's turn has ended either way, so the card is
+        // the only way to answer with a click (a builder's own ask_user
+        // still waits).
         const raw = (ev.payload as { questions?: Array<{ question: string; options: string[] }> } | undefined)?.questions;
         const parts = cleanParts((raw ?? []).map((q) => ({ question: q.question, options: q.options })));
-        if (parts.length > 0 && askerOf(origin) === 'human' && persona.kind !== 'builder') {
+        if (parts.length > 0 && askerOf(origin) === 'human') {
           await askWithoutWaiting({ agent, session, parts, source: 'codex' });
         } else {
           logger.info({ msg: 'turn.async_questions_ignored', turnId, agent, session, parts: parts.length, origin: origin ? originKind(origin) : null });

@@ -61,6 +61,9 @@ const home = process.env.SOMORA_HOME!;
 mkdirSync(join(home, 'agents', 'cody'), { recursive: true });
 writeFileSync(join(home, 'agents', 'cody', 'AGENTS.md'), '# cody\n');
 writeFileSync(join(home, 'agents', 'cody', 'agent.yaml'), 'model: cx/gpt\n');
+mkdirSync(join(home, 'agents', 'bob'), { recursive: true });
+writeFileSync(join(home, 'agents', 'bob', 'AGENTS.md'), '# bob\n');
+writeFileSync(join(home, 'agents', 'bob', 'agent.yaml'), 'kind: builder\nmodel: cx/gpt\n');
 const config: Config = ConfigSchema.parse({
   providers: { cx: { engine: 'codex-cli', models: [{ id: 'gpt', alias: 'gpt', contextWindow: 100000, capabilities: ['text'] }] } },
   agentLoop: { toolUsageReminder: false },
@@ -81,10 +84,10 @@ let script = { ask: true, text: REAL_ITEM.text as string | null };
 };
 const tools = { listAvailable: async () => [], list: () => [], invoke: async () => ({ ok: false, error: 'none' }) };
 
-async function turn(slug: string, origin: TurnOrigin) {
-  const sid = await createSession('cody', slug);
+async function turn(slug: string, origin: TurnOrigin, agent = 'cody') {
+  const sid = await createSession(agent, slug);
   lastResult = await runChatTurn({
-    agent: 'cody',
+    agent,
     session: sid,
     text: 'go on?',
     origin,
@@ -123,6 +126,14 @@ test('a turn that only asks is complete: the card is its answer', async () => {
   assert.equal(lastResult!.outcome, 'degraded', 'no question and no text is still an empty answer');
   assert.equal(lastResult!.outcome_reason, 'empty_answer');
   script = { ask: true, text: REAL_ITEM.text };
+});
+
+test("a builder on Codex gets the card too: Codex's turn has ended, so a click is the only quick answer", async () => {
+  const sid = await turn('codex-q-builder', { kind: 'human', via: 'chat' }, 'bob');
+  const q = await openAsyncQuestion('bob', sid);
+  assert.ok(q, 'open question on the builder session');
+  assert.equal(q!.async, true);
+  assert.equal(q!.source, 'codex');
 });
 
 // The turn opened the agent's memory (and its file watcher).

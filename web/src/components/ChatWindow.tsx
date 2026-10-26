@@ -94,7 +94,7 @@ export function ChatWindow({
     sessionId,
   );
   const chat = useChatSessionFromContext(agent.name, sessionId);
-  const { question: pendingQuestion, refresh: refreshQuestion } = useSessionQuestion(agent.name, sessionId, agent.kind !== 'builder', chat.streaming);
+  const { question: pendingQuestion, refresh: refreshQuestion } = useSessionQuestion(agent.name, sessionId, true, chat.streaming);
   // Keep the header's model/thinking honest: re-read on a model switch
   // made elsewhere, and around every turn (a turn is where the model is
   // actually resolved — fallback, override, persona default).
@@ -1555,7 +1555,9 @@ export function ChatWindow({
         <div ref={bottomSentinelRef} aria-hidden="true" />
       </div>
 
-      {pendingQuestion && !isBuilder && (
+      {/* A builder's waiting question lives in its task panel; one that
+          does not wait (Codex's own question tool) is a card here too. */}
+      {pendingQuestion && (!isBuilder || pendingQuestion.async) && (
         <QuestionCard key={pendingQuestion.id} agent={agent.name} session={sessionId} question={pendingQuestion} onAnswered={refreshQuestion} />
       )}
       <AttachmentTray items={pendingAttachments} onRemove={removePendingAttachment} />

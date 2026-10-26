@@ -436,7 +436,9 @@ when it is offered, not behind the tool search.
 Codex has a question tool of its own. Its questions arrive as the same
 card, without waiting; one card can then hold several questions, some
 answered in your own words. The answer goes out as one message with
-each question and its answer.
+each question and its answer. This holds for a builder too: Codex has
+ended its turn when it asks, so its question is a card next to the
+task panel, while the builder's own `ask_user` still waits.
 
 ## How a tool reaches the model
 
