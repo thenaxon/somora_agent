@@ -1551,6 +1551,23 @@ const httpServer = tlsCert && tlsKey && tlsConf
       },
     );
 
+// The port cannot be had (another program on it, or no right to it): say
+// so and end. Unhandled, the error reached the uncaughtException logger
+// below, which only logs — the process lived on without a port and kept
+// the lockfile, so every later start was refused as "already running"
+// (release rehearsal 2026-10-26).
+(httpServer as unknown as NodeJS.EventEmitter).on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code !== 'EADDRINUSE' && err.code !== 'EACCES' && err.code !== 'EADDRNOTAVAIL') {
+    logger.error({ msg: 'server.error', err: err.message, code: err.code });
+    return;
+  }
+  logger.error({ msg: 'server.listen_failed', code: err.code, host: bindHost, port, err: err.message });
+  const why = err.code === 'EADDRINUSE' ? 'another program already uses it' : err.code === 'EACCES' ? 'this user may not use it' : 'the address does not exist on this machine';
+  process.stderr.write(`\nsomora cannot listen on ${bindHost}:${port}: ${why}. Set server.port in config.yaml (or SOMORA_PORT) to a free port, or stop the other program.\n\n`);
+  releaseLockfile();
+  process.exit(1);
+});
+
 if (tlsCert && tlsConf) {
   new TlsKeeper({
     server: httpServer as unknown as SecureContextHolder,
