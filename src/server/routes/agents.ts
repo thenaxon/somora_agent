@@ -3,6 +3,7 @@
 // Names index.ts shares come in through `routeDeps`; nextTurnPrompt are read from it
 // per request (index.ts sets them up later or changes them).
 
+import { builderToolDescription } from '../../tools/builder/short-descriptions.ts';
 import { renameAgent } from '../../persona/rename.ts';
 import { writeAgentA2A } from '../../persona/a2a-store.ts';
 import { AgentRenamingError } from '../../persona/rename-lock.ts';
@@ -203,7 +204,10 @@ export function registerAgentRoutes(app: Hono, routeDeps: AgentRoutesDeps): void
     const session = await resolveSessionId(agent, sessionRef);
     if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
     const sessionMeta = await sessionMetaStore.get(agent, session);
-    const { assembled, available, previewModel } = await routeDeps.nextTurnPrompt(agent, session, persona, sessionMeta);
+    const { assembled, available: listed, previewModel } = await routeDeps.nextTurnPrompt(agent, session, persona, sessionMeta);
+    // What the turn sends: a builder's model gets the short descriptions
+    // (run-turn.ts), so the sizes below count those (review 2026-10-26).
+    const available = persona.kind === 'builder' ? listed.map((t) => ({ ...t, description: builderToolDescription(t.name, t.description) })) : listed;
     const schemaChars = (list: readonly { name: string; description: string; jsonSchema: unknown }[]) =>
       list.reduce((n, t) => n + JSON.stringify({ name: t.name, description: t.description, parameters: t.jsonSchema }).length, 0);
     const toolSchemaChars = schemaChars(available);

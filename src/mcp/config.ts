@@ -100,6 +100,10 @@ export function somoraMcpProxyName(server: string): string {
 export function somoraMcpProxySpawn(args: {
   server: string;
   agent: string;
+  /** The session the tools serve: its deny list (sub-agents, tasks from
+   *  another agent system) hides `mcp__<server>__*` tools too. Without
+   *  it the proxy applied only the agent's own rules (review 2026-10-26). */
+  session?: string;
 }): { command: string; args: string[]; env: Record<string, string> } {
   const useLocalTsx = existsSync(TSX_BIN_REPO);
   return {
@@ -111,6 +115,7 @@ export function somoraMcpProxySpawn(args: {
       ...filterEnv(process.env),
       SOMORA_AGENT: args.agent,
       SOMORA_MCP_PROXY_SERVER: args.server,
+      ...(args.session ? { SOMORA_SESSION: args.session } : {}),
     },
   };
 }

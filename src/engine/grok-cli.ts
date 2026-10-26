@@ -164,7 +164,7 @@ function buildMcpServers(args: {
   ];
 
   for (const srv of args.externalMcpServers ?? []) {
-    const proxyCfg = somoraMcpProxySpawn({ server: srv.name, agent: args.agent });
+    const proxyCfg = somoraMcpProxySpawn({ server: srv.name, agent: args.agent, session: args.session });
     servers.push({
       name: somoraMcpProxyName(srv.name),
       command: proxyCfg.command,

@@ -466,7 +466,7 @@ export const claudeCliEngine: AgentEngine = {
             ...Object.fromEntries(
               (input.externalMcpServers ?? []).map((srv) => [
                 somoraMcpProxyName(srv.name),
-                somoraMcpProxySpawn({ server: srv.name, agent }),
+                somoraMcpProxySpawn({ server: srv.name, agent, session }),
               ]),
             ),
           },

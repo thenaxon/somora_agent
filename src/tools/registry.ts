@@ -10,6 +10,7 @@
 // Tools are registered once at server boot. Registration is idempotent
 // per name (re-register replaces — useful for dev:server hot reload).
 
+import { z } from 'zod';
 import { DEFAULT_MAX_IMAGE_EDGE, fitImageForModel } from '../multimodal/model-image.ts';
 import { isLoopHolder } from '../dream/loop-state.ts';
 import { matchesToolPattern } from './gating.ts';
@@ -65,7 +66,7 @@ export class ToolRegistry {
     if (this.tools.has(tool.name)) {
       logger.debug({ msg: 'tool.re_register', name: tool.name });
     }
-    this.tools.set(tool.name, tool);
+    this.tools.set(tool.name, withZodBounds(tool));
   }
 
   registerMany(tools: ToolDefinition[]): void {
@@ -449,4 +450,47 @@ export function unstringifyNested(
     }
   }
   return paths.length > 0 ? { value: clone, paths } : null;
+}
+
+/** Bounds zod enforces that a model should know before it calls. */
+const BOUND_KEYS = ['maxLength', 'minItems', 'maxItems', 'minimum', 'maximum'] as const;
+
+/**
+ * The hand-written JSON schema every engine sees, with the bounds of the
+ * zod schema that validates the call filled in where it says nothing:
+ * `browser.value` advertised no limit while zod refused 20,001
+ * characters (review 2026-10-26). Written once here instead of beside
+ * each field, so the two cannot drift apart again. Left out as noise:
+ * "at least one character" and the safe-integer range zod puts on every
+ * integer. Bridged MCP tools keep their upstream schema.
+ */
+export function withZodBounds(tool: ToolDefinition): ToolDefinition {
+  if (tool.toolset === 'mcp' || !(tool.inputSchema instanceof z.ZodObject)) return tool;
+  let zs: { properties?: Record<string, Record<string, unknown>> };
+  try {
+    zs = z.toJSONSchema(tool.inputSchema as z.ZodType, { io: 'input', unrepresentable: 'any' }) as typeof zs;
+  } catch {
+    return tool;
+  }
+  const props = (tool.jsonSchema as { properties?: Record<string, Record<string, unknown>> }).properties;
+  if (!props) return tool;
+  let changed = false;
+  const next: Record<string, Record<string, unknown>> = { ...props };
+  for (const [k, zp] of Object.entries(zs.properties ?? {})) {
+    const jp = props[k];
+    if (!jp) continue;
+    const add: Record<string, unknown> = {};
+    for (const b of BOUND_KEYS) {
+      const v = zp[b];
+      if (typeof v !== 'number' || jp[b] !== undefined) continue;
+      if (Math.abs(v) >= Number.MAX_SAFE_INTEGER) continue;
+      add[b] = v;
+    }
+    if (typeof zp.minLength === 'number' && zp.minLength > 1 && jp.minLength === undefined) add.minLength = zp.minLength;
+    if (Object.keys(add).length) {
+      next[k] = { ...jp, ...add };
+      changed = true;
+    }
+  }
+  return changed ? { ...tool, jsonSchema: { ...tool.jsonSchema, properties: next } } : tool;
 }

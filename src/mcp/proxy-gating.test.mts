@@ -28,11 +28,11 @@ for (const [name, a] of Object.entries(AGENTS)) {
   writeFileSync(join(home, 'agents', name, 'AGENTS.md'), `# ${name}\n`);
 }
 
-async function served(agent: string): Promise<string[]> {
+async function served(agent: string, extraEnv: Record<string, string> = {}): Promise<string[]> {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ['--import', 'tsx', resolve('src/mcp/server.ts')],
-    env: { ...(process.env as Record<string, string>), SOMORA_AGENT: agent, SOMORA_MCP_PROXY_SERVER: 'acme' },
+    env: { ...(process.env as Record<string, string>), SOMORA_AGENT: agent, SOMORA_MCP_PROXY_SERVER: 'acme', ...extraEnv },
     stderr: 'ignore',
   });
   const client = new Client({ name: 'test', version: '1' });
@@ -49,3 +49,21 @@ for (const [name, a] of Object.entries(AGENTS)) {
     assert.deepEqual(await served(name), a.expect);
   });
 }
+
+// The session's own deny list reaches the proxy too (review 2026-10-26):
+// claude-cli and grok-cli passed no session, so a sub-agent's or an
+// outside task's `mcp__…` deny entries hid nothing.
+test("a sub-agent session's deny list hides the external tool, through the engine's spawn settings", async () => {
+  writeFileSync(
+    join(home, 'config.yaml'),
+    'providers:\n  p:\n    engine: openai-compatible\n    baseUrl: http://127.0.0.1:1/v1\n    apiKey: sk-test-ABCDEFGHIJKLMNOP\n    models:\n      - id: x\n        contextWindow: 1000\nsubagents:\n  tools:\n    deny: ["mcp__acme__x"]\n',
+  );
+  const { createSession, sessionMetaStore } = await import('../storage/sessions.ts');
+  const { somoraMcpProxySpawn } = await import('./config.ts');
+  const sid = await createSession('px-plain', 'sub-task');
+  await sessionMetaStore.update('px-plain', sid, (m) => ({ ...m, spawn: { kind: 'sub', parentAgent: 'px-plain', parentSession: 'main' } }));
+  const spawn = somoraMcpProxySpawn({ server: 'acme', agent: 'px-plain', session: sid });
+  assert.equal(spawn.env.SOMORA_SESSION, sid, 'the session goes to the proxy');
+  assert.deepEqual(await served('px-plain', { SOMORA_SESSION: sid }), ['y']);
+  assert.deepEqual(await served('px-plain'), ['x', 'y'], 'the agent itself still has both');
+});

@@ -63,3 +63,25 @@ test('a zod field text never goes missing from the JSON schema', () => {
   }
   assert.deepEqual(lost, []);
 });
+
+test("zod's bounds reach the JSON schema every engine sees", () => {
+  // browser.value advertised no limit while zod refused 20,001
+  // characters (review 2026-10-26); the registry fills them in now.
+  const KEYS = ['maxLength', 'minItems', 'maxItems', 'minimum', 'maximum'] as const;
+  const gaps: string[] = [];
+  for (const tool of reg.list()) {
+    if (tool.toolset === 'mcp') continue;
+    const zs = z.toJSONSchema(tool.inputSchema as z.ZodType, { io: 'input', unrepresentable: 'any' }) as { properties?: Record<string, Record<string, unknown>> };
+    const jp = (jsonOf(tool).properties ?? {}) as Record<string, Record<string, unknown>>;
+    for (const [k, zp] of Object.entries(zs.properties ?? {})) {
+      if (!jp[k]) continue;
+      for (const b of KEYS) {
+        const v = zp[b];
+        if (typeof v === 'number' && Math.abs(v) < Number.MAX_SAFE_INTEGER && jp[k]![b] !== v) gaps.push(`${tool.name}.${k}: ${b} zod ${v}, json ${String(jp[k]![b])}`);
+      }
+    }
+  }
+  assert.deepEqual(gaps, []);
+  const browserValue = (reg.get('browser')!.jsonSchema as { properties: Record<string, { maxLength?: number }> }).properties.value!;
+  assert.equal(browserValue.maxLength, 20_000);
+});
