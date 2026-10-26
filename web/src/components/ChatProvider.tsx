@@ -510,12 +510,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         // nothing about what happened while it was away: the turn kept
         // running on the server and its events went nowhere. Ask what we
         // missed, every time the connection comes back.
+        // A question asked or answered while there was no stream: the card
+        // reads it again — on every open, since the watchdog below opens
+        // a new EventSource (whose first open is this one) after a long
+        // interruption.
+        emitTurnEvent(key, 'question');
         if (!openedOnce) {
           openedOnce = true;
           return;
         }
-        // A question asked or answered meanwhile: the card reads it again.
-        emitTurnEvent(key, 'question');
         api
           .history(agent, session, { limit: INITIAL_HISTORY_LIMIT, signal: ac.signal })
           .then((res) => {
@@ -1375,11 +1378,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   // session whose last event is older than two heartbeat intervals.
   useEffect(() => {
     const STALE_MS = 45_000; // server heartbeat is 20s; allow 2 misses
-    const checkAll = () => {
+    // `online`: the network is back — every stream that is not open now
+    // reconnects at once. The browser's own retry of an EventSource that
+    // failed while offline can take a long while, and meanwhile a question
+    // asked or answered elsewhere stayed unseen (review 2026-10-26).
+    const checkAll = (networkBack = false) => {
       const now = Date.now();
-      for (const key of sourcesRef.current.keys()) {
+      for (const [key, entry] of sourcesRef.current.entries()) {
         const last = lastEventAtRef.current.get(key) ?? 0;
-        if (now - last <= STALE_MS) continue;
+        const notOpen = entry.es.readyState !== EventSource.OPEN;
+        if (now - last <= STALE_MS && !(networkBack && notOpen) && entry.es.readyState !== EventSource.CLOSED) continue;
         const sep = key.indexOf('::');
         if (sep < 0) continue;
         const agent = key.slice(0, sep);
@@ -1392,13 +1400,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const onVisible = () => {
       if (document.visibilityState === 'visible') checkAll();
     };
+    const onFocus = () => checkAll();
+    const onOnline = () => checkAll(true);
     document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('focus', checkAll);
-    window.addEventListener('online', checkAll);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('online', onOnline);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('focus', checkAll);
-      window.removeEventListener('online', checkAll);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('online', onOnline);
     };
   }, [reopenStream]);
 

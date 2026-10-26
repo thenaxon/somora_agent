@@ -36,15 +36,25 @@ export function useSessionQuestion(
   const [question, setQuestion] = useState<SessionQuestion | null>(null);
   const current = useRef({ agent, session });
   current.current = { agent, session };
+  const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refresh = useCallback(() => {
     const { agent: a, session: s } = current.current;
     if (!a) return;
-    fetch(`/agents/${encodeURIComponent(a)}/sessions/${encodeURIComponent(s)}/question`)
-      .then((r) => (r.ok ? (r.json() as Promise<{ question: SessionQuestion | null }>) : null))
-      .then((d) => {
-        if (d && current.current.agent === a && current.current.session === s) setQuestion(d.question);
-      })
-      .catch(() => undefined);
+    if (retry.current) clearTimeout(retry.current);
+    // A read that fails on the network (the event came, the fetch did
+    // not — a short drop) is tried again a few times; else the card stays
+    // unseen until the next event (review 2026-10-26).
+    const attempt = (left: number) => {
+      fetch(`/agents/${encodeURIComponent(a)}/sessions/${encodeURIComponent(s)}/question`)
+        .then((r) => (r.ok ? (r.json() as Promise<{ question: SessionQuestion | null }>) : null))
+        .then((d) => {
+          if (d && current.current.agent === a && current.current.session === s) setQuestion(d.question);
+        })
+        .catch(() => {
+          if (left > 0 && current.current.agent === a && current.current.session === s) retry.current = setTimeout(() => attempt(left - 1), 2500);
+        });
+    };
+    attempt(4);
   }, []);
   useEffect(() => {
     setQuestion(null);

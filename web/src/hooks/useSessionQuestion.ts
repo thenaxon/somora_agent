@@ -8,21 +8,34 @@ import { api, type SessionQuestion } from '../lib/api';
 import { useChatContext } from '../components/ChatProvider';
 
 const POLL_MS = 1500;
+/** A read that failed on the network (the event came, the fetch did not)
+ *  is tried again this often, this far apart — else the card stays
+ *  unseen until the next turn event (review 2026-10-26). */
+const RETRIES = 4;
+const RETRY_MS = 2500;
 
 export function useSessionQuestion(agent: string, session: string, enabled: boolean, streaming: boolean): { question: SessionQuestion | null; refresh: () => void } {
   const { subscribeTurnEvents } = useChatContext();
   const [question, setQuestion] = useState<SessionQuestion | null>(null);
   const alive = useRef(true);
+  const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refresh = useCallback(() => {
     if (!enabled) return;
-    api
-      .sessionQuestion(agent, session)
-      .then((q) => {
-        if (alive.current) setQuestion(q);
-      })
-      .catch(() => {
-        /* an older server has no such route */
-      });
+    if (retry.current) clearTimeout(retry.current);
+    const attempt = (left: number) => {
+      api
+        .sessionQuestion(agent, session)
+        .then((q) => {
+          if (alive.current) setQuestion(q);
+        })
+        .catch((err: unknown) => {
+          // A network failure (TypeError from fetch) is tried again; an
+          // HTTP error means an older server without the route.
+          if (!(err instanceof TypeError) || left <= 0 || !alive.current) return;
+          retry.current = setTimeout(() => attempt(left - 1), RETRY_MS);
+        });
+    };
+    attempt(RETRIES);
   }, [agent, session, enabled]);
   useEffect(() => {
     alive.current = true;
@@ -30,6 +43,7 @@ export function useSessionQuestion(agent: string, session: string, enabled: bool
     refresh();
     return () => {
       alive.current = false;
+      if (retry.current) clearTimeout(retry.current);
     };
   }, [refresh]);
   useEffect(() => subscribeTurnEvents(agent, session, () => refresh()), [subscribeTurnEvents, agent, session, refresh]);
