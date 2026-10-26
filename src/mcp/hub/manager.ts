@@ -10,7 +10,9 @@
 //   - lazy connect: nothing blocks server boot; first use (or an
 //     explicit warmup call) connects.
 //   - failure classification: permanent (auth, DNS, non-MCP endpoint,
-//     missing env var) parks the server with a slow 5-min re-probe;
+//     missing env var) parks the server with a slow 5-min re-probe —
+//     a refused OAuth login instead waits for a new login to land in
+//     its credential file (or a manual reconnect, or an hour);
 //     transient (network, timeout) gets jittered exponential backoff
 //     with a circuit breaker (3 consecutive fails → 60s cooldown).
 //   - keepalive: MCP ping on idle connections every 180s — idle HTTP
@@ -61,6 +63,8 @@ export interface McpServerStatus {
   toolCount: number;
   transport?: 'streamable-http' | 'sse';
   lastError?: string;
+  /** With needs-auth: what to do to log in again. */
+  loginHint?: string;
   lastConnectedAt?: number;
   consecutiveFailures: number;
 }
@@ -85,6 +89,9 @@ const RELIST_INTERVAL_MS = 300_000;
 const CIRCUIT_BREAKER_THRESHOLD = 3;
 const CIRCUIT_BREAKER_COOLDOWN_MS = 60_000;
 const PARKED_REPROBE_MS = 300_000;
+/** A refused OAuth login is re-probed when its credential changes;
+ *  this is the ceiling in case that change goes unseen. */
+const AUTH_WAIT_CEILING_MS = 3_600_000;
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_CAP_MS = 60_000;
 /** Retry window after a LIVE connection drops (keepalive fail / upstream
@@ -114,6 +121,13 @@ interface ServerRuntime {
   retryNotBefore: number;
   /** Permanent-failure park: reprobe slowly instead of backing off. */
   parked: boolean;
+  /** Set while a refused OAuth login waits for a new one: the
+   *  credential fingerprint at the refusal. A reprobe before the
+   *  ceiling happens only once the fingerprint differs — retrying the
+   *  same dead login every 5 minutes is what fed the 2026-10-18 loop. */
+  authWaitFingerprint?: string;
+  /** The ceiling for that wait. */
+  authWaitUntil: number;
   /** In-flight connect, deduped. */
   connectPromise: Promise<void> | null;
   /** Serial-call chain (per-server, unless supportsParallelToolCalls). */
@@ -161,6 +175,14 @@ function isAuthError(err: unknown): boolean {
     /unauthorized|forbidden/i.test(msg) ||
     BODY_AUTH_MARKERS.test(msg)
   );
+}
+
+/** The server accepted who we are but not what the credential may do
+ *  (a 403 or a scope named in the body). Only a different login fixes
+ *  that. */
+function isScopeRefusal(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err);
+  return /\b403\b|forbidden|needs_design_scopes|needs_consent|insufficient_scope/i.test(msg);
 }
 
 /** Exported for the classifier tests: these two decide whether a server
@@ -214,6 +236,7 @@ export class McpHubManager {
         consecutiveFailures: 0,
         retryNotBefore: 0,
         parked: false,
+        authWaitUntil: 0,
         connectPromise: null,
         callChain: Promise.resolve(),
       });
@@ -264,6 +287,9 @@ export class McpHubManager {
         toolCount: s.tools.length,
         ...(s.transportKind ? { transport: s.transportKind } : {}),
         ...(s.lastError ? { lastError: s.lastError } : {}),
+        ...(s.state === 'needs-auth' && s.credentials.loginHint?.()
+          ? { loginHint: s.credentials.loginHint() }
+          : {}),
         ...(s.lastConnectedAt ? { lastConnectedAt: s.lastConnectedAt } : {}),
         consecutiveFailures: s.consecutiveFailures,
       };
@@ -296,6 +322,7 @@ export class McpHubManager {
     if (s.state === 'disabled') throw new Error(`MCP server "${name}" is disabled in config`);
     await this.teardown(s, 'manual reconnect');
     s.parked = false;
+    delete s.authWaitFingerprint;
     s.consecutiveFailures = 0;
     s.retryNotBefore = 0;
     s.state = 'pending';
@@ -443,6 +470,14 @@ export class McpHubManager {
       });
       return Promise.resolve();
     }
+    if (s.authWaitFingerprint !== undefined && now < s.authWaitUntil) {
+      // Same refused login as last time: trying it again changes
+      // nothing, and the sweep looks again in a minute.
+      if (s.credentials.credentialFingerprint?.() === s.authWaitFingerprint) {
+        return Promise.resolve();
+      }
+      logger.info({ msg: 'mcp.hub.credential_changed', server: s.name });
+    }
     s.connectPromise = this.connectInner(s).finally(() => {
       s.connectPromise = null;
     });
@@ -451,13 +486,22 @@ export class McpHubManager {
 
   private async connectInner(s: ServerRuntime): Promise<void> {
     s.state = 'pending';
+    // Whether the failure came from our own credential (dead refresh
+    // chain, missing key) rather than from the server.
+    let credentialSide = false;
     try {
       const url = new URL(s.url);
       // Provider resolves auth+static headers fresh — an oauth-refresh
       // provider refreshes the token here if it's near expiry. Header
       // names are already lowercased by the provider (avoids duplicate
       // Authorization on the wire, OpenClaw lesson).
-      const headers = await s.credentials.resolveHeaders();
+      let headers: Record<string, string>;
+      try {
+        headers = await s.credentials.resolveHeaders();
+      } catch (err) {
+        credentialSide = true;
+        throw err;
+      }
 
       const { client, kind } = await this.handshake(s, url, headers);
       s.client = client;
@@ -496,6 +540,7 @@ export class McpHubManager {
       s.lastActivityAt = Date.now();
       s.consecutiveFailures = 0;
       s.parked = false;
+      delete s.authWaitFingerprint;
       delete s.lastError;
       logger.info({
         msg: 'mcp.hub.connected',
@@ -511,10 +556,26 @@ export class McpHubManager {
       s.lastError = scrubbed;
       const permanent = isPermanentError(err);
       s.state = permanent && isAuthError(err) ? 'needs-auth' : 'failed';
-      if (permanent) {
+      // A login that is dead on our side, or one the server refuses for
+      // a missing scope, does not come back by itself — only a new
+      // login does. Wait for the credential to change instead of
+      // probing every 5 minutes. A plain 401 from the server keeps the
+      // timer: that can be a token that expired a moment ago.
+      const fingerprint =
+        permanent && (credentialSide || isScopeRefusal(err))
+          ? s.credentials.credentialFingerprint?.()
+          : null;
+      if (fingerprint) {
+        s.parked = true;
+        s.authWaitFingerprint = fingerprint;
+        s.authWaitUntil = Date.now() + AUTH_WAIT_CEILING_MS;
+        s.retryNotBefore = 0;
+      } else if (permanent) {
+        delete s.authWaitFingerprint;
         s.parked = true;
         s.retryNotBefore = Date.now() + PARKED_REPROBE_MS;
       } else {
+        delete s.authWaitFingerprint;
         const backoff = Math.min(
           BACKOFF_BASE_MS * 2 ** Math.max(0, s.consecutiveFailures - 1),
           BACKOFF_CAP_MS,
@@ -529,6 +590,7 @@ export class McpHubManager {
         server: s.name,
         state: s.state,
         permanent,
+        ...(fingerprint ? { waitsForNewLogin: true } : {}),
         failures: s.consecutiveFailures,
         error: scrubbed,
       });

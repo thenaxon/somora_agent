@@ -127,6 +127,17 @@ test('log: certificate and Lucid', () => {
   assert.equal(inbox.list().filter((e) => !e.resolvedAt).length, 0);
 });
 
+test('state: a lost tool-server login is one notice with the login to run', () => {
+  const { inbox, clock } = fresh();
+  const src = state({
+    mcpServers: () => ({ design: { state: 'needs-auth', loginHint: 'Run the design login.', lastError: 'refresh rejected (HTTP 400)' } }),
+  });
+  for (let i = 0; i < 5; i++) inboxFromState(inbox, src, clock.t + i * 300_000);
+  const open = inbox.list().filter((e) => !e.resolvedAt);
+  assert.equal(open.length, 1);
+  assert.match(open[0]!.text, /Run the design login\./);
+});
+
 const state = (over: Partial<InboxStateSources> = {}): InboxStateSources => ({
   version: '2026.1012.6',
   update: () => ({ updateAvailable: false, latestVersion: '2026.1012.6', note: null, enabled: true }),

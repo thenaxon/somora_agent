@@ -220,7 +220,7 @@ export interface InboxStateSources {
   version: string;
   update: () => { updateAvailable: boolean; latestVersion: string | null; note: string | null; enabled: boolean };
   configProblem: () => { since: number | string; message: string } | null;
-  mcpServers: () => Record<string, { state: string; lastError?: string; lastConnectedAt?: number }>;
+  mcpServers: () => Record<string, { state: string; lastError?: string; loginHint?: string; lastConnectedAt?: number }>;
   unavailableModels: () => Array<{ ref: string; reason: string }>;
   /** Entries of subagents.tools.deny that name no tool (a typo). */
   subagentDenyUnknown?: () => string[];
@@ -292,7 +292,7 @@ export function inboxFromState(inbox: Inbox, src: InboxStateSources, now = Date.
         kind: 'login',
         level: 'important',
         title: `Tool server ${name} wants a new login`,
-        text: `Its tools are missing until then. See docs/mcp.md for how this server logs in.${s.lastError ? `\n\n${s.lastError.slice(0, 300)}` : ''}`,
+        text: `Its tools are missing until then. ${s.loginHint ?? 'See docs/mcp.md for how this server logs in.'}${s.lastError ? `\n\n${s.lastError.slice(0, 300)}` : ''}`,
       }, { count: false });
       continue;
     }

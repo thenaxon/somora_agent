@@ -250,6 +250,90 @@ check('4: sweep does not rotate a key it does not own', refreshCalls.length === 
 check('4: file untouched', readCreds().claudeAiOauth?.refreshToken === 'cli-refresh');
 await hub.shutdown();
 
+// ── 5. a dead login is retired once and then waited for ────────────
+// 2026-10-18 report: the same dead designOauth came back into the file
+// after every retirement and was retired again every ~6 minutes for a
+// month (8,108 copies). Now: a dead token is kept aside at most once,
+// at most MAX_STALE_PER_KEY copies stay, and the hub does not try again
+// until the credential changes.
+tokenMode = 'reject';
+refreshCalls.length = 0;
+const cfg5 = McpConfigSchema.parse({
+  servers: {
+    design: {
+      url: `http://127.0.0.1:${UP_PORT}/mcp`,
+      auth: {
+        type: 'oauth-refresh',
+        credentialFile: credFile,
+        credentialKey: ['designOauth', 'claudeAiOauth'],
+        tokenEndpoint: `http://127.0.0.1:${TOKEN_PORT}/token`,
+        refresh: ['designOauth'],
+        loginHint: 'Run the design login.',
+      },
+    },
+  },
+});
+const deadDesign = { accessToken: 'dead-access', refreshToken: 'dead-refresh', expiresAt: Date.now() - 1000 };
+const cli5 = { accessToken: 'cli-not-valid', refreshToken: 'cli-refresh', expiresAt: Date.now() + 3_600_000 };
+// Five older retired copies of other tokens: the file of a long-running
+// instance.
+const older: Record<string, unknown> = {};
+for (let i = 1; i <= 5; i++) older[`designOauth_stale_2026-09-0${i}T00-00-00-000Z`] = { accessToken: `old-${i}`, refreshToken: `old-refresh-${i}` };
+writeFileSync(credFile, JSON.stringify({ claudeAiOauth: cli5, designOauth: deadDesign, ...older }, null, 2));
+hub = new McpHubManager(cfg5);
+internals = hub as unknown as Internals;
+await hub.ensureConnected('design').catch(() => {});
+{
+  const st = hub.status().design as { state: string; loginHint?: string } | undefined;
+  check('5: needs-auth', st?.state === 'needs-auth', JSON.stringify(st));
+  check('5: status carries the login hint', st?.loginHint === 'Run the design login.', JSON.stringify(st));
+  const c = readCreds();
+  const stale = Object.keys(c).filter((k) => k.startsWith('designOauth_stale_')).sort();
+  check('5: retired, newest three copies kept', stale.length === 3, stale.join(','));
+  check('5: the dead token is among them', stale.some((k) => c[k]?.refreshToken === 'dead-refresh'));
+  check('5: the oldest copies were dropped', !stale.includes('designOauth_stale_2026-09-01T00-00-00-000Z'));
+}
+check('5: one refresh attempt', refreshCalls.length === 1, String(refreshCalls.length));
+
+// Sweeps with nothing changed: no new attempt, even with the timer due.
+for (let i = 0; i < 3; i++) {
+  internals.servers.get('design')!.retryNotBefore = 0;
+  await internals.keepaliveSweep();
+  await delay(50);
+}
+check('5: unchanged credential → no new attempt', refreshCalls.length === 1, String(refreshCalls.length));
+
+// The same dead token comes back (what the credential sync used to do):
+// the hub tries once more, but keeps no second copy of it.
+{
+  const c = readCreds() as Record<string, unknown>;
+  c.designOauth = deadDesign;
+  writeFileSync(credFile, JSON.stringify(c, null, 2));
+}
+internals.servers.get('design')!.retryNotBefore = 0;
+await internals.keepaliveSweep();
+for (let i = 0; i < 30 && refreshCalls.length < 2; i++) await delay(50);
+await delay(100);
+{
+  const c = readCreds();
+  const stale = Object.keys(c).filter((k) => k.startsWith('designOauth_stale_'));
+  check('5: changed credential → tried again', refreshCalls.length === 2, String(refreshCalls.length));
+  check('5: the same dead token is not kept twice', stale.filter((k) => c[k]?.refreshToken === 'dead-refresh').length === 1, stale.join(','));
+  check('5: … and removed from the live key', c.designOauth === undefined);
+}
+
+// A new login lands → the next sweep connects without a manual reconnect.
+tokenMode = 'ok';
+{
+  const c = readCreds() as Record<string, unknown>;
+  c.designOauth = { accessToken: 'access-0', refreshToken: 'refresh-new', expiresAt: Date.now() + 3_600_000 };
+  writeFileSync(credFile, JSON.stringify(c, null, 2));
+}
+await internals.keepaliveSweep();
+for (let i = 0; i < 50 && hub.status().design?.state !== 'connected'; i++) await delay(100);
+check('5: new login → connected on its own', hub.status().design?.state === 'connected', JSON.stringify(hub.status().design));
+await hub.shutdown();
+
 await upstream.close();
 for (const s of tokenSockets) s.destroy();
 await new Promise<void>((r) => tokenSrv.close(() => r()));

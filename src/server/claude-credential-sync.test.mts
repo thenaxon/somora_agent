@@ -253,6 +253,67 @@ const cleanups: string[] = [];
   check('push-no-leak: converged', reconcileCredentialPair(user, somora) === 'noop');
 }
 
+// ── a token the hub retired is never brought back from ~/.claude ──────
+// 2026-10-18 report: the hub moved a dead designOauth aside on the somora
+// side, the sync copied the same dead copy back from ~/.claude, the hub
+// retired it again — every 6 minutes for a month, 8,108 stale copies.
+// Both mtime orders: the primary login is the same on both sides, so the
+// tie-break decides which side "wins".
+for (const userNewer of [true, false]) {
+  const tag = `retired-stays-dead (${userNewer ? 'user' : 'somora'} newer)`;
+  const { user, somora } = freshDirs();
+  cleanups.push(join(user, '..', '..'));
+  const primary = JSON.parse(cred(9000, 'same')).claudeAiOauth;
+  const dead = { accessToken: 'design-at-dead', refreshToken: 'design-rt-dead', expiresAt: 1000 };
+  write(user, JSON.stringify({ claudeAiOauth: primary, designOauth: dead }), userNewer ? 2000 : 1000);
+  write(
+    somora,
+    JSON.stringify({ claudeAiOauth: primary, 'designOauth_stale_2026-10-18T20-47-04-809Z': dead }),
+    userNewer ? 1000 : 2000,
+  );
+  reconcileCredentialPair(user, somora);
+  const s = JSON.parse(readFileSync(somora, 'utf8'));
+  check(`${tag}: somora does not regain designOauth`, s.designOauth === undefined, JSON.stringify(Object.keys(s)));
+  check(`${tag}: the retired copy stays`, s['designOauth_stale_2026-10-18T20-47-04-809Z']?.refreshToken === 'design-rt-dead');
+  check(`${tag}: ~/.claude keeps its own copy`, JSON.parse(readFileSync(user, 'utf8')).designOauth?.refreshToken === 'design-rt-dead');
+  check(`${tag}: ~/.claude does not gain the stale key`, !readFileSync(user, 'utf8').includes('_stale_'));
+  check(`${tag}: converged (second pass noop)`, reconcileCredentialPair(user, somora) === 'noop');
+}
+
+// ── a new login on the somora side beats the dead ~/.claude copy ──────
+{
+  const { user, somora } = freshDirs();
+  cleanups.push(join(user, '..', '..'));
+  const primary = JSON.parse(cred(9000, 'same')).claudeAiOauth;
+  // The dead copy even claims a later expiry: it must still lose.
+  const dead = { accessToken: 'design-at-dead', refreshToken: 'design-rt-dead', expiresAt: 99_999 };
+  const fresh = { accessToken: 'design-at-new', refreshToken: 'design-rt-new', expiresAt: 50_000 };
+  write(user, JSON.stringify({ claudeAiOauth: primary, designOauth: dead }), 2000);
+  write(somora, JSON.stringify({ claudeAiOauth: primary, designOauth: fresh, designOauth_stale_x: dead }), 1000);
+  reconcileCredentialPair(user, somora);
+  const s = JSON.parse(readFileSync(somora, 'utf8'));
+  check('new-login-wins: somora keeps the new login', s.designOauth?.refreshToken === 'design-rt-new');
+  check('new-login-wins: ~/.claude copy refreshed to the new login', JSON.parse(readFileSync(user, 'utf8')).designOauth?.refreshToken === 'design-rt-new');
+  check('new-login-wins: converged', reconcileCredentialPair(user, somora) === 'noop');
+}
+
+// ── a live designOauth only in ~/.claude is still pulled ──────────────
+// (a /design-login run in the ordinary Claude Code config dir)
+{
+  const { user, somora } = freshDirs();
+  cleanups.push(join(user, '..', '..'));
+  const primary = JSON.parse(cred(9000, 'same')).claudeAiOauth;
+  const live = { accessToken: 'design-at-live', refreshToken: 'design-rt-live', expiresAt: 50_000 };
+  const dead = { accessToken: 'design-at-dead', refreshToken: 'design-rt-dead', expiresAt: 1000 };
+  write(user, JSON.stringify({ claudeAiOauth: primary, designOauth: live, designOauth_stale_y: dead }), 2000);
+  write(somora, JSON.stringify({ claudeAiOauth: primary, designOauth_stale_x: dead }), 1000);
+  reconcileCredentialPair(user, somora);
+  const s = JSON.parse(readFileSync(somora, 'utf8'));
+  check('live-user-only: pulled onto the somora side', s.designOauth?.refreshToken === 'design-rt-live');
+  check('live-user-only: a stale key from ~/.claude is not pulled', s.designOauth_stale_y === undefined);
+  check('live-user-only: converged', reconcileCredentialPair(user, somora) === 'noop');
+}
+
 // ── no foreign keys → unchanged classic overwrite path (regression) ───
 {
   check('no-foreign: mergeForeignCredentialKeys returns null', mergeForeignCredentialKeys(cred(5000, 'a'), cred(4000, 'b'), true) === null);

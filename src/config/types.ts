@@ -2491,6 +2491,10 @@ export const McpOAuthRefreshSchema = z.object({
    *  daily and needed a manual `/design-login`, 2026-08-31 report),
    *  `claudeAiOauth` stays the CLI's. */
   refresh: z.union([z.boolean(), z.array(z.string().min(1))]).default(true),
+  /** What to do to log in again, shown with `needs-auth` in
+   *  /mcp/status and in the inbox notice. The claude-design preset
+   *  fills it in. */
+  loginHint: z.string().optional(),
 });
 export type McpOAuthRefresh = z.infer<typeof McpOAuthRefreshSchema>;
 

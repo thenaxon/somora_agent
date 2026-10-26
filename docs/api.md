@@ -3410,7 +3410,9 @@ The state of each server.
 ```
 
 `state` is `pending`, `connected`, `failed`, `needs-auth` or
-`disabled`. `lastError` is added after a failure.
+`disabled`. `lastError` is added after a failure. With `needs-auth`,
+`loginHint` says how to log in again when the server's config knows
+it (the Claude Design preset does).
 
 ### `POST /mcp/servers/:name/reconnect`
 

@@ -12,7 +12,8 @@
 // The credential file is NEVER config — it's operator-provisioned by an
 // interactive login. The hub only reads/refreshes it.
 
-import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { open, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +32,22 @@ export interface CredentialProvider {
    *  old bearer (a live streamable-http session keeps sending the
    *  token it connected with). Optional: static providers never rotate. */
   refreshDue?(): boolean;
+  /** A hash of the credentials this provider can use, or null when it
+   *  cannot tell. After a refused login the hub waits for this to
+   *  change (a new login was written) instead of retrying on a timer. */
+  credentialFingerprint?(): string | null;
+  /** What to run to log in again, for the needs-auth notice. */
+  loginHint?(): string | undefined;
+}
+
+/** Retired copies kept per key. A retirement keeps the dead entry for
+ *  forensics; more than a few of them only bloat the file (one instance
+ *  collected 8,108 copies of the same dead token, 2026-10-18 report). */
+export const MAX_STALE_PER_KEY = 3;
+
+/** True when `<key>_stale_*` names a retired copy of `key`. */
+export function isStaleKeyOf(name: string, key: string): boolean {
+  return name.startsWith(`${key}_stale_`);
 }
 
 function expandHome(p: string): string {
@@ -109,6 +126,24 @@ export class OAuthRefreshProvider implements CredentialProvider {
     if (!this.refreshAllowed()) return false;
     if (this.lastExpiresAt === undefined) return false;
     return this.lastExpiresAt - Date.now() < REFRESH_SKEW_MS;
+  }
+
+  credentialFingerprint(): string | null {
+    let doc: Record<string, unknown>;
+    try {
+      doc = JSON.parse(readFileSync(this.file, 'utf8')) as Record<string, unknown>;
+    } catch {
+      // Missing or half-written: "no credential" is a state too, and
+      // its change (the login writing the file) is what we wait for.
+      return 'absent';
+    }
+    const h = createHash('sha256');
+    for (const key of this.keys()) h.update(`${key}=${JSON.stringify(doc[key] ?? null)}\n`);
+    return h.digest('hex');
+  }
+
+  loginHint(): string | undefined {
+    return this.auth.loginHint;
   }
 
   async resolveHeaders(): Promise<Record<string, string>> {
@@ -271,18 +306,40 @@ export class OAuthRefreshProvider implements CredentialProvider {
   }
 
   /** Rename the dead credential's key to `<key>_stale_<timestamp>` —
-   *  kept for forensics, out of the login's way. Returns the new key.
-   *  Called under the refresh lock. */
+   *  kept for forensics, out of the login's way. Returns the key the
+   *  dead entry now lives under. Called under the refresh lock.
+   *
+   *  The same dead token is never kept twice: when a retired copy with
+   *  this refresh token already exists, the entry is just removed. At
+   *  most MAX_STALE_PER_KEY copies stay, the newest ones. */
   private async retireCredential(): Promise<string> {
     const key = this.usedKey ?? this.keys()[0]!;
-    const retiredAs = `${key}_stale_${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    let retiredAs = `${key}_stale_${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    let duplicate = false;
+    let pruned = 0;
     await this.rewriteFile((doc) => {
-      if (doc[key] !== undefined) {
-        doc[retiredAs] = doc[key];
-        delete doc[key];
+      const entry = doc[key] as OAuthCredential | undefined;
+      if (entry === undefined) return;
+      const stale = Object.keys(doc).filter((k) => isStaleKeyOf(k, key));
+      const same = entry.refreshToken
+        ? stale.find((k) => (doc[k] as OAuthCredential | undefined)?.refreshToken === entry.refreshToken)
+        : undefined;
+      if (same) {
+        duplicate = true;
+        retiredAs = same;
+      } else {
+        doc[retiredAs] = entry;
+        stale.push(retiredAs);
+      }
+      delete doc[key];
+      // The timestamp suffix sorts by time.
+      stale.sort();
+      for (const old of stale.slice(0, Math.max(0, stale.length - MAX_STALE_PER_KEY))) {
+        delete doc[old];
+        pruned++;
       }
     });
-    logger.warn({ msg: 'mcp.hub.oauth_credential_retired', key, retiredAs, file: this.file });
+    logger.warn({ msg: 'mcp.hub.oauth_credential_retired', key, retiredAs, duplicate, pruned, file: this.file });
     this.usedKey = null;
     this.lastExpiresAt = undefined;
     return retiredAs;
@@ -381,6 +438,8 @@ export function applyMcpPreset(name: string, cfg: McpServerConfig): McpServerCon
           credentialKey: ['designOauth', 'claudeAiOauth'],
           tokenEndpoint: 'https://platform.claude.com/v1/oauth/token',
           refresh: ['designOauth'],
+          loginHint:
+            'Run `CLAUDE_CONFIG_DIR=~/.somora/claude-home claude` on the server and in it `/design-login`, then reconnect the server.',
         } as McpOAuthRefresh),
       headers: {
         'X-Anthropic-Client': 'claude-cli-design-tool',

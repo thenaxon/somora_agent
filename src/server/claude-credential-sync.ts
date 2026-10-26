@@ -179,15 +179,24 @@ function keyExpiresAt(obj: Record<string, unknown>, key: string): number | null 
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
-/**
- * Merge two credential files preserving foreign top-level keys (anything
- * other than `claudeAiOauth` — e.g. `designOauth`). Returns the merged
- * JSON string, or NULL when neither side carries a foreign key (the
- * common case → caller keeps the original whole-file-overwrite path with
- * its tested behavior). Base is the claudeAiOauth winner; each foreign
- * key resolves to the copy with the later `expiresAt` (present-side wins
- * when only one has it, later-expiry wins when both do).
- */
+/** Refresh tokens the MCP hub has retired on the somora side, per key.
+ *  The hub renames a dead entry to `<key>_stale_<timestamp>`
+ *  (src/mcp/hub/credentials.ts); those entries are the record of which
+ *  tokens are dead. */
+function retiredTokens(somora: Record<string, unknown>): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const [name, entry] of Object.entries(somora)) {
+    const m = /^(.+)_stale_/.exec(name);
+    if (!m || entry === null || typeof entry !== 'object') continue;
+    const rt = (entry as { refreshToken?: unknown }).refreshToken;
+    if (typeof rt !== 'string' || rt === '') continue;
+    const set = out.get(m[1]!) ?? new Set<string>();
+    set.add(rt);
+    out.set(m[1]!, set);
+  }
+  return out;
+}
+
 /**
  * Returns the content each side should hold, or null when there are no
  * foreign keys (classic overwrite path applies).
@@ -200,6 +209,14 @@ function keyExpiresAt(obj: Record<string, unknown>, key: string): number | null 
  *   logout first that revokes every refresh token it finds there —
  *   including a `designOauth` that somora had leaked in (2026-08-25,
  *   killed the Design grant 4 min after the user's `/login`).
+ *
+ * A foreign key whose refresh token the hub has retired on the somora
+ * side is never brought back from ~/.claude: the dead copy there would
+ * otherwise return after every retirement, be refused and retired again
+ * — every 6 minutes for a month on one instance (2026-10-18 report,
+ * 8,108 copies of one dead token). ~/.claude keeps its own copy; somora
+ * does not write a key it never added there. Retired copies themselves
+ * (`<key>_stale_*`) are never pulled either.
  */
 export function mergeForeignCredentialKeys(
   userContent: string,
@@ -221,11 +238,23 @@ export function mergeForeignCredentialKeys(
   }
   if (foreignKeys.size === 0) return null;
 
+  const retired = retiredTokens(somora);
+  const deadInUser = (key: string): boolean => {
+    const rt = (user[key] as { refreshToken?: unknown } | null | undefined)?.refreshToken;
+    return typeof rt === 'string' && (retired.get(key)?.has(rt) ?? false);
+  };
+
   const winner = userWins ? user : somora;
   const merged: Record<string, unknown> = { ...winner };
   for (const key of foreignKeys) {
     const inUser = key in user;
     const inSomora = key in somora;
+    if (inUser && (deadInUser(key) || /_stale_/.test(key))) {
+      // Not ours to bring back: the somora copy stands, or none.
+      if (inSomora) merged[key] = somora[key];
+      else delete merged[key];
+      continue;
+    }
     if (inUser && inSomora) {
       const ue = keyExpiresAt(user, key);
       const se = keyExpiresAt(somora, key);
@@ -248,7 +277,7 @@ export function mergeForeignCredentialKeys(
   }
   const userSide: Record<string, unknown> = { claudeAiOauth: merged.claudeAiOauth };
   for (const key of foreignKeys) {
-    if (key in user) userSide[key] = merged[key];
+    if (key in user) userSide[key] = key in merged ? merged[key] : user[key];
   }
   return {
     somora: `${JSON.stringify(merged, null, 2)}\n`,

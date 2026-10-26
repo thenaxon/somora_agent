@@ -227,6 +227,24 @@ refresh token is dead. The hub renames the entry to
 `needs-auth`, with the new key name in `lastError`. Run the login
 again, then reconnect the server.
 
+- **One copy per dead token.** The same dead token is never put aside
+  twice, and only the newest 3 `_stale_` entries per key stay in the
+  file.
+- **It stays dead.** The Claude login sync (see
+  [Isolated Claude config dir](setup.md#isolated-claude-config-dir))
+  never copies a token the hub has put aside back into somora's
+  credential file.
+- **No retry loop.** Until the credential changes, the hub does not try
+  the dead login again. It checks the file every minute, so a new login
+  is picked up within about a minute, without a reconnect. A manual
+  reconnect tries at once. After an hour without a change, it tries
+  once more.
+- **A notice.** The inbox in `/web` shows one entry per server that
+  needs a new login. Where the hub knows the login command (the Claude
+  Design preset), the entry and `/mcp/status` (`loginHint`) say it.
+
+Set `auth.loginHint` to give your own server that line.
+
 > **Note:** The credential itself is never in `config.yaml`. Only the
 > interactive login creates it.
 
@@ -266,6 +284,7 @@ What the preset fills in (a field you set yourself wins):
 | `auth.credentialKey` | `designOauth`, then `claudeAiOauth`: the first one present in the file is used |
 | `auth.tokenEndpoint` | `https://platform.claude.com/v1/oauth/token` |
 | `auth.refresh` | `['designOauth']` |
+| `auth.loginHint` | the `/design-login` command below |
 | `headers` | `X-Anthropic-Client: claude-cli-design-tool` |
 
 So somora refreshes `designOauth` itself. Its access token lives only a
@@ -280,7 +299,8 @@ reconnect:
 curl -H "Authorization: Bearer $(somora key)" -sk -X POST https://localhost:18737/mcp/servers/claude-design/reconnect
 ```
 
-Without a reconnect the hub tries again by itself within 5 minutes.
+Without a reconnect the hub picks up the new login by itself within
+about a minute.
 Claude Code refuses `/design-login` while a `designOauth` entry exists.
 That is why the hub moves a dead entry aside: you can log in again
 without editing the file.
@@ -314,7 +334,9 @@ How the hub behaves:
   at least 1 minute.
 - **An error that will not go away** (refused credential, missing
   environment variable, missing credential file, unknown host) is
-  tried again only every 5 minutes.
+  tried again only every 5 minutes. An OAuth login that is dead, or
+  that lacks a scope, waits for the credential to change instead (at
+  most an hour).
 - **A call that fails** because the server is gone is not repeated. The
   connection is rebuilt for the next call.
 - **Changed tools** arrive without a restart. A server that announces
