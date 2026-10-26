@@ -495,11 +495,9 @@ export function routeCall(
     let inner: unknown = a.arguments ?? {};
     // Some models send the arguments object as JSON text.
     if (typeof inner === 'string') {
-      try {
-        inner = inner.trim() ? JSON.parse(inner) : {};
-      } catch {
-        return { kind: 'reject', error: `tool_call arguments for ${target} must be an object; the text sent is not valid JSON.` };
-      }
+      const parsed = parseArgumentsText(inner);
+      if (!parsed.ok) return { kind: 'reject', error: `tool_call arguments for ${target} must be an object; the text sent is not valid JSON (${parsed.error}).` };
+      inner = parsed.value;
     }
     if (!offeredNames.has(target)) return { kind: 'reject', error: unknownToolMessage(target, offeredNames) };
     // A direct tool through tool_call: run it all the same — forgiving
@@ -509,6 +507,44 @@ export function routeCall(
   if (!offeredNames.has(name)) return { kind: 'reject', error: unknownToolMessage(name, offeredNames, plan !== null) };
   if (plan && plan.deferred.some((d) => d.name === name)) return { kind: 'run', name, args, via: 'hydrated' };
   return { kind: 'run', name, args };
+}
+
+/** Arguments sent as JSON text. A long one from a weak model often has a
+ *  closing brace too many or too few at the end (live 2026-10-26: a
+ *  sentinel source with one "}" extra cost a round); up to three are
+ *  mended, and the tool's own input check judges the rest. */
+export function parseArgumentsText(text: string): { ok: true; value: unknown } | { ok: false; error: string } {
+  const t = text.trim();
+  if (!t) return { ok: true, value: {} };
+  const tryParse = (s: string): unknown => {
+    try {
+      const v = JSON.parse(s) as unknown;
+      return v && typeof v === 'object' && !Array.isArray(v) ? v : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const direct = tryParse(t);
+  if (direct !== undefined) return { ok: true, value: direct };
+  let error = '';
+  try {
+    JSON.parse(t);
+  } catch (err) {
+    error = (err as Error).message;
+  }
+  if (t.startsWith('{')) {
+    let s = t;
+    for (let i = 0; i < 3 && s.endsWith('}'); i++) {
+      s = s.slice(0, -1).trimEnd();
+      const v = tryParse(s);
+      if (v !== undefined) return { ok: true, value: v };
+    }
+    for (let i = 1; i <= 3; i++) {
+      const v = tryParse(t + '}'.repeat(i));
+      if (v !== undefined) return { ok: true, value: v };
+    }
+  }
+  return { ok: false, error: error.slice(0, 120) };
 }
 
 function unknownToolMessage(name: string, offered: ReadonlySet<string>, catalog = true): string {

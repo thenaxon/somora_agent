@@ -305,7 +305,7 @@ function StatusIcon({ status }: { status: SentinelTrigger['status'] }) {
 function describeSource(t: SentinelTrigger): string {
   if (t.source.type === 'check') {
     const c = t.source;
-    const judged = t.evaluator.type === 'decision' ? ' · judged' : '';
+    const judged = t.evaluator.type === 'decision' ? (t.evaluator.perItem ? ' · judged item by item' : ' · judged') : '';
     return c.mode === 'once'
       ? `Check once · every ${c.interval}${c.deadline ? ` · until ${formatAbsolute(c.deadline)}` : ''}${judged}`
       : `Check watch · every ${c.interval}${judged}`;
@@ -467,7 +467,7 @@ function DetailPanel({
             </>
           )}
         </Section>
-        <Section title="History (last 50 fires)">
+        <Section title="History (last 50 entries)">
           {history === null ? (
             <span style={{ color: 'var(--text-3)' }}>loading…</span>
           ) : history.length === 0 ? (

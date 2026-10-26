@@ -15,6 +15,7 @@ import {
   planCatalog,
   renderListing,
   routeCall,
+  parseArgumentsText,
   runToolSearch,
   signature,
   stem,
@@ -333,4 +334,15 @@ test("somora's own deferred tools are found by the words a model uses", () => {
   }
   assert.equal(first('spawn subagent task'), 'spawn_subagents');
   assert.ok(index.search(['video generate'], 5).some((h) => h.name === 'video_generate'));
+});
+
+test('tool_call arguments as JSON text: a brace too many or too few at the end is mended', () => {
+  assert.deepEqual(parseArgumentsText('{"a": {"b": 1}}'), { ok: true, value: { a: { b: 1 } } });
+  assert.deepEqual(parseArgumentsText('{"a": {"b": 1}}}'), { ok: true, value: { a: { b: 1 } } }, 'one extra');
+  assert.deepEqual(parseArgumentsText('{"a": {"b": 1}'), { ok: true, value: { a: { b: 1 } } }, 'one missing');
+  assert.deepEqual(parseArgumentsText(''), { ok: true, value: {} });
+  const bad = parseArgumentsText('{"a": nope}');
+  assert.equal(bad.ok, false);
+  assert.match((bad as { error: string }).error, /JSON/);
+  assert.equal(parseArgumentsText('[1,2]').ok, false, 'a list is not arguments');
 });

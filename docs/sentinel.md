@@ -558,7 +558,7 @@ The **sentinel** tile opens a window with two parts:
   session, next fire time and fire count. A pause or error reason is
   shown in red.
 - **Detail**: schedule, intent, dispatch, policy, stats and the last 50
-  fires. Three buttons: **test now**, **pause** or **resume**, and
+  history entries. Three buttons: **test now**, **pause** or **resume**, and
   **delete**.
 
 A check trigger shows more:
