@@ -87,7 +87,7 @@ const CheckSourceSchema = z
     deadline: z.string().min(1).optional(),
     timeoutMs: z.number().int().optional(),
     notifyOnFirst: z.boolean().optional(),
-    decision: z.object({ questions: z.record(z.string(), z.unknown()), wake: z.record(z.string(), z.unknown()) }).strict().optional(),
+    decision: z.object({ questions: z.record(z.string(), z.unknown()), wake: z.record(z.string(), z.unknown()), perItem: z.boolean().optional() }).strict().optional(),
   })
   .strict();
 type CheckSourceInputT = z.infer<typeof CheckSourceSchema>;
@@ -210,7 +210,7 @@ function validateCreateInput(input: SentinelInputT): { ok: true; data: Required<
 function describeSource(t: Pick<Trigger, 'source' | 'evaluator'>): string {
   const s = t.source;
   if (s.type === 'time') return describeTimeSpec(s.spec);
-  return `check ${s.mode}, every ${s.interval}${s.deadline ? ` until ${s.deadline}` : ''}${t.evaluator?.type === 'decision' ? ', judged by the decision model' : ''}`;
+  return `check ${s.mode}, every ${s.interval}${s.deadline ? ` until ${s.deadline}` : ''}${t.evaluator?.type === 'decision' ? `, judged by the decision model${t.evaluator.perItem ? ' item by item' : ''}` : ''}`;
 }
 
 /** The agent's script path → an absolute path it may read, plus the
@@ -278,7 +278,7 @@ function sentinelDescription(art2: boolean, limits: Config['sentinel']['checks']
     `- CHECK, once (source.type "check", mode "once"): wait for an event a small script can check for certain — "tell me when the model switch is done", "when the build has passed". The script prints {"ready": true|false}; you are woken on the first ready: true, or once at the deadline (required, at most ${Math.round(limits.maxDeadlineMs / 3_600_000)} h) with the last state. Interval from ${s(limits.minIntervalOnceMs)}.\n` +
     `- CHECK, watch (mode "watch"): watch a clear condition — "when BTC drops below 50,000". Wakes on each change from ready: false to true, not on every positive check. Interval from ${s(limits.minIntervalMs)}.\n` +
     (art2
-      ? '- JUDGED CHECK (a check with "decision"): watch something that needs judgement — "when a mail arrives that needs an answer today", "when there is news about X". The script prints {"data": …}; the decision model answers your question about the data and wakes you above your threshold. Usually mode "watch".\n'
+      ? '- JUDGED CHECK (a check with "decision"): watch something that needs judgement — "when a mail arrives that needs an answer today", "when there is news about X". The script prints {"data": …}; the decision model answers your question about the data and wakes you above your threshold. Usually mode "watch". For a list of things (mails, tickets, posts) set decision.perItem: true — each item is judged on its own, once.\n'
       : '') +
     '- No trigger: when you can do it now, or nobody asked to be told later.' +
     '\n\nCheck scripts: one file in your workspace — .sh (bash), .py (python3), .js/.mjs (node). They only observe: read a status, fetch data; actions belong in your woken turn. ' +
@@ -289,7 +289,7 @@ function sentinelDescription(art2: boolean, limits: Config['sentinel']['checks']
     'Look at the real data first (fetch the endpoint, list the folder) and write the script against what you saw — do not ask the user what you can look up. ' +
     'Parse JSON and compare numbers in Python or node; jq and bc may not be installed. ' +
     (art2
-      ? 'A judged script must print only items that are NEW since its last run (remember what it printed in the state folder) and nothing that changes on every run (no timestamps, counters) — otherwise old items are judged again and wake you again. '
+      ? 'With perItem the script prints a list of recent items, each with an "id" — somora remembers which it judged; do not filter by category or label (a missed item costs more than a question). Without perItem it must print only data that is NEW since its last run and nothing that changes on every run (no timestamps, counters). '
       : '') +
     'Templates: docs/sentinel.md.' +
     '\n\nSteps for a check: write the script → action "dry_run" with the exact source you will create (runs it once, shows what would happen; required, nothing saved, nobody woken) → "create" with the same source, a name and dispatch.prompt: what to do when woken. A new script for update needs a dry run too.' +
@@ -323,7 +323,8 @@ function sentinelJsonSchema(art2: boolean): Record<string, unknown> {
               type: 'object',
               description: 'Judged check: the decision model reads the script\'s data. questions: as for decision_evaluate ({id: {type: "boolean"|"choice"|"score", instructions, criteria}}). wake: the rule that wakes you.',
               properties: {
-                questions: { type: 'object', description: 'e.g. {"urgent": {"type": "boolean", "instructions": "Does any of these mails need an answer today?"}}' },
+                questions: { type: 'object', description: 'e.g. {"urgent": {"type": "boolean", "instructions": "Does this mail need an answer today?"}}' },
+                perItem: { type: 'boolean', description: 'true: data is a list, each item is judged on its own (write the question about one item), once; a wake carries the items above the rule.' },
                 wake: {
                   oneOf: [
                     { type: 'object', properties: { question: { type: 'string' }, minProbability: { type: 'number', minimum: 0, maximum: 1 } }, required: ['question', 'minProbability'], description: 'boolean question: wake when the probability of yes ≥ minProbability (e.g. 0.8)' },
@@ -430,6 +431,8 @@ const DEFAULT_CHECK_LIMITS: Config['sentinel']['checks'] = {
   maxConcurrent: 4,
   errorStreak: 3,
   maxWakesPerDay: 24,
+  maxItemsPerCheck: 20,
+  parallelDecisions: 4,
 };
 
 export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
@@ -594,7 +597,7 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
               `Check '${trigger.id}' active: the first check runs now, then every ${s.interval}` +
               (s.mode === 'once'
                 ? ` until ${s.deadline}. You are woken once — on the first ${check.evaluator.type === 'decision' ? 'data the decision model rates above your threshold' : 'ready: true'}, or at the deadline with the last state.`
-                : `. ${s.notifyOnFirst ? 'The first check may wake you; after that you' : 'The first check only records the starting state; you'} are woken on ${check.evaluator.type === 'decision' ? 'new data the decision model rates above your threshold' : 'each change from ready: false to true'}.`) +
+                : `. ${s.notifyOnFirst ? 'The first check may wake you; after that you' : 'The first check only records the starting state; you'} are woken on ${check.evaluator.type === 'decision' ? (check.evaluator.perItem ? 'each new item the decision model rates above your threshold (each item judged once, on its own)' : 'new data the decision model rates above your threshold') : 'each change from ready: false to true'}.`) +
               ` Nothing to do until then — do not poll it yourself. sentinel({action:"get", id:"${trigger.id}"}) shows the last check.`,
           };
         }

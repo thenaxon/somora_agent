@@ -2100,6 +2100,12 @@ export const SentinelConfigSchema = z
         errorStreak: z.number().int().min(1).max(100).default(3),
         /** Wake-ups a check trigger may cause per day before it pauses. */
         maxWakesPerDay: z.number().int().min(1).max(1000).default(24),
+        /** A judged check with perItem: items judged per check; more wait
+         *  for the next check. */
+        maxItemsPerCheck: z.number().int().min(1).max(500).default(20),
+        /** A judged check with perItem: questions to the decision model at
+         *  the same time. */
+        parallelDecisions: z.number().int().min(1).max(32).default(4),
       })
       .default({
         minIntervalOnceMs: 15_000,
@@ -2111,6 +2117,8 @@ export const SentinelConfigSchema = z
         maxConcurrent: 4,
         errorStreak: 3,
         maxWakesPerDay: 24,
+        maxItemsPerCheck: 20,
+        parallelDecisions: 4,
       }),
   })
   .default({
@@ -2125,6 +2133,8 @@ export const SentinelConfigSchema = z
       maxConcurrent: 4,
       errorStreak: 3,
       maxWakesPerDay: 24,
+      maxItemsPerCheck: 20,
+      parallelDecisions: 4,
     },
   });
 export type SentinelConfig = z.infer<typeof SentinelConfigSchema>;

@@ -16,8 +16,8 @@
 import { createHash } from 'node:crypto';
 import type { Config } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
-import { afterDecision, afterRun, initialCheckState, nextAfterError, type CheckLimits, type CheckStep, type WakeReason } from './check-logic.ts';
-import { judgeCheckData } from './check-judge.ts';
+import { afterDecision, afterItemDecisions, afterRun, initialCheckState, nextAfterError, type CheckLimits, type CheckStep, type WakeReason } from './check-logic.ts';
+import { judgeCheckData, judgeItems } from './check-judge.ts';
 import { runCheck } from './check-runner.ts';
 import { cachedCheckState, loadCheckState, saveCheckState } from './check-store.ts';
 import { parseInterval } from './schedule.ts';
@@ -70,6 +70,8 @@ function limitsOf(config: Config | undefined): Config['sentinel']['checks'] {
     maxConcurrent: 4,
     errorStreak: 3,
     maxWakesPerDay: 24,
+    maxItemsPerCheck: 20,
+    parallelDecisions: 4,
   };
 }
 
@@ -146,7 +148,7 @@ export async function runDueCheck(trigger: Trigger, deps: CheckLoopDeps, now: ()
   if (!isCheckTrigger(trigger) || trigger.status !== 'active') return;
   const config = deps.config();
   const cfg = limitsOf(config);
-  const limits: CheckLimits = { errorStreak: cfg.errorStreak, maxWakesPerDay: cfg.maxWakesPerDay };
+  const limits: CheckLimits = { errorStreak: cfg.errorStreak, maxWakesPerDay: cfg.maxWakesPerDay, maxItemsPerCheck: cfg.maxItemsPerCheck };
   const source = trigger.source;
 
   const loaded = await loadCheckState(trigger.id);
@@ -192,6 +194,12 @@ export async function runDueCheck(trigger: Trigger, deps: CheckLoopDeps, now: ()
   if (step.needDecision) {
     const outcome = await judgeCheckData(fresh, step.needDecision.data, config);
     step = afterDecision({ source: fresh.source, state: step.state, hash: step.needDecision.hash, data: step.needDecision.data, outcome, now: at, limits });
+  } else if (step.needItems) {
+    const results = await judgeItems(fresh, step.needItems.items, config, cfg.parallelDecisions);
+    step = afterItemDecisions({ source: fresh.source, state: step.state, results, more: step.needItems.more, now: at, limits });
+  }
+  if (step.judged) {
+    await recordFire(fresh.id, { firedAt: at.toISOString(), scheduledFor: at.toISOString(), outcome: 'judged', note: step.judged.slice(0, 1000) });
   }
 
   logger.info({
@@ -243,6 +251,7 @@ export async function runDueCheck(trigger: Trigger, deps: CheckLoopDeps, now: ()
         ...next,
         lastReady: state.lastReady,
         lastDataHash: state.lastDataHash,
+        seenItems: state.seenItems,
         baselineTaken: state.baselineTaken,
         wakeCount: state.wakeCount,
         ...(state.wakesToday ? { wakesToday: state.wakesToday } : {}),

@@ -1689,7 +1689,7 @@ export interface SentinelTrigger {
   evaluator:
     | { type: 'none' }
     | { type: 'ready' }
-    | { type: 'decision'; questions: Record<string, unknown>; wake: SentinelWakeRule };
+    | { type: 'decision'; questions: Record<string, unknown>; wake: SentinelWakeRule; perItem?: true };
   /** Check triggers only: counts, last check, next check. */
   check?: SentinelCheckView | null;
   dispatch: { agent: string; session: string; prompt: string };
@@ -1719,6 +1719,8 @@ export interface SentinelCheckResult {
   dataPreview?: string;
   final?: 'failed';
   decision?: { question: string; value: number | string; detail?: string };
+  /** A judged check without perItem got a list of several items. */
+  warning?: string;
   error?: string;
   errorClass?: 'temporary' | 'permanent';
 }
@@ -1742,13 +1744,17 @@ export interface SentinelDryRun {
   errorClass?: 'temporary' | 'permanent';
   stderr?: string;
   decision?: { ok: true; wake: boolean; question: string; value: number | string; detail?: string } | { ok: false; error: string };
+  /** perItem: one answer per item. */
+  items?: Array<{ key: string; value?: number | string; wake?: boolean; error?: string }>;
+  more?: number;
+  warning?: string;
   verdict: string;
 }
 
 export interface SentinelFireEntry {
   firedAt: string;
   scheduledFor: string;
-  outcome: 'success' | 'error' | 'skipped' | 'updated';
+  outcome: 'success' | 'error' | 'skipped' | 'updated' | 'judged';
   note?: string;
   skipReason?: string;
   error?: string;

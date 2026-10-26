@@ -14,12 +14,16 @@ import { applyWakeRule, validateDecisionEvaluator } from './check-judge.ts';
 import { prepareCheckSource } from './check-create.ts';
 import { runDueCheck, type CheckWake, type FireOutcome } from './check-loop.ts';
 import { loadCheckState } from './check-store.ts';
-import { getTrigger, loadTriggers, saveTrigger } from './store.ts';
+import { getHistory, getTrigger, loadTriggers, saveTrigger } from './store.ts';
 import type { Trigger } from './types.ts';
 
 // ── fake decision model: "urgent" when a mail mentions tonight ──
 let calls: Array<{ state: unknown }> = [];
-let mode: 'ok' | 'down' = 'ok';
+let mode: 'ok' | 'down' | 'flaky' = 'ok';
+// perItem: how many questions were open at once, and a small delay so it shows.
+let inflight = 0;
+let maxInflight = 0;
+let delayMs = 0;
 const fake = createServer((req, res) => {
   let raw = '';
   req.on('data', (d) => (raw += d)).on('end', () => {
@@ -27,9 +31,15 @@ const fake = createServer((req, res) => {
     if (req.url?.endsWith('/v1/models')) return json(res, 200, { data: [{ id: 'clef', max_input_tokens: 65536 }] });
     if (mode === 'down') return json(res, 503, { error: { message: 'loading' } });
     const body = JSON.parse(raw) as { state: unknown };
+    if (mode === 'flaky' && JSON.stringify(body.state).includes('flaky')) return json(res, 503, { error: { message: 'loading' } });
     calls.push({ state: body.state });
+    inflight++;
+    maxInflight = Math.max(maxInflight, inflight);
     const urgent = JSON.stringify(body.state).includes('tonight');
-    json(res, 200, { model: 'clef', answers: { urgent: { type: 'noul', noul: urgent ? 0.93 : 0.08 } }, usage: { input_tokens: 30, output_tokens: 0 } });
+    setTimeout(() => {
+      inflight--;
+      json(res, 200, { model: 'clef', answers: { urgent: { type: 'noul', noul: urgent ? 0.93 : 0.08 } }, usage: { input_tokens: 30, output_tokens: 0 } });
+    }, delayMs);
   });
 });
 await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
@@ -79,11 +89,11 @@ const mails = join(work, 'mails.json');
 const setMails = (list: string[]) => writeFileSync(mails, JSON.stringify(list));
 
 const createdAt = new Map<string, number>();
-async function makeArt2(id: string, config: Config) {
+async function makeArt2(id: string, config: Config, perItem = false) {
   createdAt.set(id, Date.now());
   const path = join(work, `${id}.py`);
   writeFileSync(path, `import json\nprint(json.dumps({"summary": "new mail", "data": json.load(open(${JSON.stringify(mails)}))}))\n`);
-  const p = await prepareCheckSource(id, { description: 'mail that needs an answer today', scriptPath: path, mode: 'watch', interval: '5m', decision: { questions, wake: { question: 'urgent', minProbability: 0.8 } } }, config, new Date(createdAt.get(id)!));
+  const p = await prepareCheckSource(id, { description: 'mail that needs an answer today', scriptPath: path, mode: 'watch', interval: '5m', decision: { questions, wake: { question: 'urgent', minProbability: 0.8 }, ...(perItem ? { perItem: true } : {}) } }, config, new Date(createdAt.get(id)!));
   assert.equal(p.ok, true, JSON.stringify(p));
   if (!p.ok) throw new Error('unreachable');
   const t: Trigger = { id, name: id, ownerAgent: 'ada', source: p.source, evaluator: p.evaluator, dispatch: { agent: 'ada', session: 'main', prompt: 'triage' }, createdAt: new Date().toISOString(), status: 'active', fireCount: 0, errorStreak: 0 };
@@ -151,4 +161,65 @@ test('a decision model removed from config pauses the trigger at once', async ()
   const t = getTrigger('mail-c')!;
   assert.equal(t.status, 'error');
   assert.match(t.statusReason ?? '', /no decision model is configured/);
+});
+
+test('perItem: each new mail asked about alone and in parallel, a wake carries just the hit, history says what was judged', async () => {
+  calls = [];
+  maxInflight = 0;
+  delayMs = 150;
+  const m = (id: number, subject: string) => ({ id, subject });
+  writeFileSync(mails, JSON.stringify([m(1, 'Newsletter'), m(2, 'Receipt')]));
+  await makeArt2('mail-p', withModel, true);
+  assert.equal(getTrigger('mail-p')!.evaluator.type === 'decision' && (getTrigger('mail-p')!.evaluator as { perItem?: true }).perItem, true);
+  const h = harness(() => withModel);
+  await check('mail-p', h.deps, 0); // starting items: known, nobody asked
+  assert.equal(calls.length, 0);
+  const six = [m(1, 'Newsletter'), m(2, 'Receipt'), m(3, 'Lunch?'), m(4, 'Pay by tonight'), m(5, 'Offer'), m(6, 'Update'), m(7, 'Digest'), m(8, 'Ticket')];
+  writeFileSync(mails, JSON.stringify(six));
+  const started = Date.now();
+  await check('mail-p', h.deps, 5);
+  const took = Date.now() - started;
+  assert.equal(calls.length, 6, 'only the six new mails, one question each');
+  assert.deepEqual(calls.map((c) => (c.state as { id: number }).id).sort(), [3, 4, 5, 6, 7, 8]);
+  assert.equal(maxInflight, 4, 'parallelDecisions: 4 at a time');
+  assert.ok(took < 6 * 150, `in parallel, not one after another (${took} ms)`);
+  assert.equal(h.wakes.length, 1);
+  assert.deepEqual(h.wakes[0]!.data, [m(4, 'Pay by tonight')], 'just the mail above the rule');
+  const hist = await getHistory('mail-p', 5);
+  assert.equal(hist[0]!.outcome, 'judged');
+  assert.match(hist[0]!.note ?? '', /6 items judged: .*1 above the wake rule — wakes/);
+  calls = [];
+  await check('mail-p', h.deps, 10);
+  assert.equal(calls.length, 0, 'judged mails are not asked about again');
+  delayMs = 0;
+});
+
+test('perItem: a mail without an answer is asked about again, the others are not', async () => {
+  calls = [];
+  const m = (id: number, subject: string) => ({ id, subject });
+  writeFileSync(mails, JSON.stringify([]));
+  await makeArt2('mail-q', withModel, true);
+  const h = harness(() => withModel);
+  await check('mail-q', h.deps, 0);
+  writeFileSync(mails, JSON.stringify([m(1, 'a'), m(2, 'flaky tonight')]));
+  mode = 'flaky';
+  await check('mail-q', h.deps, 5);
+  assert.equal(h.wakes.length, 0);
+  assert.equal((await loadCheckState('mail-q'))!.errorStreak, 0, 'one answer came: not a check error');
+  mode = 'ok';
+  calls = [];
+  await check('mail-q', h.deps, 10);
+  assert.deepEqual(calls.map((c) => (c.state as { id: number }).id), [2]);
+  assert.equal(h.wakes.length, 1);
+});
+
+test('without perItem a list of several mails gets a warning in the state and the history', async () => {
+  writeFileSync(mails, JSON.stringify([]));
+  await makeArt2('mail-w', withModel);
+  const h = harness(() => withModel);
+  await check('mail-w', h.deps, 0);
+  writeFileSync(mails, JSON.stringify([{ id: 1, subject: 'a' }, { id: 2, subject: 'b' }]));
+  await check('mail-w', h.deps, 5);
+  assert.match((await loadCheckState('mail-w'))!.last?.warning ?? '', /list of 2 items, judged as one/);
+  assert.match((await getHistory('mail-w', 1))[0]!.note ?? '', /Warning: the data is a list of 2 items/);
 });

@@ -544,14 +544,16 @@ function CheckSections({ trigger }: { trigger: SentinelTrigger }) {
   const judged = trigger.evaluator.type === 'decision' ? trigger.evaluator : null;
   return (
     <>
-      <Section title="Kind">{judged ? 'Check script + decision model' : 'Check script'}</Section>
+      <Section title="Kind">{judged ? (judged.perItem ? 'Check script + decision model, item by item' : 'Check script + decision model') : 'Check script'}</Section>
       <Section title="Check">
         {c.description}
         <br />
         mode: {c.mode === 'once'
           ? 'once (wakes on the first positive check, then done)'
           : judged
-            ? 'watch (wakes when new data passes the wake rule)'
+            ? judged.perItem
+              ? 'watch (each new item is judged once; wakes when one passes the wake rule)'
+              : 'watch (wakes when new data passes the wake rule)'
             : 'watch (wakes each time ready turns true)'}
         <br />
         every: {c.interval}
@@ -590,6 +592,7 @@ function CheckSections({ trigger }: { trigger: SentinelTrigger }) {
           <span style={{ color: view.last.ok ? 'var(--text-1)' : 'var(--danger)' }}>
             {formatTime(view.last.at)} · {view.last.ms} ms · {lastCheckText(view.last)}
           </span>
+          {view.last.warning && <div style={{ color: 'var(--warn)', marginTop: 4 }}>{view.last.warning}</div>}
           {view.last.dataPreview && <div style={boxStyle}>{view.last.dataPreview}</div>}
         </Section>
       )}
@@ -688,6 +691,16 @@ function DryRunResult({ run }: { run: { running: boolean; result?: SentinelDryRu
                 : `decision model: ${r.decision.error}`}
             </div>
           )}
+          {r.items && r.items.length > 0 && (
+            <div style={{ color: 'var(--text-2)', marginTop: 4 }}>
+              {r.items.map((i) => (
+                <div key={i.key}>
+                  {i.key}: {i.error ? <span style={{ color: 'var(--danger)' }}>{i.error}</span> : `${String(i.value)} → ${i.wake ? 'would wake' : 'would not wake'}`}
+                </div>
+              ))}
+            </div>
+          )}
+          {r.warning && <div style={{ color: 'var(--warn)', marginTop: 4 }}>{r.warning}</div>}
           {r.verdict && <div style={{ color: 'var(--text-2)', marginTop: 4 }}>{r.verdict}</div>}
           {r.stderr && <div style={{ ...boxStyle, color: 'var(--text-3)' }}>{r.stderr}</div>}
           <div style={{ color: 'var(--text-3)', marginTop: 4 }}>Nothing was saved, nobody was woken.</div>
@@ -722,7 +735,7 @@ function HistoryRow({ entry }: { entry: SentinelFireEntry }) {
       ? 'var(--accent)'
       : entry.outcome === 'error'
         ? 'var(--danger)'
-        : entry.outcome === 'updated'
+        : entry.outcome === 'updated' || entry.outcome === 'judged'
           ? 'var(--text-2)'
           : 'var(--text-3)';
   return (

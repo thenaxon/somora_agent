@@ -90,3 +90,30 @@ export async function judgeCheckData(trigger: Trigger, data: unknown, config: Co
   }
   return applyWakeRule(ev.wake, outcome.answers);
 }
+
+/** perItem: ask about each item on its own, `parallel` at a time. The
+ *  answers come back in the items' order. */
+export async function judgeItems(
+  trigger: Trigger,
+  items: ReadonlyArray<{ key: string; item: unknown }>,
+  config: Config,
+  parallel: number,
+): Promise<Array<{ key: string; item: unknown; outcome: JudgeOutcome }>> {
+  const out: Array<{ key: string; item: unknown; outcome: JudgeOutcome }> = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      const { key, item } = items[i]!;
+      let outcome: JudgeOutcome;
+      try {
+        outcome = await judgeCheckData(trigger, item, config);
+      } catch (err) {
+        outcome = { ok: false, error: (err as Error).message };
+      }
+      out[i] = { key, item, outcome };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(parallel, items.length)) }, worker));
+  return out;
+}

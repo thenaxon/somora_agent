@@ -42,7 +42,7 @@ export function describeCheckWake(trigger: Trigger, wake: CheckWake): string[] {
   const lines = [
     `check: ${s.description}`,
     `check_mode: ${s.mode}${s.mode === 'once' && s.deadline ? ` (deadline ${s.deadline})` : ''}, every ${s.interval}`,
-    `woken_because: ${WAKE_TEXT[wake.reason]}`,
+    `woken_because: ${wake.reason === 'decision' && trigger.evaluator?.type === 'decision' && trigger.evaluator.perItem ? 'the decision model rated new items above the wake rule — check_data holds just those items' : WAKE_TEXT[wake.reason]}`,
     `checks_so_far: ${wake.state.checkCount}, wakes_so_far: ${wake.state.wakeCount}`,
   ];
   if (last?.summary) lines.push(`check_summary: ${last.summary}`);

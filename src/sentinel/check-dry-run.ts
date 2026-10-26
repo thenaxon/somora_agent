@@ -14,8 +14,8 @@ import { readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Config } from '../config/types.ts';
-import { judgeCheckData, type JudgeOutcome } from './check-judge.ts';
-import { isEmptyData } from './check-logic.ts';
+import { judgeCheckData, judgeItems, type JudgeOutcome } from './check-judge.ts';
+import { isEmptyData, itemKey, itemsOf, manyItemsWarning } from './check-logic.ts';
 import { runCheck, type CheckAnswer } from './check-runner.ts';
 import { installCheckScript, readCheckScript, removeCheckFiles } from './check-store.ts';
 import type { CheckSource, Evaluator, Trigger } from './types.ts';
@@ -35,6 +35,12 @@ export interface DryRunReport {
   stderr?: string;
   /** Art 2: the decision model's answer to the data. */
   decision?: JudgeOutcome;
+  /** Art 2 with perItem: one answer per item (at most maxItemsPerCheck). */
+  items?: Array<{ key: string; value?: number | string; wake?: boolean; error?: string }>;
+  /** perItem: items over maxItemsPerCheck, left for later checks. */
+  more?: number;
+  /** Art 2 without perItem: the data is a list of several items. */
+  warning?: string;
   /** What the first real check would do with this answer. */
   verdict: string;
 }
@@ -68,6 +74,26 @@ export async function recordDryRun(agent: string, sha: string, art: 1 | 2, now =
 export async function hasRecentDryRun(agent: string, sha: string, art: 1 | 2, now = Date.now()): Promise<boolean> {
   const at = (await readLog())[key(agent, sha, art)];
   return at !== undefined && now - at <= DRY_RUN_VALID_MS;
+}
+
+function itemsVerdict(
+  source: Pick<CheckSource, 'mode' | 'notifyOnFirst'>,
+  items: NonNullable<DryRunReport['items']>,
+  total: number,
+  duplicates: number,
+  more: number,
+): string {
+  if (total === 0) return 'no items — nothing to judge; the decision model is not asked.';
+  const hits = items.filter((i) => i.wake).length;
+  const failed = items.filter((i) => i.error).length;
+  const parts = [`${items.length} item${items.length === 1 ? '' : 's'} judged one by one, ${hits} would wake`];
+  if (failed) parts.push(`${failed} got no answer (at runtime asked again next check)`);
+  if (more) parts.push(`${more} more over the limit of one check (config sentinel.checks.maxItemsPerCheck), judged at the next checks`);
+  if (duplicates) parts.push(`${duplicates} item${duplicates === 1 ? '' : 's'} with the same id as another, judged once`);
+  const first = source.mode === 'watch' && !source.notifyOnFirst
+    ? ' A watch check\'s first real run only records these items as known; after that, each new item is judged like this, once, and wakes you with just the items above your rule.'
+    : ' Each new item is judged once; a wake carries just the items above your rule.';
+  return `${parts.join('; ')}.${first} An item is the same item next time by its "id" (or "key", "uid") field — give items one, or an item whose text changes counts as new.`;
 }
 
 function verdictFor(source: Pick<CheckSource, 'mode' | 'notifyOnFirst'>, art: 1 | 2, answer: CheckAnswer, decision?: JudgeOutcome): string {
@@ -127,10 +153,31 @@ export async function dryRunCheck(args: {
     if (!run.ok) {
       return { ok: false, art, ms: run.ms, error: run.error, errorClass: run.errorClass, ...(stderr ? { stderr } : {}), verdict: 'a check error — never a wake; three in a row pause the trigger.', sha: script.sha256 };
     }
+    const asTrigger = { id: args.installed?.id ?? 'dry-run', evaluator: args.evaluator } as Trigger;
+    if (args.evaluator.type === 'decision' && args.evaluator.perItem) {
+      const all = itemsOf(run.answer.data).map((item) => ({ key: itemKey(item), item }));
+      const unique = all.filter((i, n) => all.findIndex((j) => j.key === i.key) === n);
+      const asked = unique.slice(0, limits.maxItemsPerCheck);
+      const results = asked.length ? await judgeItems(asTrigger, asked, args.config, limits.parallelDecisions) : [];
+      const items = results.map((r) => (r.outcome.ok ? { key: r.key, value: r.outcome.value, wake: r.outcome.wake } : { key: r.key, error: r.outcome.error }));
+      const more = unique.length - asked.length;
+      return {
+        ok: true,
+        art,
+        ms: run.ms,
+        answer: run.answer,
+        ...(stderr ? { stderr } : {}),
+        items,
+        ...(more > 0 ? { more } : {}),
+        verdict: itemsVerdict(args.source, items, unique.length, all.length - unique.length, more),
+        sha: script.sha256,
+      };
+    }
     let decision: JudgeOutcome | undefined;
     if (art === 2 && !isEmptyData(run.answer.data)) {
-      decision = await judgeCheckData({ id: args.installed?.id ?? 'dry-run', evaluator: args.evaluator } as Trigger, run.answer.data, args.config);
+      decision = await judgeCheckData(asTrigger, run.answer.data, args.config);
     }
+    const warning = art === 2 ? manyItemsWarning(run.answer.data) : undefined;
     return {
       ok: true,
       art,
@@ -138,6 +185,7 @@ export async function dryRunCheck(args: {
       answer: run.answer,
       ...(stderr ? { stderr } : {}),
       ...(decision ? { decision } : {}),
+      ...(warning ? { warning } : {}),
       verdict: verdictFor(args.source, art, run.answer, decision),
       sha: script.sha256,
     };

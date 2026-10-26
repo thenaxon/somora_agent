@@ -175,7 +175,8 @@ test('Art 2: the decision block is offered and accepted only with a decision mod
   const judged = sentinel.forContext!({ agent: 'ada', config: withModel } as never);
   assert.doesNotMatch(plain.description!, /JUDGED CHECK/);
   assert.match(judged.description!, /JUDGED CHECK/);
-  assert.match(judged.description!, /only items that are NEW/);
+  assert.match(judged.description!, /only data that is NEW/);
+  assert.match(judged.description!, /decision.perItem: true/);
   const hasDecision = (j: Record<string, any>) => JSON.stringify(j).includes('"decision"');
   assert.equal(hasDecision(plain.jsonSchema!), false);
   assert.equal(hasDecision(judged.jsonSchema!), true);

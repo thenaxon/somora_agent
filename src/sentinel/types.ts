@@ -82,7 +82,14 @@ export type Evaluator =
   | { type: 'ready' }
   /** Art 2: the script's `data` goes to the decision model; `wake`
    *  decides on its answer. Only with a decision model configured. */
-  | { type: 'decision'; questions: Record<string, unknown>; wake: DecisionWakeRule };
+  | {
+      type: 'decision';
+      questions: Record<string, unknown>;
+      wake: DecisionWakeRule;
+      /** The data is a list: each item is judged on its own (in
+       *  parallel), once — and only counts as seen after its answer. */
+      perItem?: true;
+    };
 
 /** When an Art 2 answer wakes the agent. */
 export type DecisionWakeRule =
@@ -221,8 +228,8 @@ export interface FireHistoryEntry {
   scheduledFor: string;
   /** Outcome of the dispatch. `updated`: a check trigger got a new
    *  script or settings (not a fire). */
-  outcome: 'success' | 'error' | 'skipped' | 'updated';
-  /** `updated`: what changed. */
+  outcome: 'success' | 'error' | 'skipped' | 'updated' | 'judged';
+  /** `updated`: what changed. `judged`: what the decision model said. */
   note?: string;
   /** When skipped, why (cooldown / paused-during-fire / daily-cap). */
   skipReason?: string;
@@ -276,8 +283,11 @@ export interface CheckResult {
   /** Kept short; the full data goes into the wake. */
   dataPreview?: string;
   final?: 'failed';
-  /** Art 2. */
+  /** Art 2. With perItem: the highest value, `detail` counts the items. */
   decision?: { question: string; value: number | string; detail?: string };
+  /** Art 2 without perItem: the data was a list of several items, judged
+   *  as one (one answer for all, not which one). */
+  warning?: string;
   error?: string;
   /** `temporary` (timeout, unreachable): retried; `permanent` (script
    *  missing or changed, broken output): counts straight toward pause. */
@@ -304,6 +314,9 @@ export interface CheckState {
   last?: CheckResult;
   /** Wakes per UTC day, for config sentinel.checks.maxWakesPerDay. */
   wakesToday?: { day: string; count: number };
+  /** Art 2 with perItem: the items already judged, by key (their `id`,
+   *  or a fingerprint) → when. Bounded (check-logic.ts SEEN_ITEMS_MAX). */
+  seenItems?: Record<string, string>;
   /** Art 2: the decision model's last answer — kept when later checks
    *  bring no new data and so ask nobody. */
   lastDecision?: { at: string; question: string; value: number | string; detail?: string };

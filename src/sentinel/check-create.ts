@@ -27,7 +27,7 @@ export interface CheckSpecInput {
   notifyOnFirst?: boolean;
   /** Art 2: the decision model judges `data` with these questions; the
    *  wake rule decides. Left out: Art 1, the script says `ready`. */
-  decision?: { questions: unknown; wake: unknown };
+  decision?: { questions: unknown; wake: unknown; perItem?: boolean };
 }
 
 type Limits = Config['sentinel']['checks'];
@@ -128,7 +128,12 @@ export async function validateCheckInput(
   if (input.decision) {
     const bad = validateDecisionEvaluator(input.decision.questions, input.decision.wake, config);
     if (bad) return { ok: false, error: bad };
-    evaluator = { type: 'decision', questions: input.decision.questions as Record<string, unknown>, wake: input.decision.wake as DecisionWakeRule };
+    evaluator = {
+      type: 'decision',
+      questions: input.decision.questions as Record<string, unknown>,
+      wake: input.decision.wake as DecisionWakeRule,
+      ...(input.decision.perItem === true ? { perItem: true as const } : {}),
+    };
   }
   const file = await checkScriptFile(input.scriptPath);
   if (!file.ok) return file;

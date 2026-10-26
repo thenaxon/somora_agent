@@ -1016,6 +1016,8 @@ providers:
 #     maxConcurrent: 4             # checks running at once, all triggers
 #     errorStreak: 3               # check errors in a row before it stops
 #     maxWakesPerDay: 24           # wakes per check trigger and UTC day
+#     maxItemsPerCheck: 20         # perItem: items judged per check, more wait
+#     parallelDecisions: 4         # perItem: questions to the decision model at once
 
 # External MCP servers (docs/mcp.md). somora connects as MCP client,
 # imports the servers' tools and offers them to every engine next to the

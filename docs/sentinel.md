@@ -16,7 +16,8 @@ result.
 - **Check triggers.** Instead of a time, a small script decides: "tell
   me when the build has passed", "when the price drops below 50,000".
   With a decision model configured, the model can judge the data too:
-  "when a mail arrives that needs an answer today". The agent is not
+  "when a mail arrives that needs an answer today". A list of mails or
+  tickets is judged item by item, each one once. The agent is not
   woken for the checks that come out negative.
 - **Answers where you expect them.** A trigger fires in the session you
   name. A trigger an agent sets on itself comes back to the conversation
@@ -281,32 +282,37 @@ else:
         print(json.dumps({"ready": False, "summary": "glm loaded, endpoint not answering yet"}))
 ```
 
-A judged check in Python. It prints only the items that are new since
-its last run, and remembers what it printed in its state folder:
+A judged check in Python, for a trigger with `perItem: true`. It
+prints the latest mails, each with its `id`. somora remembers which
+mails it has judged, so the script keeps no list of its own:
 
 ```python
 #!/usr/bin/env python3
-# New mail since the last run, for the decision model to judge.
-import json, os, subprocess
-
-state = os.path.join(os.environ["SOMORA_SENTINEL_STATE_DIR"], "seen.json")
-seen = set(json.load(open(state))) if os.path.exists(state) else set()
+# The latest mails; somora judges each new one once (perItem).
+import json, subprocess
 
 # Replace with however the agent reads mail, for example a skill's CLI.
-out = subprocess.run(["mail-cli", "list", "--unread", "--json"],
+out = subprocess.run(["mail-cli", "list", "--limit", "30", "--json"],
                      capture_output=True, text=True, check=True, timeout=20)
 mails = json.loads(out.stdout)
 
-new = [{"from": m["from"], "subject": m["subject"]} for m in mails if m["id"] not in seen]
-json.dump(sorted(seen | {m["id"] for m in mails}), open(state, "w"))
-print(json.dumps({"summary": f"{len(new)} new mail(s)", "data": new}))
+# Leave out only what is certain from its structure: your own address,
+# no-reply senders. Not a category such as "updates" or "promotions":
+# real business mail lands there too, and the model sorts it out.
+items = [{"id": m["id"], "from": m["from"], "subject": m["subject"], "snippet": m.get("snippet", "")[:300]}
+         for m in mails if not m["from"].startswith("noreply@")]
+print(json.dumps({"summary": f"{len(items)} recent mail(s)", "data": items}))
 ```
 
-Two rules make a judged check work. Print only new items: a script that
-prints the whole inbox every time has the same urgent mail judged again
-whenever anything else arrives, and wakes the agent again. Print
-nothing that changes on every run, such as a timestamp or a counter:
-otherwise every check looks like new data.
+Two rules make a judged check work. Give each item an `id` that stays
+the same: without one, an item counts as new as soon as any of its
+fields changes. Print nothing that changes on every run, such as a
+timestamp or a counter.
+
+Without `perItem` the data is judged as one, and the script must print
+only what is new since its last run: one that prints the whole inbox
+every time has the same urgent mail judged again whenever anything else
+arrives. Remember what was printed in `SOMORA_SENTINEL_STATE_DIR`.
 
 ### Dry run, then create
 
@@ -333,7 +339,10 @@ check would do. Nothing is saved and nobody is woken.
 The answer carries `ok`, `art` (1 plain, 2 judged), `ms`, `answer`
 (the parsed JSON), `decision` (the decision model's answer, for a
 judged check), `verdict` (in words, what would happen) and `next`, and
-for a failed run `error`, `errorClass` and the end of `stderr`.
+for a failed run `error`, `errorClass` and the end of `stderr`. With
+`perItem`, `items` holds one answer per item instead of `decision`, and
+`more` counts the items over the limit of one check. Without `perItem`,
+`warning` says when the data is a list of several items.
 
 With `dispatch.agent` the dry run runs as that agent, in its
 workspace.
@@ -423,6 +432,50 @@ answer never wakes the agent: it is a check error, and the data is
 judged at the next check. Removing the decision model from the
 configuration stops every judged check at once.
 
+### One judgement per item
+
+When the data is a list (mails, tickets, posts), one answer for all of
+it says neither which item matters nor whether every item was looked
+at. With `perItem: true` somora asks the decision model about each item
+on its own:
+
+```json
+"decision": {
+  "perItem": true,
+  "questions": {
+    "reply": { "type": "boolean",
+               "instructions": "The state is one e-mail. Does it need a personal answer today?" }
+  },
+  "wake": { "question": "reply", "minProbability": 0.8 }
+}
+```
+
+- **The items.** The data is the list, or the one list inside an
+  object (`{"mails": [...]}`). Anything else is one item. Write the
+  question about one item.
+- **Each item once.** An item is the same item by its `id`, `key` or
+  `uid` field, otherwise by its whole content. somora remembers the
+  last 2000 items it judged, so the script can print the latest items
+  every time and keep no list of its own.
+- **Seen after the answer.** An item counts as judged only when the
+  decision model answered. An item without an answer is asked about
+  again at the next check; when no item got an answer, it is a check
+  error as with one question.
+- **In parallel, with a limit.** Up to `sentinel.checks.parallelDecisions`
+  questions run at the same time (default 4), and one check judges at
+  most `sentinel.checks.maxItemsPerCheck` new items (default 20). More
+  new items wait for the next check.
+- **The wake.** One wake per check, however many items pass the rule.
+  `check_data` holds just those items, and the `decision:` line lists
+  every item's answer.
+- **The start.** The first check of a `watch` trigger only takes the
+  items it finds as known, unless `notifyOnFirst` is set. A new script
+  or setting through `update` starts over the same way.
+
+A judged check without `perItem` whose data is a list of several items
+still works, but the dry run, the check state and the history say so
+with a warning.
+
 ### What the agent receives on a check wake
 
 The evidence block gets lines about the check. The script's data is
@@ -480,7 +533,7 @@ All actions of the `sentinel` tool:
 | `resume` | `id` | Makes it active again and clears the error count. |
 | `delete` | `id` | Removes the trigger and its history. |
 | `test` | `id` | A time trigger fires now, ignoring cooldown and daily limit, marked `testMode` in the history. A check trigger dry-runs its script copy instead. |
-| `history` | `id`, optional `limit` (1 to 200, default 50) | The latest fires, newest first. |
+| `history` | `id`, optional `limit` (1 to 200, default 50) | The latest fires, newest first. A judged check also has a `judged` entry for each check that asked the decision model, with its answers. |
 | `purge_completed` | optional `owner` | Deletes every fired one-shot. Other triggers are never touched. |
 
 ```jsonc
@@ -513,9 +566,11 @@ A check trigger shows more:
 - In the list: checks and wakes counted apart, the next check and the
   last result.
 - In the detail: its kind (check script, or check script and decision
-  model), the check settings, the last check with its data, the
-  questions and wake rule with the last answer, and the script itself,
-  read only. A script that was changed outside somora is flagged.
+  model, item by item with `perItem`), the check settings, the last
+  check with its data, the questions and wake rule with the last
+  answer, and the script itself, read only. A script that was changed
+  outside somora is flagged, and so is a judged check without `perItem`
+  that got a list of several items.
 - **dry run** replaces **test now**: it runs the script once and shows
   the answer in the window. Nothing is saved, nobody is woken.
 - An interval below the current limit in `config.yaml` is shown with
@@ -640,6 +695,8 @@ sentinel:
     maxConcurrent: 4
     errorStreak: 3
     maxWakesPerDay: 24
+    maxItemsPerCheck: 20
+    parallelDecisions: 4
 ```
 
 | Setting | Default | Meaning |
@@ -654,6 +711,8 @@ sentinel:
 | `sentinel.checks.maxConcurrent` | `4` | Checks running at the same time, all triggers together. Allowed: 1 to 64. |
 | `sentinel.checks.errorStreak` | `3` | Check errors in a row before the trigger stops. Allowed: 1 to 100. |
 | `sentinel.checks.maxWakesPerDay` | `24` | Wakes per check trigger and UTC day. Allowed: 1 to 1000. |
+| `sentinel.checks.maxItemsPerCheck` | `20` | A judged check with `perItem`: items judged per check. More new items wait for the next check. Allowed: 1 to 500. |
+| `sentinel.checks.parallelDecisions` | `4` | A judged check with `perItem`: questions to the decision model at the same time, per check. Allowed: 1 to 32. |
 
 `completedRetentionDays` needs a server restart. The `checks` settings
 need only a config reload (`/reload` in the TUI, the gear in the web
@@ -717,9 +776,21 @@ reason name the last error. Run the script by hand in the agent's
 workspace, or `test` the trigger, which dry-runs the copy. Fix the
 script, dry-run it, `update` the trigger, then resume.
 
-**A judged check woke the agent about an old item.** The script prints
-more than the new items. Let it remember what it printed in
-`SOMORA_SENTINEL_STATE_DIR`, see Templates.
+**A judged check woke the agent about an old item.** Without
+`perItem`, the script prints more than the new items: let it remember
+what it printed in `SOMORA_SENTINEL_STATE_DIR`. With `perItem`, the
+item has no `id` and one of its fields changed, so it counted as new.
+See Templates.
+
+**A judged check never woke for an item that is there.** Look at the
+`judged` entries in its history: they show every answer. No entry for
+the item means the script left it out, often through a filter on a
+category such as Gmail's "updates", which holds real business mail too.
+Filter only on what is certain from the structure (your own address,
+no-reply senders) and let the decision model judge the rest.
+
+Without `perItem`, one answer covered several items: set
+`perItem: true`.
 
 **A reminder fired in the wrong session.** `get` the trigger and check
 `dispatch.session`. Delete it and create it again with the session

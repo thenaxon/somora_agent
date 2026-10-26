@@ -3085,7 +3085,9 @@ All triggers, newest first.
 ```
 
 A check trigger (docs/sentinel.md, Check triggers) has a `check` source
-and an evaluator of `ready`, or `decision` for a judged check:
+and an evaluator of `ready`, or `decision` for a judged check
+(`{type: "decision", questions, wake, perItem?}`; `perItem: true` judges
+each item of the data on its own):
 
 ```json
 { "source": { "type": "check", "description": "the model server answers on glm",
@@ -3111,7 +3113,7 @@ trigger carry `check`, read from its check state:
 | `checks`, `wakes` | Counted apart: most checks wake nobody. |
 | `errorsInARow` | Check errors since the last good check. |
 | `nextCheckAt` | Only while the trigger is active. |
-| `last` | The last check: `ok`, then `ready`, `summary`, `dataPreview`, `final`, `decision`, or `error` and `errorClass`. |
+| `last` | The last check: `ok`, then `ready`, `summary`, `dataPreview`, `final`, `decision`, `warning`, or `error` and `errorClass`. With `perItem`, `decision.value` is the highest answer and `decision.detail` lists each item's. `warning`: a judged check without `perItem` got a list of several items. |
 | `lastDecision` | A judged check's last answer, kept when later checks bring no new data. |
 | `effectiveInterval` | Set when `config.yaml` raised the interval limit above the trigger's own interval. |
 
@@ -3139,6 +3141,7 @@ The fires of a trigger, newest first. `?limit=N`, default 50, at most
 | `error` | `error`. `stopped by the user` when a person stopped the turn. |
 | `skipped` | `skipReason`. `removed from the queue by the user` when a person removed the waiting fire. |
 | `updated` | `note`: what changed and by whom. A check trigger's new script or settings, not a fire. |
+| `judged` | `note`: what the decision model answered in a judged check, and whether it woke the agent. Only checks that asked the model, not a fire. |
 
 A check trigger that stops records an `error` entry starting with
 `check paused:`.
@@ -3177,7 +3180,9 @@ the same prompt as on a real fire. Returns `{ok: true, hint}`.
 For a check trigger it runs the script copy once instead (a dry run):
 nothing is saved, nobody is woken, the script's state folder is not
 touched. Returns `{ok, dryRun: {ok, art, ms, answer?, error?,
-errorClass?, stderr?, decision?, verdict}}`.
+errorClass?, stderr?, decision?, items?, more?, warning?, verdict}}`.
+`items` (with `perItem`): `[{key, value, wake}]` or `[{key, error}]`
+per item; `more`: items over `sentinel.checks.maxItemsPerCheck`.
 
 ### `DELETE /sentinel/triggers/:id`
 
