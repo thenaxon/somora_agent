@@ -904,6 +904,7 @@ All events:
 | `project` | The session's project changed | `{from, to, via}` |
 | `builder_state` | A builder session's mode, phase or plan file changed | `{mode, phase, planPath}` |
 | `todo_updated` | A builder replaced its task list | `{todos: [{content, status, priority?}], by?}` |
+| `acceptance_updated` | A builder wrote its acceptance list, or an item was reviewed | `{items: [{id, requirement, status, evidence?, updatedAt, review?}], required, by?}` |
 | `question_asked` | An agent asks the person | `{questionId, question, header?, options, multiple, expiresAt, kind?, from?, async?, parts?, source?}`. `kind: "permission"` and `from: "external"` mark an external agent asking to run something; each option's `description` is then its kind (`allow_once`, `reject_once`, …). `async: true` marks a question that does not wait (`expiresAt` is `0`); `parts` lists several questions asked at once, `source` is `ask_user`, or `codex` for Codex's own question tool. |
 | `question_answered` | The open question was answered, replaced or ran out of time | `{questionId?, answered, choice?, by?}`. `by: "message"`: a question that does not wait, answered by writing something else. |
 
@@ -1550,7 +1551,7 @@ every client edits the same way. Body:
 
 Returns `{ok: true, gating}` with the rules now in `agent.yaml`. Only
 the named entries change state. `400` for a wrong body, an unknown
-name, or a builder-only tool (`todo_write`, `plan_write`) for a chat
+name, or a builder-only tool (`todo_write`, `plan_write`, `acceptance_write`) for a chat
 agent. `409` with `lockedBy: "dreams"` for a tool that
 follows the dreams switch. `404` for an unknown agent. Clicks on one agent run
 one after another, and each write keeps the previous `agent.yaml` as a
@@ -1813,7 +1814,7 @@ that had already ended are skipped. `404` for an unknown id.
 Agents of kind `builder` keep a mode, a phase, a plan file and a task
 list per session, and at most one open question to the person. The web
 client's task panel uses these routes, and so do the builder's own
-tools `todo_write` and `plan_write`.
+tools `todo_write`, `plan_write` and `acceptance_write`.
 
 `POST …/ask` (the `ask_user` tool) serves every agent. A builder waits,
 30 minutes by default. For a chat agent: in a turn nobody watches it
@@ -1830,6 +1831,10 @@ The builder state of a session.
   "state": { "mode": "attended", "phase": "plan",
              "planPath": "/home/me/code/acme/PLAN.md",
              "todos": [ { "content": "Write the parser", "status": "pending" } ] },
+  "acceptance": { "required": true,
+                  "items": [ { "id": "A01", "requirement": "A rejected result is never shown as completed",
+                               "status": "passed", "evidence": "npm test gate.test: rejected → failed",
+                               "updatedAt": 1789299998000 } ] },
   "question": null,
   "turn": { "turnId": "…", "startedAt": 1789299991000, "toolCalls": 7,
             "lastTool": "file_write", "lastToolAt": 1789299999000 } }
@@ -1838,6 +1843,7 @@ The builder state of a session.
 | Field | Meaning |
 |---|---|
 | `state` | `{mode, phase, planPath, todos, orderer?}`, or `null` before the session's first turn. `mode` is `attended` or `unattended`, `phase` is `plan` or `build`. |
+| `acceptance` | `{items, required}`: the acceptance list (see below) and whether the order requires it. |
 | `question` | `{questionId, question, header?, options: [{label, description?}], multiple, askedAt, expiresAt}` or `null`. Also carries the question a builder raises before writing outside its project folder. |
 | `turn` | Progress of the running turn, else `null`. |
 
@@ -1851,6 +1857,7 @@ Changes mode, phase or plan file. Sends `builder_state`.
 | `phase` | `plan` or `build`. |
 | `planPath` | An absolute path, or `null` to clear it. |
 | `orderer` | `{agent, session?}`: the agent that handed the order over. Set by `builder_dispatch`. |
+| `acceptanceRequired` | `true` makes the acceptance list required for this session. Set by `builder_dispatch`. |
 
 Returns `{agent, session, state}`. `400` for a value outside these.
 
@@ -1879,6 +1886,44 @@ Replaces the whole task list. Sends `todo_updated`.
 | `by_agent` | Optional: who wrote it. |
 
 Returns `{agent, session, todos}`.
+
+### `GET /agents/:agent/sessions/:session/acceptance`
+
+The acceptance list: `{agent, session, items, required}`. Each item is
+`{id, requirement, status, evidence?, updatedAt, review?}`. `status` is
+`open`, `passed`, `failed` or `not_run`. `review` is `{verdict:
+"accepted" | "rejected", by, note?, at}`.
+
+### `PUT /agents/:agent/sessions/:session/acceptance`
+
+Writes the list. Used by `acceptance_write`, sends `acceptance_updated`.
+
+| Body field | Meaning |
+|---|---|
+| `items` | `[{id, requirement?, status, evidence?}]`, at most 60. A new item needs `requirement`. |
+| `by_agent` | Who writes it. Another agent than the builder gets `403`. |
+
+The answer is `{items, required, warnings}`. The merge keeps the list
+whole:
+
+- an item left out stays,
+- an existing requirement keeps its first wording,
+- `accepted` or `rejected` as a status is refused,
+- a new status or new evidence clears the item's review.
+
+`warnings` names each of these, and `passed` or `failed` without
+evidence. `400` for a chat agent.
+
+### `POST /agents/:agent/sessions/:session/acceptance/review`
+
+Reviews one item. Sends `acceptance_updated`.
+
+| Body field | Meaning |
+|---|---|
+| `id` | The item. `404` when the list has no such item. |
+| `verdict` | `accepted` or `rejected`. |
+| `note` | Optional, up to 1000 characters. |
+| `by_agent` | Optional. Without it the review is the person's (`by: "person"`). With it, it must be the session's orderer; the builder itself and any other agent get `403`. |
 
 ### `PUT /agents/:agent/sessions/:session/plan`
 

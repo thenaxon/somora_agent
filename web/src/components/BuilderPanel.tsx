@@ -1,11 +1,13 @@
 // The task panel docked to the right of a builder's chat window
 // (docs/builder.md): mode and phase switches, the Go button, the task
-// list the builder keeps with todo_write, and the question it asked
-// with ask_user — answered here with buttons or free text.
+// list the builder keeps with todo_write, the acceptance list it keeps
+// with acceptance_write (reviewed here: accept or reject per item), and
+// the question it asked with ask_user — answered here with buttons or
+// free text.
 
 import { useEffect, useState } from 'react';
-import { Check, ChevronLeft, ChevronRight, Circle, CircleDot, Play, Zap } from 'lucide-react';
-import { api, type BuilderQuestionDto, type BuilderStateDto, type BuilderTurnDto } from '../lib/api';
+import { Check, ChevronLeft, ChevronRight, Circle, CircleDot, Minus, Play, ThumbsDown, ThumbsUp, X, Zap } from 'lucide-react';
+import { api, type BuilderAcceptanceDto, type BuilderQuestionDto, type BuilderStateDto, type BuilderTurnDto } from '../lib/api';
 import { useBuilderSession } from '../hooks/useBuilderSession';
 
 /** Below this chat-window width the panel collapses on its own. */
@@ -208,8 +210,91 @@ export function BuilderPanel({
           </ul>
         )}
       </div>
+      {data?.acceptance && (data.acceptance.items.length > 0 || data.acceptance.required) && (
+        <AcceptanceList agent={agent} session={session} acceptance={data.acceptance} onChanged={refresh} onError={setNotice} />
+      )}
       {notice && <div className="builder-panel-notice">{notice}</div>}
     </aside>
+  );
+}
+
+/** The acceptance list: per requirement its status, evidence and your
+ *  review. The builder sets the status; accepting is yours. */
+function AcceptanceList({
+  agent,
+  session,
+  acceptance,
+  onChanged,
+  onError,
+}: {
+  agent: string;
+  session: string;
+  acceptance: BuilderAcceptanceDto;
+  onChanged: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const items = acceptance.items;
+  const passed = items.filter((i) => i.status === 'passed').length;
+  const accepted = items.filter((i) => i.review?.verdict === 'accepted').length;
+  const review = async (id: string, verdict: 'accepted' | 'rejected') => {
+    let note: string | undefined;
+    if (verdict === 'rejected') {
+      const n = window.prompt(`Why is ${id} rejected? (goes to the builder's list)`);
+      if (n === null) return;
+      note = n.trim() || undefined;
+    }
+    setBusy(id);
+    try {
+      await api.reviewAcceptance(agent, session, id, verdict, note);
+      onChanged();
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="builder-acceptance">
+      <div className="builder-section-title">
+        Acceptance{items.length > 0 ? ` · ${passed}/${items.length} passed · ${accepted} accepted` : ''}
+      </div>
+      {items.length === 0 ? (
+        <div className="builder-panel-muted">Required for this order — the builder writes one item per requirement (acceptance_write).</div>
+      ) : (
+        <ul className="builder-acceptance-list">
+          {items.map((i) => (
+            <li key={i.id} className={`builder-acceptance-item is-${i.status}${i.review ? ` is-${i.review.verdict}` : ''}`}>
+              <div className="builder-acceptance-row">
+                {i.status === 'passed' ? <Check size={12} /> : i.status === 'failed' ? <X size={12} /> : i.status === 'not_run' ? <Minus size={12} /> : <Circle size={12} />}
+                <code>{i.id}</code>
+                <span className="builder-acceptance-req">{i.requirement}</span>
+              </div>
+              <div className="builder-acceptance-meta">
+                <span className="builder-acceptance-status">{i.status.replace('_', ' ')}</span>
+                {i.evidence && <span className="builder-acceptance-evidence" title={i.evidence}>{i.evidence}</span>}
+              </div>
+              <div className="builder-acceptance-review">
+                {i.review ? (
+                  <span className={`builder-acceptance-verdict is-${i.review.verdict}`} title={i.review.note ?? ''}>
+                    {i.review.verdict} by {i.review.by}
+                    {i.review.note ? `: ${i.review.note}` : ''}
+                  </span>
+                ) : (
+                  <span className="builder-panel-muted">not reviewed</span>
+                )}
+                <button type="button" className="builder-acceptance-btn" title="Accept this item" disabled={busy !== null} onClick={() => review(i.id, 'accepted')}>
+                  <ThumbsUp size={11} />
+                </button>
+                <button type="button" className="builder-acceptance-btn" title="Reject this item (with a note)" disabled={busy !== null} onClick={() => review(i.id, 'rejected')}>
+                  <ThumbsDown size={11} />
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

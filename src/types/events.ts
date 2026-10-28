@@ -592,6 +592,14 @@ export type SseEvent =
     }
   /** Builder sessions (docs/builder.md): the task list changed. */
   | { event: 'todo_updated'; data: { todos: Array<{ content: string; status: string; priority?: string }>; by?: string } }
+  | {
+      event: 'acceptance_updated';
+      data: {
+        items: Array<{ id: string; requirement: string; status: string; evidence?: string; updatedAt: number; review?: { verdict: string; by: string; note?: string; at: number } }>;
+        required: boolean;
+        by?: string;
+      };
+    }
   /** Builder: the agent asked the person a question (ask_user); answer via POST …/answer. */
   | {
       event: 'question_asked';

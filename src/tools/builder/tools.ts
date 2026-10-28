@@ -2,8 +2,10 @@
 //   todo_write  — the session's task list, shown in the task panel
 //   ask_user    — a question with options, answered in the task panel
 //   plan_write  — the plan file, the one write allowed in the plan phase
+//   acceptance_write — the acceptance list: one item per requirement of
+//                 the order, with status and evidence (builder-acceptance.ts)
 //
-// All three go through the main server over the loopback API (the same
+// All four go through the main server over the loopback API (the same
 // pattern as session_model), so they work from the in-process invoker
 // and from the MCP child alike, and the server is the only writer of
 // session state and the only publisher of the panel's SSE events.
@@ -189,6 +191,91 @@ export const askUser: ToolDefinition<z.infer<typeof AskInput>> = {
   },
 };
 
+// ── acceptance_write ────────────────────────────────────────────────
+
+const AcceptanceInput = z
+  .object({
+    items: z
+      .array(
+        z.object({
+          id: z.string().min(1).max(20).describe('Stable id: A01, A02, … Never reuse an id for another requirement.'),
+          requirement: z.string().max(500).optional().describe('The requirement in the words of the order. Needed when the item is new; an existing item keeps its first wording.'),
+          status: z.string().min(1).describe('open | passed | failed | not_run'),
+          evidence: z.string().max(1000).optional().describe('What shows the status: command and result, file, test, revision. Required for passed and failed.'),
+        }),
+      )
+      .optional()
+      .describe('The COMPLETE list — every call replaces it. Leave out to read the current list.'),
+  })
+  .strict();
+
+export const acceptanceWrite: ToolDefinition<z.infer<typeof AcceptanceInput>> = {
+  name: 'acceptance_write',
+  toolset: 'builder',
+  description:
+    'Keep the acceptance list of this session: one item per requirement of the order (id A01, A02, …, the ' +
+    'requirement in the words of the order), each with a status and the evidence. Not the task list — the task ' +
+    'list says what you do, this list says what the order asked for and what shows it is met. Statuses: open, ' +
+    'passed, failed, not_run. passed and failed need evidence: the command and its result, the file, the test, ' +
+    'the revision — a test count alone is not evidence that a requirement holds. Check the deciding counter-case ' +
+    '(a rejected result, a real contradiction, an interrupted run), not only the happy path. Items cannot be ' +
+    'removed or reworded, and accepted is not yours to set: the person or the orderer reviews. Send the whole ' +
+    'list every time; call without items to read it.',
+  inputSchema: AcceptanceInput,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      items: {
+        type: 'array',
+        description: 'The complete acceptance list (replaces the previous one). Leave out to read it.',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Stable id: A01, A02, …' },
+            requirement: { type: 'string', description: 'The requirement in the words of the order (new items).' },
+            status: { type: 'string', description: 'open | passed | failed | not_run' },
+            evidence: { type: 'string', description: 'Command and result, file, test, revision. Required for passed and failed.' },
+          },
+          required: ['id', 'status'],
+        },
+      },
+    },
+    additionalProperties: false,
+  },
+  defaultTimeoutMs: 15_000,
+  async handler(input, ctx) {
+    const session = sessionOf(ctx, 'acceptance_write');
+    const path = `/agents/${encodeURIComponent(ctx.agent)}/sessions/${encodeURIComponent(session)}/acceptance`;
+    if (!input.items) {
+      let res;
+      try {
+        res = await loopbackFetch(`${baseUrl()}${path}`);
+      } catch (err) {
+        const c = classifyFetchError(err);
+        throw new Error(`acceptance_write [${c.category}${c.code ? '/' + c.code : ''}]: ${c.message}`);
+      }
+      const data = (await res.json().catch(() => ({}))) as { items?: unknown[]; required?: boolean; error?: string };
+      if (!res.ok) throw new Error(`acceptance_write: ${data.error ?? `HTTP ${res.status}`}`);
+      return { ok: true, items: data.items ?? [], required: data.required === true };
+    }
+    const r = await call<{ items: Array<{ status: string }>; required: boolean; warnings: string[] }>('acceptance_write', 'PUT', path, {
+      items: input.items,
+      by_agent: ctx.agent,
+    });
+    const count = (s: string) => r.items.filter((i) => i.status === s).length;
+    return {
+      ok: true,
+      count: r.items.length,
+      passed: count('passed'),
+      failed: count('failed'),
+      open: count('open'),
+      not_run: count('not_run'),
+      ...(r.warnings.length > 0 ? { warnings: r.warnings } : {}),
+      items: r.items,
+    };
+  },
+};
+
 // ── plan_write ──────────────────────────────────────────────────────
 
 const PlanInput = z
@@ -225,5 +312,5 @@ export const planWrite: ToolDefinition<z.infer<typeof PlanInput>> = {
 };
 
 export function builderTools(): ToolDefinition[] {
-  return [todoWrite, askUser, planWrite] as ToolDefinition[];
+  return [todoWrite, askUser, planWrite, acceptanceWrite] as ToolDefinition[];
 }

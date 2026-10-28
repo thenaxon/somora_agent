@@ -49,6 +49,11 @@ export const BUILDER_SHORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
     'Ask the person watching a question with 2-6 options (free text is always possible). Waits for the ' +
     'answer or a timeout; returns {answered, answers, text}. Only for a real fork you cannot decide yourself.',
   plan_write: 'Write the plan file of this session (Markdown; replaces the file). The only write allowed in the plan phase.',
+  acceptance_write:
+    'Keep the acceptance list: one item per requirement of the order (id A01…, its words), status open | ' +
+    'passed | failed | not_run, evidence (command and result, file, test). passed/failed need evidence; check ' +
+    'the deciding counter-case. Items stay and keep their wording; the person or the orderer accepts, not you. ' +
+    'Whole list each call; no items = read it.',
   spawn_subagent:
     'Start a helper of your own kind on a sealed sub-task, in the same working directory. Give it the complete ' +
     'brief — it sees nothing of this conversation. Returns a task_id; fetch the outcome with subagent_result ' +

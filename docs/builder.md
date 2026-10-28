@@ -111,6 +111,7 @@ away by hand.
 | **Switches** | Mode and phase, the **Go** button while planning, and the plan file's path. |
 | **Tasks** | The list the builder keeps with `todo_write`: one item in progress at a time, each ticked off the moment it is verified. |
 | **Question** | What the builder asked with `ask_user`: the options as buttons, a free-text field and the minutes left. |
+| **Acceptance** | The [acceptance list](#the-acceptance-list): per requirement its status, evidence and review, with a button to accept and one to reject (with a note). Shown when the list has items or the order requires one. |
 
 A question blocks the turn until you answer or the wait runs out. The
 wait is 30 minutes unless the builder asks for another (10 seconds to 4
@@ -120,6 +121,48 @@ a time: a newer one replaces it.
 
 The mobile app has no task panel. You can chat with a builder there,
 but Go and answers happen in the web client.
+
+## The acceptance list
+
+The task list says what the builder does. The acceptance list says what
+the order asked for and what shows it is met: one item per requirement,
+in the words of the order. A finished turn, a reply that arrived and a
+green test suite are not an accepted build.
+
+| Field | Content |
+|---|---|
+| `id` | `A01`, `A02`, …, stable for the life of the item. |
+| `requirement` | The requirement as the order states it. |
+| `status` | `open`, `passed`, `failed` or `not_run`. Set by the builder. |
+| `evidence` | What shows the status: the command and its result, the file, the test, the revision. Expected for `passed` and `failed`. |
+| `review` | `accepted` or `rejected`, by whom, with a note. Set by you or by the agent that gave the order. |
+
+**Rules.**
+
+- **Required for agent orders.** An order sent with `builder_dispatch`
+  requires the list. The builder writes it before building, or in the
+  plan phase, and keeps it current. A builder may also keep one in a
+  session you opened yourself.
+- **The builder cannot narrow the list.** An item it leaves out stays,
+  and a requirement keeps its first wording. A changed milestone is a
+  new item, not a rewritten one.
+- **The builder cannot accept.** `accepted` and `rejected` are reviews,
+  set by you in the panel or by the orderer through the API. A new
+  status or new evidence clears an earlier review, because that review
+  was of the old evidence.
+- **The end is checked.** A builder that wants to end its turn with an
+  item still `open`, or with no list although the order requires one,
+  is told so. This is the same notice as for open tasks: at most twice
+  per turn, and the `open tasks` row counts both.
+- **The report ends with the list.** The final answer gets the list as
+  the session holds it, as a table under "Acceptance list (from the
+  session)". The orderer reads it there.
+- **It survives compaction.** The work-state block of a mid-turn
+  compaction carries the list word for word. After a compaction before
+  a turn, the builder reads it with `acceptance_write` and no items.
+
+At most 60 items. A requirement is cut at 500 characters, evidence and
+review notes at 1000.
 
 ## Steering
 
@@ -426,7 +469,7 @@ What a builder is offered by default. Everything else is off until
 |---|---|
 | Files | `file_read`, `file_write`, `file_patch`, `file_search`, `file_list`, `analyze_file` |
 | Shell | `exec`, `process` |
-| Builder | `todo_write`, `plan_write` |
+| Builder | `todo_write`, `plan_write`, `acceptance_write` |
 | Helpers | `spawn_subagent`, `subagent_result`, `subagent_cancel` |
 | Colleagues and you | `agent_ask`, `agent_ask_result`, `ask_user` (offered while the session is attended; [every agent](tools.md#questions-to-you) has it) |
 | Skills | `skill`, `skill_list` |
@@ -445,8 +488,9 @@ The builder's tools:
 | `todo_write` | `todos: [{content, status, priority?}]` | Replaces the whole task list. Status is `pending`, `in_progress`, `completed` or `cancelled`. |
 | `ask_user` | `question`, `options` (2 to 6, each `{label, description?}`), `header?`, `multiple?`, `timeout_ms?` | Asks in the task panel and waits. Returns `{answered, answers[], text?}`. |
 | `plan_write` | `content` | Writes the whole plan file. |
+| `acceptance_write` | `items?: [{id, requirement?, status, evidence?}]` | Replaces the acceptance list under its [rules](#the-acceptance-list). Returns the counts, the list and `warnings` for what was not taken. Without `items` it returns the list. |
 
-A chat agent never gets `todo_write` and `plan_write`, whatever its
+A chat agent never gets `todo_write`, `plan_write` and `acceptance_write`, whatever its
 `agent.yaml` says. `ask_user` belongs to every agent ([Questions to
 you](tools.md#questions-to-you)); for a builder it waits in the task
 panel.
@@ -458,11 +502,14 @@ is `GET /agents/:agent/sessions/:session/builder`.
 
 | Route | Body | Returns |
 |---|---|---|
-| `GET …/builder` | | `{agent, session, kind, state, question, turn}` |
-| `PATCH …/builder` | `{mode?, phase?, planPath?, orderer?}` | `{state}`. Publishes `builder_state`. |
+| `GET …/builder` | | `{agent, session, kind, state, acceptance, question, turn}` |
+| `PATCH …/builder` | `{mode?, phase?, planPath?, orderer?, acceptanceRequired?}` | `{state}`. Publishes `builder_state`. |
 | `POST …/builder/go` | `{note?}` | 202 with `{state, turnId, callId?, wakes?}`. 409 `folder busy` when another builder turn holds the folder. |
 | `PUT …/todos` | `{todos: [{content, status, priority?}]}` | `{todos}`. Publishes `todo_updated`. Used by `todo_write`. |
 | `PUT …/plan` | `{content}` | `{path, bytes, archived?}`. Used by `plan_write`. |
+| `GET …/acceptance` | | `{items, required}` |
+| `PUT …/acceptance` | `{items: [{id, requirement?, status, evidence?}], by_agent?}` | `{items, required, warnings}`. Publishes `acceptance_updated`. Used by `acceptance_write`. 403 when `by_agent` is another agent. |
+| `POST …/acceptance/review` | `{id, verdict: "accepted" \| "rejected", note?, by_agent?}` | `{items, required}`. Publishes `acceptance_updated`. Without `by_agent` the review is yours. With it, it must be the orderer. The builder itself gets 403. 404 for an unknown `id`. |
 | `POST …/ask` | `{question, header?, options[], multiple?, timeout_ms?}` | A builder's question, or one in a task sent over A2A, blocks, then returns `{answered, answers[], text?}`. A chat agent's question in a turn a person started returns at once with `{asked: true, questionId, note}`. Publishes `question_asked`. Used by `ask_user`. |
 | `POST …/answer` | `{questionId, answers?, text?}` | `{ok}`. Publishes `question_answered`. |
 | `GET /builders` | | `{builders: [{name, role, description, busy[]}]}` |
@@ -473,6 +520,7 @@ Fields of `GET …/builder`:
 | Field | Content |
 |---|---|
 | `state` | `{mode, phase, planPath, todos, orderer?}`, or `null` before the first turn. |
+| `acceptance` | `{items, required}`: the acceptance list and whether the order requires it. |
 | `question` | `{questionId, question, header, options, multiple, askedAt, expiresAt}`, or `null`. |
 | `turn` | `{turnId, startedAt, toolCalls, lastTool?, lastToolAt?}` while a turn runs, else `null`. |
 
@@ -487,7 +535,8 @@ Details:
 
 The web panel reads `GET …/builder` on every turn event and every two
 seconds. The SSE events `builder_state`, `todo_updated`,
-`question_asked` and `question_answered` exist for other clients.
+`acceptance_updated`, `question_asked` and `question_answered` exist
+for other clients.
 
 ## Troubleshooting
 

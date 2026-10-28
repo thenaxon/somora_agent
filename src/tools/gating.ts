@@ -12,7 +12,7 @@
 //                                a tool beyond its own set
 //
 // A tool is decided in this order (isToolAllowed):
-//   0. chat agent and a builder-only tool (todo_write, plan_write)
+//   0. chat agent and a builder-only tool (todo_write, plan_write, acceptance_write)
 //      → off, whatever the rules say
 //   1. named in deny          → off
 //   2. matched by allow       → on
@@ -89,6 +89,7 @@ export const BUILDER_TOOL_ALLOW: readonly string[] = [
   'todo_write',
   'ask_user',
   'plan_write',
+  'acceptance_write',
   'spawn_subagent',
   'subagent_result',
   'subagent_cancel',
@@ -112,7 +113,7 @@ export type AgentKind = 'chat' | 'builder';
 /** Tools of the `builder` toolset — hidden from chat agents by default.
  *  `ask_user` is not one of them: every agent may ask the person, in a
  *  turn the person started (sessionOffersAsk). */
-export const BUILDER_ONLY_TOOLS: ReadonlySet<string> = new Set(['todo_write', 'plan_write']);
+export const BUILDER_ONLY_TOOLS: ReadonlySet<string> = new Set(['todo_write', 'plan_write', 'acceptance_write']);
 
 /**
  * The gating a persona's turn runs with: agent.yaml's rules plus the

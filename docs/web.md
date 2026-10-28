@@ -705,8 +705,9 @@ These features have their own pages. In short:
 
 A builder's chat window opens wider and carries the task panel on the
 right: mode and phase switches, the **Go** button, the task list the
-builder keeps with `todo_write` and the questions it asks with
-`ask_user`. Below about 640 px width the panel folds to a
+builder keeps with `todo_write`, the acceptance list it keeps with
+`acceptance_write` (accept or reject each item there) and the questions
+it asks with `ask_user`. Below about 640 px width the panel folds to a
 strip.
 
 With projects enabled, the project chip in the chat header shows the

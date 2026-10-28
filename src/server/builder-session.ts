@@ -150,7 +150,10 @@ export function builderSessionAllows(state: BuilderSessionState | null, toolName
 }
 
 /** The lines the builder prompt adds for the session's mode and phase. */
-export function renderBuilderSessionBlock(state: BuilderSessionState | null, opts: { projectFolder?: boolean } = {}): string {
+export function renderBuilderSessionBlock(
+  state: BuilderSessionState | null,
+  opts: { projectFolder?: boolean; acceptanceRequired?: boolean } = {},
+): string {
   if (!state) return '';
   const lines: string[] = ['## Mode and phase', ''];
   if (opts.projectFolder === false) {
@@ -176,6 +179,11 @@ export function renderBuilderSessionBlock(state: BuilderSessionState | null, opt
   } else {
     lines.push(
       `- Phase: BUILD. ${state.planPath ? `If a plan exists at ${state.planPath}, it is approved: read it first and execute it.` : 'Execute the task you were given.'} Keep the task list current with todo_write, verify as you go, and end with the report.`,
+    );
+  }
+  if (opts.acceptanceRequired) {
+    lines.push(
+      '- Acceptance list: REQUIRED for this order. Before you build, write one item per requirement of the order with acceptance_write (A01, A02, …, in the words of the order, status open). Keep each item current with its evidence as you verify it. Before the report, check every item against the order itself, not against your task list: an item still open is not done. After a compaction, call acceptance_write without items to read the list. The report ends with the list.',
     );
   }
   return lines.join('\n');

@@ -104,6 +104,10 @@ export async function resolveBuilderName(named: string | undefined): Promise<str
   throw new Error(`builder_dispatch: several builders exist — name one in \`builder\`, chosen by its team description: ${list}`);
 }
 
+const ACCEPTANCE_ORDER_LINE =
+  'Keep the acceptance list with acceptance_write: one item per requirement of this order (A01, A02, …, in its words), ' +
+  'each passed, failed or not_run with its evidence by the end. An item still open is not done.';
+
 export function composeBuildOrder(input: { task: string; plan_path?: string; done_criteria?: string; report_path?: string; phase?: 'plan' | 'build' }): string {
   const parts: string[] = [];
   if (input.phase === 'plan') {
@@ -111,7 +115,8 @@ export function composeBuildOrder(input: { task: string; plan_path?: string; don
     if (input.done_criteria) parts.push(`Done means: ${input.done_criteria.trim()}`);
     parts.push(
       'Plan first: read the repository and write the plan with plan_write (goal, steps in order, files to touch, how to verify, open risks). ' +
-        'Do not change any file yet. When the plan is complete say "Plan ready" and stop; the build starts with Go.' +
+        'Do not change any file yet. Write the acceptance list with acceptance_write now: one item per requirement of this order (A01, A02, …, in its words, status open). ' +
+        'When the plan is complete say "Plan ready" and stop; the build starts with Go.' +
         (input.report_path ? ` The report at the end goes to ${input.report_path}.` : ''),
     );
     return parts.join('\n\n');
@@ -120,6 +125,7 @@ export function composeBuildOrder(input: { task: string; plan_path?: string; don
   parts.push(input.task.trim());
   if (input.done_criteria) parts.push(`Done means: ${input.done_criteria.trim()}`);
   if (input.report_path) parts.push(`At the end write your report to ${input.report_path} with file_write, and give the same report as your answer.`);
+  parts.push(ACCEPTANCE_ORDER_LINE);
   parts.push('Decide open questions yourself and list every decision in the report. Do not stop for approval.');
   return parts.join('\n\n');
 }
@@ -183,6 +189,9 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
     await call('PATCH', `/agents/${b}/sessions/${sid}/builder`, {
       mode: input.mode ?? 'unattended',
       phase,
+      // An order from an agent carries requirements someone will check:
+      // the builder keeps the acceptance list (docs/builder.md).
+      acceptanceRequired: true,
       ...(input.plan_path ? { planPath: input.plan_path } : {}),
       // Go (after a plan phase) wakes this agent with the report.
       orderer: { agent: ctx.agent, ...(ctx.session ? { session: ctx.session } : {}) },
@@ -211,7 +220,9 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
         phase === 'plan'
           ? 'The builder plans in its own session and stops with "Plan ready" — you are woken with the plan ([agent answer]). Then the person presses Go in the task panel, or you send the next message into that session (POST …/builder/go starts the build).'
           : 'The builder works in its own session; you will be woken with its report ([agent answer]). ' +
-            'Read it with agent_ask_result(call_id). Corrections go as a new message into that session.',
+            'Read it with agent_ask_result(call_id). Corrections go as a new message into that session. ' +
+            'The report ends with the acceptance list (requirement, status, evidence); a reply that arrived is not ' +
+            'an accepted build — review the items yourself (POST …/acceptance/review) or leave it to the person.',
     };
   },
 };

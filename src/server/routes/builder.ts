@@ -15,6 +15,7 @@ import { answerQuestion, askQuestion, pendingQuestion } from '../builder-questio
 import { CHAT_QUESTION_TIMEOUT_MS, TURN_ATTENDED_KEY, asksWithoutWaiting } from '../ask-attended.ts';
 import { askWithoutWaiting } from '../async-questions.ts';
 import { type BuilderMode, type BuilderPhase, DEFAULT_PLAN_FILE, type TodoItem, archiveNameFor, patchBuilderState, readBuilderState } from '../builder-session.ts';
+import { applyReview, mergeBuilderAcceptance, readAcceptance } from '../builder-acceptance.ts';
 import { logger } from '../logger.ts';
 import { config } from '../server-state.ts';
 import { DequeuedError } from '../session-queue.ts';
@@ -69,6 +70,7 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
       session: r.session,
       kind: r.persona.kind,
       state,
+      acceptance: readAcceptance(meta as Record<string, unknown>),
       question: q
         ? { questionId: q.id, question: q.question, header: q.header, options: q.options, multiple: q.multiple, askedAt: q.askedAt, expiresAt: q.expiresAt }
         : null,
@@ -86,7 +88,12 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
       phase?: string;
       planPath?: string | null;
       orderer?: { agent?: unknown; session?: unknown };
+      acceptanceRequired?: unknown;
     };
+    if (body.acceptanceRequired !== undefined) {
+      if (typeof body.acceptanceRequired !== 'boolean') return c.json({ error: 'acceptanceRequired must be a boolean' }, 400);
+      await sessionMetaStore.update(r.agent, r.session, (current) => ({ ...current, acceptanceRequired: body.acceptanceRequired }));
+    }
     const patch: { mode?: BuilderMode; phase?: BuilderPhase; planPath?: string | null; orderer?: { agent: string; session?: string } } = {};
     if (body.orderer !== undefined) {
       if (!body.orderer || typeof body.orderer.agent !== 'string' || !body.orderer.agent) {
@@ -247,6 +254,76 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
     const state = await patchBuilderState(sessionMetaStore, r.agent, r.session, { todos });
     await publish(r.agent, r.session, { event: 'todo_updated', data: { todos: state.todos, ...(body.by_agent ? { by: body.by_agent } : {}) } });
     return c.json({ agent: r.agent, session: r.session, todos: state.todos });
+  });
+
+  // The acceptance list (src/server/builder-acceptance.ts). The builder
+  // writes it with acceptance_write (PUT); the person in the panel or the
+  // agent that gave the order reviews single items (POST …/review). The
+  // builder never reviews its own work.
+  app.get('/agents/:agent/sessions/:session/acceptance', async (c) => {
+    const r = await builderSessionOf(c);
+    if (r instanceof Response) return r;
+    const meta = await sessionMetaStore.get(r.agent, r.session);
+    return c.json({ agent: r.agent, session: r.session, ...readAcceptance(meta as Record<string, unknown>) });
+  });
+
+  app.put('/agents/:agent/sessions/:session/acceptance', async (c) => {
+    const r = await builderSessionOf(c);
+    if (r instanceof Response) return r;
+    if (r.persona.kind !== 'builder') return c.json({ error: `'${r.agent}' is not a builder` }, 400);
+    const body = (await c.req.json().catch(() => null)) as { items?: unknown; by_agent?: string } | null;
+    if (!body || !Array.isArray(body.items)) return c.json({ error: 'body must be { items: [...] }' }, 400);
+    if (body.by_agent && body.by_agent !== r.agent) {
+      return c.json({ error: 'only the builder of this session writes its acceptance list; review an item with POST …/acceptance/review' }, 403);
+    }
+    let result: { items: unknown[]; warnings: string[] } = { items: [], warnings: [] };
+    const next = await sessionMetaStore.update(r.agent, r.session, (current) => {
+      const { items } = readAcceptance(current as Record<string, unknown>);
+      result = mergeBuilderAcceptance(items, body.items as unknown[]);
+      return { ...current, acceptance: result.items };
+    });
+    const acc = readAcceptance(next as Record<string, unknown>);
+    logger.info({ msg: 'builder.acceptance_written', agent: r.agent, session: r.session, items: acc.items.length, warnings: result.warnings.length });
+    await publish(r.agent, r.session, { event: 'acceptance_updated', data: { ...acc, by: r.agent } });
+    return c.json({ agent: r.agent, session: r.session, ...acc, warnings: result.warnings });
+  });
+
+  app.post('/agents/:agent/sessions/:session/acceptance/review', async (c) => {
+    const r = await builderSessionOf(c);
+    if (r instanceof Response) return r;
+    const body = (await c.req.json().catch(() => null)) as { id?: unknown; verdict?: unknown; note?: unknown; by_agent?: unknown } | null;
+    if (!body || typeof body.id !== 'string' || (body.verdict !== 'accepted' && body.verdict !== 'rejected')) {
+      return c.json({ error: 'body must be { id, verdict: "accepted" | "rejected", note? }' }, 400);
+    }
+    const meta = await sessionMetaStore.get(r.agent, r.session);
+    const byAgent = typeof body.by_agent === 'string' && body.by_agent ? body.by_agent : undefined;
+    if (byAgent === r.agent) return c.json({ error: 'a builder does not review its own work' }, 403);
+    if (byAgent) {
+      const orderer = readBuilderState(meta as Record<string, unknown>)?.orderer;
+      if (!orderer || orderer.agent !== byAgent) {
+        return c.json({ error: `only the person or the agent that gave the order${orderer ? ` (${orderer.agent})` : ''} reviews this list` }, 403);
+      }
+    }
+    let found = true;
+    const next = await sessionMetaStore.update(r.agent, r.session, (current) => {
+      const { items } = readAcceptance(current as Record<string, unknown>);
+      const reviewed = applyReview(items, {
+        id: body.id as string,
+        verdict: body.verdict as 'accepted' | 'rejected',
+        by: byAgent ?? 'person',
+        ...(typeof body.note === 'string' ? { note: body.note } : {}),
+      });
+      if (!reviewed) {
+        found = false;
+        return current;
+      }
+      return { ...current, acceptance: reviewed };
+    });
+    if (!found) return c.json({ error: `no item '${body.id}' in the acceptance list` }, 404);
+    const acc = readAcceptance(next as Record<string, unknown>);
+    logger.info({ msg: 'builder.acceptance_reviewed', agent: r.agent, session: r.session, id: body.id, verdict: body.verdict, by: byAgent ?? 'person' });
+    await publish(r.agent, r.session, { event: 'acceptance_updated', data: { ...acc, by: byAgent ?? 'person' } });
+    return c.json({ agent: r.agent, session: r.session, ...acc });
   });
 
   app.put('/agents/:agent/sessions/:session/plan', async (c) => {

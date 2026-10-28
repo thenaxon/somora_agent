@@ -328,7 +328,10 @@ async function assembleBuilderPrompt(args: {
   const allSkills = await loadAvailableSkills(freshConfig);
   const skillsRegistry = buildSkillsRegistry(allSkills, persona.skillGating, freshConfig);
   const skillsBlock = skillsRegistry.text ? `\n\n---\n\n${skillsRegistry.text}` : '';
-  const modeBlock = renderBuilderSessionBlock(readBuilderState(sessionMeta), { projectFolder: wd.source === 'project' });
+  const modeBlock = renderBuilderSessionBlock(readBuilderState(sessionMeta), {
+    projectFolder: wd.source === 'project',
+    acceptanceRequired: (sessionMeta as Record<string, unknown>).acceptanceRequired === true,
+  });
   const sessionBlock = buildSessionBlock(agent, session, sessionMeta) + (modeBlock ? `\n\n${modeBlock}` : '');
   const projectBlock = await buildProjectBlock(sessionMeta, deps.config);
 

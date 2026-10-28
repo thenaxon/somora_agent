@@ -1084,6 +1084,17 @@ export const api = {
     }
     return (await res.json()) as { state: BuilderStateDto; turnId: string };
   },
+  reviewAcceptance: async (agent: string, session: string, id: string, verdict: 'accepted' | 'rejected', note?: string): Promise<void> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/acceptance/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, verdict, ...(note ? { note } : {}) }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error ?? `review ${res.status}`);
+    }
+  },
   answerQuestion: async (agent: string, session: string, questionId: string, answers: string[], text?: string): Promise<void> => {
     const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/answer`, {
       method: 'POST',
@@ -1800,6 +1811,18 @@ export interface BuilderStateDto {
   planPath: string | null;
   todos: BuilderTodo[];
 }
+export interface BuilderAcceptanceItem {
+  id: string;
+  requirement: string;
+  status: 'open' | 'passed' | 'failed' | 'not_run';
+  evidence?: string;
+  updatedAt: number;
+  review?: { verdict: 'accepted' | 'rejected'; by: string; note?: string; at: number };
+}
+export interface BuilderAcceptanceDto {
+  items: BuilderAcceptanceItem[];
+  required: boolean;
+}
 export interface BuilderQuestionDto {
   questionId: string;
   question: string;
@@ -1821,6 +1844,8 @@ export interface BuilderSessionResponse {
   session: string;
   kind: 'chat' | 'builder';
   state: BuilderStateDto | null;
+  /** Absent on servers before the acceptance list. */
+  acceptance?: BuilderAcceptanceDto;
   question: BuilderQuestionDto | null;
   /** The running turn, or null when the session is idle. */
   turn: BuilderTurnDto | null;

@@ -141,6 +141,10 @@ export interface MidturnCompactionInput {
    *  that no longer sees its list stops keeping it (observed 2026-09-23:
    *  one todo_write before the compaction, none after). */
   todos?: ReadonlyArray<{ content: string; status: string; priority?: string }>;
+  /** The acceptance list (builder-acceptance.ts), verbatim for the same
+   *  reason: the requirements and what is still open must not be
+   *  summarised away. */
+  acceptance?: ReadonlyArray<{ id: string; requirement: string; status: string; evidence?: string }>;
   /** Test seam. */
   summarize?: (worker: ResolvedModel, system: string, user: string) => Promise<{ text: string }>;
 }
@@ -165,6 +169,17 @@ export function renderTodoReminder(todos: MidturnCompactionInput['todos']): stri
     '\n\nYour task list as last written with todo_write (the person sees it):\n' +
     lines.join('\n') +
     '\nKeep it current: mark what is done completed, the step you take next in_progress, and rewrite it with todo_write as you go.'
+  );
+}
+
+/** The acceptance list, appended to the compaction block. */
+export function renderAcceptanceReminder(items: MidturnCompactionInput['acceptance']): string {
+  if (!items || items.length === 0) return '';
+  const lines = items.map((i) => `- ${i.id} [${i.status}] ${i.requirement}${i.evidence ? ` — evidence: ${i.evidence}` : ''}`);
+  return (
+    '\n\nYour acceptance list as last written with acceptance_write:\n' +
+    lines.join('\n') +
+    '\nAn item still open is not done. Set passed or failed with the evidence as you verify, not_run with the reason.'
   );
 }
 
@@ -220,7 +235,8 @@ export async function compactTurnMidway(input: MidturnCompactionInput): Promise<
       '[somora] The earlier part of this turn was compacted to keep the conversation inside the model\'s context window. ' +
       'The tools listed there already ran — do not run them again. Continue from "Next Move".\n\n' +
       summary +
-      renderTodoReminder(input.todos),
+      renderTodoReminder(input.todos) +
+      renderAcceptanceReminder(input.acceptance),
   };
   const next = [...messages.slice(0, turnStartIdx), original, block, ...messages.slice(cutAt)];
   return { messages: next, summary, compactedMessages: older.length - 1, worker: workerName };

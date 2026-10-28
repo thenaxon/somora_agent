@@ -27,6 +27,7 @@ import {
   type Compaction,
 } from '../compaction/index.ts';
 import { inputBudget } from '../compaction/policy.ts';
+import { openAcceptance, readAcceptance, renderAcceptanceTable } from '../server/builder-acceptance.ts';
 import { logger } from '../server/logger.ts';
 import { compactTurnMidway, type LoopMessage } from '../compaction/midturn.ts';
 import {
@@ -1159,6 +1160,7 @@ export const openAiCompatibleEngine: AgentEngine = {
      *  is held to it at its end; a turn that only answers a question is
      *  not. */
     let todoWrittenThisTurn = false;
+    let acceptanceWrittenThisTurn = false;
     let openTaskNudges = 0;
     let lastOpenTaskNudgeRound = -1;
     let cutAnswerContinues = 0;
@@ -1417,7 +1419,9 @@ export const openAiCompatibleEngine: AgentEngine = {
           try {
             // The task list is read fresh: todo_write updated the meta
             // during this very turn.
-            const todosNow = ((await metaStore.get(agent, session)) as { todos?: unknown }).todos;
+            const metaMid = (await metaStore.get(agent, session)) as Record<string, unknown>;
+            const todosNow = metaMid.todos;
+            const accMid = readAcceptance(metaMid).items;
             const c = await compactTurnMidway({
               messages: loopMessages as LoopMessage[],
               turnStartIdx,
@@ -1427,6 +1431,7 @@ export const openAiCompatibleEngine: AgentEngine = {
               config: input.compactionConfig,
               agent,
               ...(Array.isArray(todosNow) ? { todos: todosNow as { content: string; status: string }[] } : {}),
+              ...(accMid.length > 0 ? { acceptance: accMid } : {}),
             });
             if (c) {
               loopMessages.splice(0, loopMessages.length, ...(c.messages as ChatMessage[]));
@@ -1975,37 +1980,69 @@ export const openAiCompatibleEngine: AgentEngine = {
           // considered answer.
           if (
             isBuilderTurn &&
-            todoWrittenThisTurn &&
             openTaskNudges < MAX_OPEN_TASK_NUDGES &&
             round !== lastOpenTaskNudgeRound + 1 &&
             toolList.some((t) => t.name === 'file_write' || t.name === 'file_patch')
           ) {
-            const todosNow = ((await metaStore.get(agent, session)) as { todos?: { content?: string; status?: string }[] }).todos;
-            const open = Array.isArray(todosNow) ? todosNow.filter((t) => t.status === 'pending' || t.status === 'in_progress') : [];
-            if (open.length > 0) {
+            const metaNow = (await metaStore.get(agent, session)) as Record<string, unknown>;
+            const todosNow = metaNow.todos as { content?: string; status?: string }[] | undefined;
+            // The task list counts when this turn worked it; the acceptance
+            // list when the order requires it (builder_dispatch) or this
+            // turn wrote it.
+            const open = todoWrittenThisTurn && Array.isArray(todosNow) ? todosNow.filter((t) => t.status === 'pending' || t.status === 'in_progress') : [];
+            const acc = readAcceptance(metaNow);
+            const accCounts = acc.required || acceptanceWrittenThisTurn;
+            const accOpen = accCounts ? openAcceptance(acc.items) : [];
+            const accMissing = accCounts && acc.required && acc.items.length === 0 && toolList.some((t) => t.name === 'acceptance_write');
+            if (open.length > 0 || accOpen.length > 0 || accMissing) {
               openTaskNudges++;
               lastOpenTaskNudgeRound = round;
               const names = open.slice(0, 5).map((t) => `"${String(t.content ?? '').slice(0, 80)}"`).join(', ');
-              logger.info({ msg: 'engine.builder_open_tasks', engine: ENGINE, agent, session, round, open: open.length, attempt: openTaskNudges });
+              const accNames = accOpen.slice(0, 8).map((i) => i.id).join(', ');
+              logger.info({ msg: 'engine.builder_open_tasks', engine: ENGINE, agent, session, round, open: open.length, acceptanceOpen: accOpen.length, acceptanceMissing: accMissing, attempt: openTaskNudges });
+              const what = [
+                ...(open.length > 0 ? [`${open.length} open item(s) on its task list`] : []),
+                ...(accOpen.length > 0 ? [`${accOpen.length} open acceptance item(s)`] : []),
+                ...(accMissing ? ['no acceptance list although the order requires one'] : []),
+              ].join(' and ');
               yield {
                 kind: 'engine_meta',
                 ts: ts(),
                 engine: ENGINE,
                 itemType: 'open_tasks_notice',
                 payload: {
-                  text: `The builder wanted to end with ${open.length} open item(s) on its task list; it was told to continue or to name the blocker.`,
+                  text: `The builder wanted to end with ${what}; it was told to continue or to name the blocker.`,
                   round,
                   open: open.length,
+                  acceptanceOpen: accOpen.length,
+                  ...(accMissing ? { acceptanceMissing: true } : {}),
                   attempt: openTaskNudges,
                 },
               };
+              const parts: string[] = [];
+              if (open.length > 0) {
+                parts.push(
+                  `Your task list still has ${open.length} open item(s): ${names}${open.length > 5 ? ', …' : ''}. ` +
+                    'If an item is in fact done and verified, mark it completed with todo_write. Otherwise continue with it.',
+                );
+              }
+              if (accOpen.length > 0) {
+                parts.push(
+                  `Your acceptance list still has ${accOpen.length} open item(s): ${accNames}${accOpen.length > 8 ? ', …' : ''}. ` +
+                    'Check each against the order itself and set passed or failed with the evidence, or not_run with the reason.',
+                );
+              }
+              if (accMissing) {
+                parts.push(
+                  'This order requires an acceptance list and there is none. Write it with acceptance_write: one item per requirement of the order, each with its status and evidence.',
+                );
+              }
               if (roundContent) loopMessages.push({ role: 'assistant', content: roundContent } as ChatMessage);
               loopMessages.push({
                 role: 'user',
                 content:
-                  `[somora] Your task list still has ${open.length} open item(s): ${names}${open.length > 5 ? ', …' : ''}. ` +
-                  'Do not end the turn and do not shrink the task to what is done. If an item is in fact done and ' +
-                  'verified, mark it completed with todo_write. Otherwise continue with it. If something truly ' +
+                  `[somora] ${parts.join(' ')} ` +
+                  'Do not end the turn and do not shrink the task to what is done. If something truly ' +
                   'blocks you, name the blocker and what you tried, then write your report.',
               } as ChatMessage);
               continue;
@@ -2306,6 +2343,7 @@ export const openAiCompatibleEngine: AgentEngine = {
             lastTodoRound = round;
             todoWrittenThisTurn = true;
           }
+          if (runName === 'acceptance_write') acceptanceWrittenThisTurn = true;
           const invoked = await raceToolInvoke(tools.invoke(runName, runArgs), {
             timeoutMs: toolTimeoutMs,
             signal: effectiveSignal,
@@ -2779,6 +2817,17 @@ export const openAiCompatibleEngine: AgentEngine = {
         if (turnThinking) {
           yield { kind: 'thinking_message', ts: ts(), engine: ENGINE, text: turnThinking };
           turnThinking = '';
+        }
+        // A builder's report ends with its acceptance list as the session
+        // holds it — the orderer reads the answer, not the panel, and the
+        // model's own retelling of the list is not the list.
+        if (isBuilderTurn) {
+          const acc = readAcceptance((await metaStore.get(agent, session)) as Record<string, unknown>);
+          if (acc.items.length > 0 && (acc.required || acceptanceWrittenThisTurn)) {
+            const block = `\n\n## Acceptance list (from the session)\n\n${renderAcceptanceTable(acc.items)}`;
+            cumulative += block;
+            if (lastRoundContent) lastRoundContent += block;
+          }
         }
         // After tool rounds, the last reply's own text — the earlier
         // rounds' text travels on their tool_call events.

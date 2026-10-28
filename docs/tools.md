@@ -300,6 +300,7 @@ Toolset `builder`.
 |---|---|
 | `todo_write` | Keeps the session's task list shown in the task panel. |
 | `plan_write` | Writes the plan file. It is the one write allowed in the plan phase. |
+| `acceptance_write` | Keeps the acceptance list: one item per requirement of the order, with status and evidence ([Builder](builder.md#the-acceptance-list)). |
 
 In the plan phase a builder does not get `file_write`, `file_patch`, `process`,
 `spawn_subagent` and `subagent_result`.
@@ -388,7 +389,7 @@ everything:
 
 ```
 file_read  file_write  file_patch  file_search  file_list  analyze_file
-exec  process  todo_write  ask_user  plan_write
+exec  process  todo_write  ask_user  plan_write  acceptance_write
 spawn_subagent  subagent_result  subagent_cancel
 agent_ask  agent_ask_result  skill  skill_list
 web_fetch  web_search
@@ -401,8 +402,8 @@ from it. In the Abilities window a builder shows two groups: its own
 list, and every other tool under "more", off until you switch one on.
 Tools added later stay off for a builder.
 
-The two `builder` tools, `todo_write` and `plan_write`, belong to
-builders only. A chat agent never gets them, whatever its `agent.yaml`
+The three `builder` tools, `todo_write`, `plan_write` and
+`acceptance_write`, belong to builders only. A chat agent never gets them, whatever its `agent.yaml`
 says, and the window does not offer them.
 
 ### Questions to you

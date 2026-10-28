@@ -14,6 +14,7 @@ import { openAiCompatibleEngine } from './openai-compatible.ts';
 import type { SessionMeta, SessionMetaStore, TurnInput } from './types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
+import { mergeBuilderAcceptance, type AcceptanceItem } from '../server/builder-acceptance.ts';
 
 type Reply = {
   text?: string;
@@ -87,6 +88,13 @@ async function run(
     invoke: async (name: string, args: unknown) => {
       // todo_write stores the list where the engine reads it.
       if (name === 'todo_write') await store.update('a', 's', (m) => ({ ...m, todos: (args as { todos: unknown }).todos }) as SessionMeta);
+      // acceptance_write the same way, through the real merge rules.
+      if (name === 'acceptance_write') {
+        await store.update('a', 's', (m) => {
+          const prev = Array.isArray((m as { acceptance?: unknown }).acceptance) ? ((m as { acceptance: AcceptanceItem[] }).acceptance) : [];
+          return { ...m, acceptance: mergeBuilderAcceptance(prev, (args as { items: unknown[] }).items).items } as SessionMeta;
+        });
+      }
       return { ok: true, data: { text: 'ok' } } as never;
     },
   } as unknown as ToolInvoker;
@@ -250,4 +258,63 @@ test('an answer well under the cap is not continued', async (t) => {
   script = () => ({ text: 'Report: done.', completionTokens: 400 });
   await run(port, { kind: 'builder' });
   assert.equal(requests.length, 1);
+});
+
+// ── the acceptance list (builder_dispatch orders) ───────────────────
+
+const accTools = ['todo_write', 'acceptance_write', 'file_write', 'file_read'];
+const twoReqs = { items: [{ id: 'A01', requirement: 'rejected never shows completed', status: 'passed', evidence: 'gate.test: rejected → failed' }, { id: 'A02', requirement: 'compare by content', status: 'open' }] };
+
+test('a required list with an open item: told to check it, and the report ends with the list', async (t) => {
+  const { server, port } = await startBackend();
+  t.after(() => server.close());
+  script = (msgs, n) => {
+    if (n === 1) return { tool: { name: 'acceptance_write', args: twoReqs } };
+    if (/acceptance list still has/.test(lastUserText(msgs)) && n === 3) {
+      return { tool: { name: 'acceptance_write', args: { items: [twoReqs.items[0], { id: 'A02', status: 'failed', evidence: '90 vs 100 judged as agreement' }] } } };
+    }
+    return { text: n === 2 ? 'Done.' : 'Report: A01 passed, A02 failed.' };
+  };
+  const { events } = await run(port, { kind: 'builder', tools: accTools, meta: { acceptanceRequired: true } as Partial<SessionMeta> });
+  assert.equal(notices(/Your acceptance list still has 1 open item\(s\): A02/), 1);
+  // The last reply (`final`, what the orderer reads) is the report plus the list.
+  const last = events.filter((e) => e.kind === 'assistant_message').at(-1) as { final?: string } | undefined;
+  const text = String(last?.final);
+  assert.match(text, /^Report: A01 passed, A02 failed\./);
+  assert.match(text, /## Acceptance list \(from the session\)/);
+  assert.match(text, /\| A02 \| compare by content \| failed \| 90 vs 100 judged as agreement \|/);
+  const row = metaRows(events, 'open_tasks_notice')[0] as { payload?: { acceptanceOpen?: number } } | undefined;
+  assert.equal(row?.payload?.acceptanceOpen, 1);
+});
+
+test('a required list that was never written: told to write it', async (t) => {
+  const { server, port } = await startBackend();
+  t.after(() => server.close());
+  script = (msgs, n) => {
+    if (/requires an acceptance list and there is none/.test(lastUserText(msgs))) return { tool: { name: 'acceptance_write', args: { items: [{ id: 'A01', requirement: 'r', status: 'not_run', evidence: 'no browser here' }] } } };
+    return { text: `answer ${n}` };
+  };
+  const { events } = await run(port, { kind: 'builder', tools: accTools, meta: { acceptanceRequired: true } as Partial<SessionMeta> });
+  assert.equal(notices(/requires an acceptance list and there is none/), 1);
+  assert.match(String(finalText(events)), /\| A01 \| r \| not_run \| no browser here \|/);
+});
+
+test('without the requirement and without a write this turn: no notice, no table', async (t) => {
+  const { server, port } = await startBackend();
+  t.after(() => server.close());
+  script = () => ({ text: 'The status is as before.' });
+  const stale = mergeBuilderAcceptance([], twoReqs.items).items;
+  const { events } = await run(port, { kind: 'builder', tools: accTools, meta: { acceptance: stale } as Partial<SessionMeta> });
+  assert.equal(requests.length, 1);
+  assert.equal(finalText(events), 'The status is as before.');
+});
+
+test('a chat agent is never held to a list, and its answer is never extended', async (t) => {
+  const { server, port } = await startBackend();
+  t.after(() => server.close());
+  script = () => ({ text: 'plain answer' });
+  const stale = mergeBuilderAcceptance([], twoReqs.items).items;
+  const { events } = await run(port, { kind: 'chat', meta: { acceptance: stale, acceptanceRequired: true } as Partial<SessionMeta> });
+  assert.equal(requests.length, 1);
+  assert.equal(finalText(events), 'plain answer');
 });

@@ -111,6 +111,14 @@ export function buildBuilderHarnessPrompt(visible: ReadonlySet<string> | null = 
       'For any task with three or more steps, keep the task list with todo_write: write the steps before you start, mark exactly one `in_progress` while you work on it, mark it `completed` the moment it is really done (verified, not intended), add follow-ups you discover. The person watches this list. Skip it for a single small change.',
     );
   }
+  if (has('acceptance_write')) {
+    lines.push(
+      '',
+      '# Acceptance list',
+      '',
+      'When an order names requirements (and always when "Mode and phase" says the list is required), keep them with acceptance_write: one item per requirement in the words of the order, status open until you have checked it, then passed or failed with the evidence — the command and its result, the file, the test, the revision — or not_run with the reason. A green test suite is not evidence for a requirement it does not exercise; check the deciding counter-case. Items stay and keep their wording; a changed milestone is a new item, not a rewritten one. You never accept your own work: the person or the orderer reviews.',
+    );
+  }
   lines.push('', '# Decisions and questions', '');
   lines.push(
     has('ask_user')
