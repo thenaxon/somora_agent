@@ -24,5 +24,5 @@ export {
   shouldCompact,
   type ShouldCompactDecision,
 } from './policy.ts';
-export { extractCompactionRange, runCompaction } from './summarize.ts';
+export { extractCompactionRange, runCompaction, splitReplayPairs } from './summarize.ts';
 export { buildSummaryPrompt } from './template.ts';

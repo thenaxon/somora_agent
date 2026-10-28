@@ -23,8 +23,10 @@ import {
   pickLatest,
   runCompaction,
   shouldCompact,
+  splitReplayPairs,
   type Compaction,
 } from '../compaction/index.ts';
+import { inputBudget } from '../compaction/policy.ts';
 import { logger } from '../server/logger.ts';
 import { compactTurnMidway, type LoopMessage } from '../compaction/midturn.ts';
 import {
@@ -345,6 +347,47 @@ export function splitLegacyRoundText(text: string, toolRounds: number): { leads:
 // Exported for the history-rebuild regression tests
 // (./tool-trace.test.mts) — the shape of what we hand a stateless
 // backend is load-bearing enough to assert on directly.
+/** Builder sessions: a turn starts with at most this share of the input
+ *  budget used, and a compaction before the turn aims below it. With
+ *  700k tokens that is ~390k, leaving ~260k to work in; a builder's night
+ *  builds (2026-10-28) started at ~578k and compacted mid-turn four times
+ *  without getting below ~585k. Chat agents keep compaction.triggerRatio. */
+export const BUILDER_CONTEXT_TARGET = 0.6;
+
+/**
+ * How many of the newest complete pairs a builder may keep word for word
+ * so the replay fits in `keepTokens`: each pair measured as the engine
+ * replays it (buildMessages, tool calls and capped results included),
+ * newest first, never more than `maxPairs`. A chat session keeps a fixed
+ * count of pairs; a builder pair is a whole build — hundreds of tool
+ * calls — and four of them filled a 700k window on their own.
+ */
+export async function builderCushion(opts: {
+  history: NormalizedEvent[];
+  compactions: Compaction[] | undefined;
+  keepTokens: number;
+  maxPairs: number;
+  caps: readonly ModelCapability[];
+  tokenRatio?: number;
+  pdfMode?: 'native' | 'rasterize';
+  maxImageEdge?: number;
+}): Promise<number> {
+  const { pairs, pending } = splitReplayPairs(opts.history, opts.compactions);
+  const cost = async (events: NormalizedEvent[]): Promise<number> => {
+    if (events.length === 0) return 0;
+    const msgs = await buildMessages('', events, undefined, opts.pdfMode ?? 'rasterize', opts.caps, opts.maxImageEdge);
+    return calibratedEstimate(estimateRequestTokens(msgs.slice(1)), opts.tokenRatio);
+  };
+  let left = opts.keepTokens - (await cost(pending));
+  let keep = 0;
+  for (let i = pairs.length - 1; i >= 0 && keep < opts.maxPairs; i--) {
+    left -= await cost(pairs[i]!);
+    if (left < 0) break;
+    keep++;
+  }
+  return keep;
+}
+
 export async function buildMessages(
   systemPrompt: string,
   history: NormalizedEvent[],
@@ -840,13 +883,51 @@ export const openAiCompatibleEngine: AgentEngine = {
       ...(tokenRatio !== undefined ? { tokenRatio } : {}),
     });
     compactionTrigger = decision.triggerTokens;
+    // A builder turn starts with room to work: below BUILDER_CONTEXT_TARGET
+    // of the input budget, not only below the chat trigger.
+    const isBuilderSession = input.agentKind === 'builder';
+    const builderTarget = isBuilderSession
+      ? Math.floor((compactionConfig.builderTargetRatio ?? BUILDER_CONTEXT_TARGET) * inputBudget(resolvedModel.model.contextWindow, resolvedModel.model.maxTokens))
+      : undefined;
+    const preTurnPdfMode = (resolvedModel.provider as { pdfMode?: 'native' | 'rasterize' }).pdfMode ?? 'rasterize';
+    /** The request a builder turn would send now: system prompt, summary,
+     *  replayed history and the tool schemas. */
+    const builderRequestTokens = async (cs: Compaction[] | undefined): Promise<number> => {
+      const msgs = await buildMessages(systemPromptForTurn, history, cs, preTurnPdfMode, resolvedModel.model.capabilities, input.maxImageEdge);
+      const toolsEarly = tools ? (catalogPlan ? [...toOpenAiTools(catalogPlan.direct), ...catalogPlan.metaTools] : toOpenAiTools(toolList)) : undefined;
+      return calibratedEstimate(estimateRequestTokens(msgs, toolsEarly), tokenRatio);
+    };
+    // Without the provider's count the history estimate runs low against
+    // what is actually replayed (a builder, 2026-10-28: 702k estimated before a
+    // rebuild, 785k after it). A builder checks the request itself.
+    const builderNow =
+      builderTarget !== undefined && decision.source === 'estimated'
+        ? Math.max(decision.estimatedTokens, await builderRequestTokens(compactions))
+        : decision.estimatedTokens;
+    const wantCompaction = decision.shouldCompact || (builderTarget !== undefined && builderNow >= builderTarget);
+    /** How many newest pairs a builder keeps verbatim (by size). */
+    const cushionFor = async (cs: Compaction[] | undefined): Promise<number> => {
+      const fixed = calibratedEstimate(estimateRequestTokens([{ role: 'system', content: systemPromptForTurn }]), tokenRatio);
+      // Room for the summary itself and the tool schemas.
+      const reserve = Math.ceil(builderTarget! * 0.08);
+      return builderCushion({
+        history,
+        compactions: cs,
+        keepTokens: builderTarget! - fixed - reserve,
+        maxPairs: compactionConfig.safetyCushionPairs,
+        caps: resolvedModel.model.capabilities,
+        pdfMode: preTurnPdfMode,
+        ...(tokenRatio !== undefined ? { tokenRatio } : {}),
+        ...(input.maxImageEdge !== undefined ? { maxImageEdge: input.maxImageEdge } : {}),
+      });
+    };
     /** A compaction ran before this turn: the row that says so goes out
      *  once the request it shrank is known. Without it the context gauge
      *  jumped from 87 % to 23 % and nothing in the chat said why
      *  (2026-10-19 report): this path was the only one of four that
      *  compacted silently. */
     let preTurnCompaction: { compaction: Compaction; cushion?: number } | undefined;
-    if (decision.shouldCompact) {
+    if (wantCompaction) {
       logger.info({
         msg: 'engine.compaction_trigger',
         engine: ENGINE,
@@ -855,18 +936,49 @@ export const openAiCompatibleEngine: AgentEngine = {
         estimatedTokens: decision.estimatedTokens,
         source: decision.source,
         triggerTokens: decision.triggerTokens,
+        ...(builderTarget !== undefined ? { builderTarget, builderRequestTokens: builderNow } : {}),
         ratio: Math.round(decision.ratio * 100) / 100,
         existingCompactions: compactions?.length ?? 0,
       });
       try {
-        const newCompaction = await runCompaction({
+        const builderCushionPairs = builderTarget !== undefined ? await cushionFor(compactions) : undefined;
+        if (builderCushionPairs !== undefined) {
+          logger.info({ msg: 'engine.builder_cushion', engine: ENGINE, agent, session, keepPairs: builderCushionPairs, builderTarget });
+        }
+        let newCompaction = await runCompaction({
           systemPrompt,
           history,
           resolvedModel,
           availableModels,
           compactions,
-          config: compactionConfig,
+          config: builderCushionPairs !== undefined ? { ...compactionConfig, safetyCushionPairs: builderCushionPairs } : compactionConfig,
         });
+        // Check, don't assume: a builder request still above the target
+        // (the size estimate of the kept pairs was off) compacts once more
+        // down to nothing kept but the turn in flight.
+        if (newCompaction && builderTarget !== undefined && (builderCushionPairs ?? 0) > 0) {
+          const afterFirst = await builderRequestTokens([...(compactions ?? []), newCompaction]);
+          if (afterFirst > builderTarget) {
+            logger.info({ msg: 'engine.builder_compaction_again', engine: ENGINE, agent, session, afterFirst, builderTarget, keptPairs: builderCushionPairs });
+            const again = await runCompaction({
+              systemPrompt,
+              history,
+              resolvedModel,
+              availableModels,
+              compactions: [...(compactions ?? []), newCompaction],
+              config: { ...compactionConfig, safetyCushionPairs: 0 },
+            }).catch(() => null);
+            if (again) {
+              // Both rows are kept: the second builds on the first summary.
+              compactions = [...(compactions ?? []), newCompaction];
+              await metaStore.update(agent, session, (latest) => ({
+                ...latest,
+                compactions: [...((latest as OpenAiCompatibleMeta).compactions ?? []), newCompaction!],
+              }));
+              newCompaction = again;
+            }
+          }
+        }
         if (newCompaction) {
           verifyCompaction = true;
           compactions = [...(compactions ?? []), newCompaction];
@@ -1083,6 +1195,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       const before = decision.source === 'measured' ? decision.estimatedTokens : decision.estimatedTokens + toolTokens;
       const after = calibratedEstimate(estimateRequestTokens(messages, openAiTools), tokenRatio);
       const pct = (v: number) => `${Math.round((v / window) * 100)}%`;
+      const budgetForRow = inputBudget(window, resolvedModel.model.maxTokens);
       const n = (v: number) => v.toLocaleString('en-US');
       logger.info({ msg: 'engine.compaction_context', engine: ENGINE, agent, session, contextBefore: before, contextAfter: after, contextWindow: window, source: decision.source });
       yield {
@@ -1093,7 +1206,14 @@ export const openAiCompatibleEngine: AgentEngine = {
         payload: {
           text:
             `history compacted before this turn: ${pct(before)} → about ${pct(after)} of the ${n(window)}-token window ` +
-            `(${n(before)} → about ${n(after)} tokens)`,
+            `(${n(before)} → about ${n(after)} tokens)` +
+            // A builder's row says whether there is now room to work —
+            // "compacted" alone did not (report 2026-10-28).
+            (builderTarget !== undefined
+              ? after <= builderTarget
+                ? `; target ${pct(builderTarget)} reached, about ${n(Math.max(0, budgetForRow - after))} tokens free to work`
+                : `; target ${pct(builderTarget)} NOT reached: what is left (the system prompt, the summary, the turn in flight) is too big on its own`
+              : ''),
           reason: 'auto',
           contextBefore: before,
           contextAfter: after,
@@ -1102,8 +1222,14 @@ export const openAiCompatibleEngine: AgentEngine = {
           throughTs: preTurnCompaction.compaction.throughTs,
           worker: preTurnCompaction.compaction.byModel,
           ...(preTurnCompaction.cushion !== undefined ? { cushion: preTurnCompaction.cushion } : {}),
+          ...(builderTarget !== undefined
+            ? { builderTarget, reachedTarget: after <= builderTarget, freeTokens: Math.max(0, budgetForRow - after) }
+            : {}),
         },
       };
+      if (builderTarget !== undefined) {
+        logger.info({ msg: 'engine.builder_headroom', engine: ENGINE, agent, session, contextAfter: after, builderTarget, reached: after <= builderTarget, freeTokens: Math.max(0, budgetForRow - after) });
+      }
     }
     const loopMessages = [...messages]; // mutable copy; tool rounds append
     // Where this turn begins in loopMessages: its user message (the
@@ -1314,9 +1440,11 @@ export const openAiCompatibleEngine: AgentEngine = {
                 engine: ENGINE,
                 itemType: 'context_compacted',
                 payload: {
-                  text: `Earlier rounds of this turn were summarised into a work-state block (${c.compactedMessages} messages, worker ${c.worker}) to stay inside the context window.`,
+                  text: `Earlier rounds of this turn were summarised into a work-state block (${c.compactedMessages} messages, worker ${c.worker}) to stay inside the context window; about ${Math.max(0, budget - estimated).toLocaleString('en-US')} tokens free to work now.`,
                   replaced: c.compactedMessages,
                   worker: c.worker,
+                  contextAfter: estimated,
+                  freeTokens: Math.max(0, budget - estimated),
                 },
               };
             }

@@ -293,6 +293,13 @@ dream and wiki tools like a chat agent.
 The points below apply to the openai-compatible engine, which runs the
 tool loop itself.
 
+**Room at the start of a turn.** A builder turn starts with at most 60 %
+of the input budget used (`compaction.builderTargetRatio`). Above it,
+the history is compacted before the turn, keeping only the newest
+exchanges that fit, often none. Then the result is checked. The
+`context compacted` row says whether the target was reached and how
+many tokens are free. See [Compaction](compaction.md#builder-turns).
+
 **Mid-turn compaction.** When the next request would not fit the
 context window, the older rounds of the running turn are summarised
 into a work-state block: objective, the person's directions quoted

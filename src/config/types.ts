@@ -253,6 +253,9 @@ export const CompactionConfigSchema = z
     triggerRatio: z.number().positive().max(1).optional(),
     /** Recent user/assistant pairs that stay uncompacted. Default 4. */
     safetyCushionPairs: z.number().int().nonnegative().optional(),
+    /** Builder sessions: share of the input budget a turn may start with;
+     *  compaction aims below it and keeps only what fits. Default 0.6. */
+    builderTargetRatio: z.number().min(0.2).max(0.9).optional(),
     /** Optional override for the worker model (alias or `provider/modelId`). */
     modelOverride: z.string().min(1).optional(),
     /** Models allowed to summarize, in the order they should be tried. */

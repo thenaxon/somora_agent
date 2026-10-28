@@ -71,6 +71,35 @@ interface ExtractRangeResult {
 }
 
 /**
+ * The history after the latest compaction cut into the same pairs
+ * extractCompactionRange counts: each starts at a user message and runs
+ * to the next one. A pair is complete once it has a reply, or when the
+ * next user message follows without one (an unanswered pair). The last
+ * user message without a reply is the turn in flight: `pending`, never
+ * compacted. Used to size a builder's cushion by what each pair costs
+ * when replayed.
+ */
+export function splitReplayPairs(
+  history: NormalizedEvent[],
+  compactions: Compaction[] | undefined,
+): { pairs: NormalizedEvent[][]; pending: NormalizedEvent[] } {
+  const sinceTs = pickLatest(compactions)?.throughTs ?? 0;
+  const segments: Array<{ events: NormalizedEvent[]; answered: boolean }> = [];
+  for (const ev of history) {
+    if (ev.ts <= sinceTs) continue;
+    if (ev.kind === 'user_message') segments.push({ events: [ev], answered: false });
+    else if (segments.length > 0) {
+      const cur = segments[segments.length - 1]!;
+      cur.events.push(ev);
+      if (ev.kind === 'assistant_message') cur.answered = true;
+    }
+  }
+  const last = segments[segments.length - 1];
+  const pending = last && !last.answered ? (segments.pop(), last.events) : [];
+  return { pairs: segments.map((sg) => sg.events), pending };
+}
+
+/**
  * Determine which user/assistant pairs to compact:
  *   - skip pairs already covered by a previous compaction
  *   - keep the safetyCushionPairs newest pairs intact

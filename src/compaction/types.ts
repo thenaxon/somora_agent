@@ -37,6 +37,13 @@ export interface CompactionConfig {
    */
   safetyCushionPairs: number;
   /**
+   * Builder sessions only: the share of the input budget a turn may
+   * start with. Above it the compaction before the turn runs, keeps only
+   * as many newest pairs as fit below it, and checks the result. Unset
+   * means BUILDER_CONTEXT_TARGET (0.6). Chat sessions use triggerRatio.
+   */
+  builderTargetRatio?: number;
+  /**
    * Optional override for the model used to generate the summary.
    * If unset, uses the same model the turn would have run on.
    * Format: alias or `provider/modelId` (resolved via resolveAnyRef).
@@ -93,6 +100,7 @@ export function resolveCompactionConfig(
     compaction?: {
       triggerRatio?: number;
       safetyCushionPairs?: number;
+      builderTargetRatio?: number;
       modelOverride?: string;
       workers?: string[];
       preferSessionModel?: boolean;
@@ -112,6 +120,7 @@ export function resolveCompactionConfig(
       parsePositiveInt(process.env.SOMORA_COMPACTION_SAFETY_PAIRS)
       ?? cfg.safetyCushionPairs
       ?? DEFAULTS.safetyCushionPairs,
+    ...(cfg.builderTargetRatio !== undefined ? { builderTargetRatio: cfg.builderTargetRatio } : {}),
     modelOverride:
       process.env.SOMORA_COMPACTION_MODEL?.trim()
       || cfg.modelOverride

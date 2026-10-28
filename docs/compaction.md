@@ -244,6 +244,23 @@ This leaves a `context compacted` row. It uses `workers` and
 `preferSessionModel`, asks at most three models, and falls back to
 trimming when none delivers.
 
+**Before a builder turn.** A builder turn starts with room to work. When
+the request is above `builderTargetRatio` (0.6) of the input budget,
+the compaction runs even below `triggerRatio`. It keeps only as many of
+the newest exchanges as fit below that share, measured as they are
+replayed, at most `safetyCushionPairs`. One build can be a few hundred
+tool calls, so often none is kept and the summary covers all of them.
+
+Without a reading from the provider, the builder measures the request
+itself instead of trusting the history estimate. After the compaction
+it checks the result. Still above the target, it compacts once more
+with nothing kept but the turn in flight.
+
+The row then says whether the target was reached and how many tokens
+are free (`payload.reachedTarget`, `payload.freeTokens`). A mid-turn
+row says how many tokens are free after it. Chat sessions are not
+affected.
+
 ## Which model summarises
 
 A summary is a separate, single model call without tools. All four
@@ -376,6 +393,7 @@ All settings live in `config.yaml` and are optional.
 compaction:
   triggerRatio: 0.8
   safetyCushionPairs: 4
+  # builderTargetRatio: 0.6
   # workers: [<small-local-alias>, <hosted-alias>]
   # preferSessionModel: false
   # modelOverride: <alias>
@@ -386,7 +404,8 @@ fallback:
 | Setting | Default | Meaning |
 |---|---|---|
 | `compaction.triggerRatio` | 0.8 | Share of the input budget at which a compaction runs. Above 0, at most 1. `openai-compatible` only. |
-| `compaction.safetyCushionPairs` | 4 | The most recent exchanges that are never summarised. |
+| `compaction.safetyCushionPairs` | 4 | The most recent exchanges that are never summarised. For builders, at most this many. |
+| `compaction.builderTargetRatio` | 0.6 | Builders only: the share of the input budget a turn may start with. 0.2 to 0.9. See [Builder turns](#builder-turns). |
 | `compaction.workers` | unset | Models that may summarise, in the order they are tried. Unset means automatic choice. |
 | `compaction.preferSessionModel` | false | Ask the session's own model before the workers. |
 | `compaction.modelOverride` | unset | One model that is always asked first. |
@@ -407,6 +426,7 @@ Environment variables override the file:
 |---|---|---|
 | The backend still answers "prompt too long" | `engine.context_overflow` in the log, with a hint naming the window the backend enforces | Lower the model's `contextWindow` to that value. |
 | Compaction runs every turn | `engine.compaction_ineffective` | The recent exchanges alone are too big. Lower `safetyCushionPairs` or use a model with a larger window. |
+| A builder has little room after compacting | `engine.builder_headroom` with `reached: false`, `engine.builder_compaction_again` | What is left is too big on its own: the system prompt, the summary or the turn in flight. Shorten the repository instructions, or use a model with a larger window. |
 | Summaries cost subscription usage | `compaction.worker_chosen` shows a CLI model | Set `compaction.workers`. |
 | Compaction fails | `compaction.worker_failed`, `compaction.all_workers_failed`, `compaction.no_model_fits`, `engine.compaction_fail` | Check that the workers are reachable and that one has a large enough window. |
 | A listed worker is never asked | `compaction.workers_unresolved` or `model.unavailable` | Fix the name, or wait until the model is tried again. |

@@ -520,6 +520,9 @@ providers:
 # compaction:
 #   triggerRatio: 0.8          # compact at 80% of the input budget (window minus the answer)
 #   safetyCushionPairs: 4      # keep N most-recent user/assistant pairs uncompacted
+#   builderTargetRatio: 0.6    # builders only: a turn starts with at most 60% of the input
+#                              # budget used; the compaction keeps only the newest exchanges
+#                              # that fit below it (0.2 to 0.9)
 #   modelOverride: opus        # force a specific worker model (alias or provider/id)
 #   workers: [small-local, big-local, opus]   # who may summarise, in the order they are tried.
 #                              # A model that is not listed is never a worker. Without the list
