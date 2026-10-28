@@ -307,16 +307,14 @@ its task list and append a short status to its report file, so a crash
 late in a long build loses minutes.
 
 **Budget notices.** At 75 % of `maxRounds` or `maxToolCallsPerTurn`
-the builder gets a checkpoint: keep working, refresh the task list,
-most important open items first. The notice to finish the current step
-and write the report comes when 2 % of the limit is left, at least 5:
-with 500 rounds after round 490, with 2000 tool calls after call 1960.
-A chat agent is told to wrap up at 75 % already.
+the builder gets a checkpoint: save progress, most important open items
+first, keep working. It is not told to stop there; a chat agent is.
 
-Both notices show in
-the log as `engine.budget_soft_warn` with `phase` `builder_checkpoint`
-or `builder_wrap_up`. A turn that ends after them is a normal end;
-only a real limit sets `forced_final`.
+At the limit the tools are switched off and the builder writes its
+report: that the limit was reached, what is done and how it was
+verified, what is not done or not verified, what comes next. The log
+line for the checkpoint is `engine.budget_soft_warn` with `phase`
+`builder_checkpoint`.
 
 **Brakes.** A turn that hits a limit is asked for its report instead of
 being cut off. `turn_end.forced_final` names the reason:

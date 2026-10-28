@@ -676,8 +676,8 @@ codexCli:
 
 At 75 % of the round or call limit the model gets one notice to wrap
 up. At the limit it is asked for a final answer without tools. A
-builder is told to keep working at 75 % and to write its report only
-shortly before the limit (see [Builder](builder.md)).
+builder is told to keep working at 75 % and writes its report at the
+limit (see [Builder](builder.md)).
 
 ### Stuck engines and stuck clients
 

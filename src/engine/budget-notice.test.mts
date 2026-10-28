@@ -3,8 +3,8 @@
 //
 // 2026-10-28: a builder ended four night builds 3–8 rounds after the 75 %
 // notice ("Wrap up now"), with a quarter of its rounds unused. A builder
-// now gets a checkpoint at 75 % and the wrap-up only at its report
-// reserve; a chat agent keeps the 75 % wrap-up.
+// now gets a checkpoint at 75 % and works on to the limit, where it is
+// asked for its report; a chat agent keeps the 75 % wrap-up.
 //
 // Run: npm test src/engine/budget-notice.test.mts
 
@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { builderReserve, openAiCompatibleEngine } from './openai-compatible.ts';
+import { openAiCompatibleEngine } from './openai-compatible.ts';
 import type { SessionMeta, SessionMetaStore, TurnInput } from './types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
@@ -30,12 +30,12 @@ function startBackend(): Promise<{ server: Server; port: number }> {
         const parsed = JSON.parse(body) as { messages: Array<{ role: string; content?: unknown }> };
         requestCount++;
         const notices = parsed.messages
-          .filter((m) => m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('[somora] Budget'))
+          .filter((m) => m.role === 'user' && typeof m.content === 'string' && /^\[somora\] (Budget|You have reached)/.test(m.content))
           .map((m) => m.content as string);
         for (const n of notices) if (!seen.some((s) => s.text === n)) seen.push({ round: requestCount, text: n });
         // The model behaves as the reports describe: it keeps calling
         // tools until a notice asks for the answer or the report.
-        const told = notices.some((n) => /Wrap up now|write your report/.test(n));
+        const told = notices.some((n) => /Wrap up now|You have reached/.test(n));
         const chunk = (delta: object, finish: string | null = null) =>
           `data: ${JSON.stringify({ id: 'f', object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -110,13 +110,6 @@ async function run(port: number, agentKind: 'builder' | 'chat', maxRounds: numbe
   return out;
 }
 
-test('the report reserve: 2 %, at least 5', () => {
-  assert.equal(builderReserve(500), 10);
-  assert.equal(builderReserve(1000), 20);
-  assert.equal(builderReserve(2000), 40);
-  assert.equal(builderReserve(40), 5);
-});
-
 test('a chat agent is told to wrap up at 75 %', async (t) => {
   const { server, port } = await startBackend();
   t.after(() => server.close());
@@ -129,40 +122,36 @@ test('a chat agent is told to wrap up at 75 %', async (t) => {
   assert.equal(end?.forced_final, undefined);
 });
 
-test('a builder gets a checkpoint at 75 % and keeps working until the reserve', async (t) => {
+test('a builder gets a checkpoint at 75 %, keeps working, and is asked for its report at the limit', async (t) => {
   const { server, port } = await startBackend();
   t.after(() => server.close());
   const events = await run(port, 'builder', 100);
   assert.equal(seen.length, 2, JSON.stringify(seen));
-  const [checkpoint, wrap] = seen;
+  const [checkpoint, report] = seen;
   assert.match(checkpoint!.text, /Budget checkpoint/);
-  assert.match(checkpoint!.text, /keep working/);
-  assert.doesNotMatch(checkpoint!.text, /Wrap up|final answer|write your report/);
+  assert.match(checkpoint!.text, /Do not stop because of this notice/);
+  assert.doesNotMatch(checkpoint!.text, /Wrap up|final answer|write your report/i);
   assert.equal(checkpoint!.round, 76);
-  // 100 rounds → reserve 5: the wrap-up comes after round 95.
-  assert.match(wrap!.text, /write your report/);
-  assert.equal(wrap!.round, 96);
-  assert.equal(requestCount, 96, 'the builder used the rounds between the notices');
+  // All 100 rounds used, then the tool-less report request.
+  assert.equal(report!.round, 101);
+  assert.match(report!.text, /agent-loop cap of 100 tool-call rounds/);
+  assert.match(report!.text, /Write your report now/);
+  assert.match(report!.text, /how you verified it/);
+  assert.match(report!.text, /not done or not verified/);
   const end = events.find((e) => e.kind === 'turn_end') as { forced_final?: string } | undefined;
-  assert.equal(end?.forced_final, undefined, 'it ended on its own, not on the cap');
+  assert.equal(end?.forced_final, 'round_cap', 'the limit is named, not hidden as a normal end');
+  const final = events.filter((e) => e.kind === 'assistant_message').at(-1) as { text?: string } | undefined;
+  assert.equal(final?.text, 'report');
 });
 
-test('a builder near its tool-call limit gets the wrap-up from that limit', async (t) => {
+test('a builder near its tool-call limit gets the checkpoint from that limit', async (t) => {
   const { server, port } = await startBackend();
   t.after(() => server.close());
-  // One call per round: 40 calls → checkpoint after 30, reserve 5 → wrap-up after 35.
-  await run(port, 'builder', 500, 40);
+  // One call per round: 40 calls → checkpoint after call 30, report after call 40.
+  const events = await run(port, 'builder', 500, 40);
   assert.equal(seen.length, 2, JSON.stringify(seen));
   assert.equal(seen[0]!.round, 31);
-  assert.equal(seen[1]!.round, 36);
-});
-
-test('a builder with a tiny budget gets the wrap-up only, not both at once', async (t) => {
-  const { server, port } = await startBackend();
-  t.after(() => server.close());
-  // 8 rounds, reserve 5: the reserve is reached (round 3) before 75 % (round 6).
-  await run(port, 'builder', 8);
-  assert.equal(seen.length, 1, JSON.stringify(seen));
-  assert.match(seen[0]!.text, /write your report/);
-  assert.equal(seen[0]!.round, 4);
+  assert.match(seen[1]!.text, /tool-call budget of 40 calls/);
+  const end = events.find((e) => e.kind === 'turn_end') as { forced_final?: string } | undefined;
+  assert.equal(end?.forced_final, 'tool_budget');
 });

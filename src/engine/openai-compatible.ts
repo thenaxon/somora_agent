@@ -66,12 +66,6 @@ const MAX_REASONING_ONLY_NUDGES = 2;
 const TODO_STALE_ROUNDS = 12;
 /** Rounds of a builder turn kept verbatim when it compacts itself. */
 const MIDTURN_KEEP_ROUNDS = 6;
-/** What a builder keeps of a limit for its report: 2 %, at least 5
- *  (500 rounds → 10, 2000 tool calls → 40). The wrap-up notice comes
- *  when this much is left. */
-export function builderReserve(limit: number): number {
-  return Math.max(5, Math.ceil(limit * 0.02));
-}
 
 // Hard fallbacks if the server forgot to pass an agent-loop config.
 // Should never fire in practice — `config.agentLoop` is non-optional in
@@ -1180,7 +1174,6 @@ export const openAiCompatibleEngine: AgentEngine = {
       let totalToolCalls = 0;
       let hitToolBudget = false;
       let softWarned = false;
-      let builderCheckpointWarned = false;
       // Wall-clock cap (agentLoop.maxTurnMs, builders): a night build
       // must end with a report, not run into the next day unseen.
       const maxTurnMs = input.agentLoopConfig?.maxTurnMs;
@@ -2203,41 +2196,16 @@ export const openAiCompatibleEngine: AgentEngine = {
         // models reliably wrap up on it.
         // A builder is not told to stop at 75 %: in four night builds
         // (2026-10-27/28) it ended 3–8 rounds after that notice with a
-        // quarter of its budget unused. It gets a checkpoint there and the
-        // wrap-up only when the reserve for the report is reached.
+        // quarter of its budget unused. It gets a checkpoint there and keeps
+        // working; the report is asked for at the limit (forced final), as
+        // OpenCode, DeepSeek-TUI and Hermes do. The wording follows Hermes'
+        // checkpoint ("do not stop solely because of this warning").
         const roundsLeft = maxRounds - round;
         const callsLeft = maxToolCallsPerTurn - totalToolCalls;
         const atThreeQuarters =
           round >= Math.ceil(maxRounds * 0.75) || totalToolCalls >= Math.ceil(maxToolCallsPerTurn * 0.75);
-        if (
-          isBuilderTurn &&
-          !softWarned &&
-          roundsLeft > 0 &&
-          callsLeft > 0 &&
-          (roundsLeft <= builderReserve(maxRounds) || callsLeft <= builderReserve(maxToolCallsPerTurn))
-        ) {
+        if (isBuilderTurn && !softWarned && roundsLeft > 0 && callsLeft > 0 && atThreeQuarters) {
           softWarned = true;
-          builderCheckpointWarned = true;
-          logger.info({
-            msg: 'engine.budget_soft_warn',
-            engine: ENGINE,
-            agent,
-            session,
-            phase: 'builder_wrap_up',
-            round,
-            maxRounds,
-            totalToolCalls,
-            maxToolCallsPerTurn,
-          });
-          loopMessages.push({
-            role: 'user',
-            content:
-              `[somora] Budget notice: ${roundsLeft} tool-call round(s) and ${callsLeft} tool call(s) ` +
-              'remain in this turn before the loop is stopped. Finish the step you are on, then write your report: ' +
-              'what is done and verified, what is open, what comes next. Call a tool only if the report needs it.',
-          });
-        } else if (isBuilderTurn && !builderCheckpointWarned && roundsLeft > 0 && callsLeft > 0 && atThreeQuarters) {
-          builderCheckpointWarned = true;
           logger.info({
             msg: 'engine.budget_soft_warn',
             engine: ENGINE,
@@ -2253,8 +2221,9 @@ export const openAiCompatibleEngine: AgentEngine = {
             role: 'user',
             content:
               `[somora] Budget checkpoint: ${roundsLeft} tool-call round(s) and ${callsLeft} tool call(s) ` +
-              'remain in this turn. This is not the end — keep working. Refresh your task list and put the most ' +
-              'important open items first. You will get a separate notice when it is time to write the report.',
+              'remain in this turn. Save your progress now (task list, a short status in your report file if ' +
+              'the task named one), put the most important open items first, then continue the task. ' +
+              'Do not stop because of this notice. If the limit is reached, you will be asked for your report.',
           });
         } else if (!isBuilderTurn && !softWarned && roundsLeft > 0 && callsLeft > 0 && atThreeQuarters) {
           softWarned = true;
@@ -2373,7 +2342,15 @@ export const openAiCompatibleEngine: AgentEngine = {
               'instead of answering. Answer the question directly NOW, ' +
               'in your own words, using the tool results already gathered above. ' +
               'Do not call any tools and do not repeat any instruction text.'
-            : `[somora] You have reached ${capDescription}. Respond NOW without further ` +
+            : isBuilderTurn
+              ? // A builder's last answer is its report: what the caller
+                // needs to accept or continue the work, the way OpenCode and
+                // DeepSeek-TUI ask at their step limit.
+                `[somora] You have reached ${capDescription}. Tools are off; this is your last response in this turn. ` +
+                'Write your report now: state that the limit was reached; what is done and how you verified it ' +
+                '(command and result, file, test); what is not done or not verified; what should happen next. ' +
+                'Do not call any tools.'
+              : `[somora] You have reached ${capDescription}. Respond NOW without further ` +
               'tool calls — summarize what you have learned from the tool results so far, ' +
               'even partially. Do not call any tools.',
         } as ChatMessage);
