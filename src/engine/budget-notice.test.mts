@@ -155,3 +155,17 @@ test('a builder near its tool-call limit gets the checkpoint from that limit', a
   const end = events.find((e) => e.kind === 'turn_end') as { forced_final?: string } | undefined;
   assert.equal(end?.forced_final, 'tool_budget');
 });
+
+test('a builder without a round cap names only the tool-call budget', async (t) => {
+  const { server, port } = await startBackend();
+  t.after(() => server.close());
+  // The builder default: no round cap; 40 tool calls brake the turn.
+  const events = await run(port, 'builder', Number.POSITIVE_INFINITY, 40);
+  assert.equal(seen.length, 2, JSON.stringify(seen));
+  assert.equal(seen[0]!.round, 31);
+  assert.match(seen[0]!.text, /Budget checkpoint: 10 tool call\(s\) remain/);
+  assert.doesNotMatch(seen[0]!.text, /Infinity|round\(s\)/);
+  assert.match(seen[1]!.text, /tool-call budget of 40 calls/);
+  const end = events.find((e) => e.kind === 'turn_end') as { forced_final?: string } | undefined;
+  assert.equal(end?.forced_final, 'tool_budget');
+});

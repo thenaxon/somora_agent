@@ -72,7 +72,7 @@ and is set up in `config.yaml`, not in an agent folder.
 | **Its prompt** | Its persona files, your team, the wiki map, memory recall | Harness rules, an environment block, the repository's own `AGENTS.md` or `CLAUDE.md`. No persona prose, no memory recall |
 | **Tools** | Everything configured, minus what you hide | A short coding set, plus what you allow |
 | **Skills** | All, minus what you hide | None, plus what you allow |
-| **Turn limits** | The server's `agentLoop` values: 8 rounds, 30 tool calls | 500 rounds, 2000 tool calls, 8 hours |
+| **Turn limits** | The server's `agentLoop` values: 8 rounds, 30 tool calls | No round cap, 2000 tool calls, 8 hours |
 | **Memory** | Notices facts, dreams them into notes and the wiki | Reads memory, never writes it, does not dream |
 | **Works in** | Its workspace | The pinned project's folder |
 | **Window** | Chat | Chat plus a task panel |
@@ -722,7 +722,7 @@ How the fallback chain works:
 | `a2a` | boolean | `false` | Other agent systems may send this agent tasks over [A2A](a2a.md#taking-work-in), if `config.yaml` lists them under `a2a.peers`. Also the A2A switch in the Agent window. Never for a builder. |
 | `steering` | boolean | `false` | Default for a message typed in the web client while a turn runs. `true` hands it into the running turn before its next step. `false` queues it as its own turn. The toggle next to Send flips it per message. Steering works on every engine: `openai-compatible`, `claude-cli`, `codex-cli` and `grok-cli`. |
 | `imageReview` | `never`, `always` | `never` | `always` feeds each generated image back to the agent so it can judge it, about 2k tokens per image. Not a lock: the agent can set `return_image` per call either way. |
-| `agentLoop.maxRounds` | integer | server value (8) | Rounds per turn on the `openai-compatible` engine. Builders default to 500. |
+| `agentLoop.maxRounds` | integer | server value (8) | Rounds per turn on the `openai-compatible` engine. Builders have none unless set. |
 | `agentLoop.maxToolCallsPerTurn` | integer | server value (30) | Tool calls per turn, across all rounds. Builders default to 2000. |
 | `agentLoop.maxTurnMs` | integer | none | Time limit per turn in milliseconds. Builders default to 8 hours. |
 

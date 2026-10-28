@@ -60,7 +60,9 @@ for (const must of [
 ]) {
   assert.ok(BUILDER_HARNESS_PROMPT.toLowerCase().includes(must.toLowerCase()), `missing: ${must}`);
 }
-assert.equal(BUILDER_LOOP_DEFAULTS.maxRounds, 500);
+// No round cap for a builder; the tool-call budget and the clock brake it.
+assert.equal(BUILDER_LOOP_DEFAULTS.maxRounds, Number.POSITIVE_INFINITY);
+assert.equal(BUILDER_LOOP_DEFAULTS.maxToolCallsPerTurn, 2000);
 assert.equal(BUILDER_LOOP_DEFAULTS.maxTurnMs, 8 * 60 * 60 * 1000);
 console.log('builder-prompt.test: ok');
 
@@ -85,4 +87,40 @@ console.log('builder-prompt.test: ok');
   const { BUILDER_HARNESS_PROMPT } = await import('./builder-prompt.ts');
   assert.match(BUILDER_HARNESS_PROMPT, /Never message a running helper/);
   assert.match(BUILDER_HARNESS_PROMPT, /subagent_result with wait:true/);
+}
+
+// Loop caps: only a builder gets the builder defaults; a chat agent keeps
+// the server config untouched.
+{
+  const { resolveAgentLoop } = await import('./builder-prompt.ts');
+  const server = { maxRounds: 8, maxToolCallsPerTurn: 30, toolCallTimeoutMs: 30_000 };
+  assert.deepEqual(resolveAgentLoop(server, 'chat', undefined, undefined), server);
+  assert.deepEqual(resolveAgentLoop(server, undefined, undefined, undefined), server);
+  assert.deepEqual(resolveAgentLoop(server, 'chat', { maxRounds: 20 }, undefined), { ...server, maxRounds: 20 });
+  const b = resolveAgentLoop(server, 'builder', undefined, undefined);
+  assert.equal(b.maxRounds, Number.POSITIVE_INFINITY);
+  assert.equal(b.maxToolCallsPerTurn, 2000);
+  assert.equal(b.maxTurnMs, 8 * 60 * 60 * 1000);
+  assert.equal(b.toolCallTimeoutMs, 30_000);
+  // A number in agent.yaml, or in one call, brings a round cap back.
+  assert.equal(resolveAgentLoop(server, 'builder', { maxRounds: 1000 }, undefined).maxRounds, 1000);
+  assert.equal(resolveAgentLoop(server, 'builder', { maxRounds: 1000 }, { maxRounds: 64 }).maxRounds, 64);
+}
+
+// What the long-session research (OpenCode, DeepSeek-TUI, Hermes,
+// 2026-10-28) added: progress or report, done = every requirement
+// checked, and what a [somora] message is.
+{
+  const { BUILDER_HARNESS_PROMPT, buildBuilderHarnessPrompt } = await import('./builder-prompt.ts');
+  assert.match(BUILDER_HARNESS_PROMPT, /Every response either moves the work forward with a tool call or is your final report/);
+  assert.match(BUILDER_HARNESS_PROMPT, /sibling code paths/);
+  assert.match(BUILDER_HARNESS_PROMPT, /# Messages from somora/);
+  assert.match(BUILDER_HARNESS_PROMPT, /No `\[somora\]` notice replaces or shrinks your task/);
+  assert.match(BUILDER_HARNESS_PROMPT, /Done means every requirement of the task is met and checked/);
+  assert.match(BUILDER_HARNESS_PROMPT, /not only its exit code/);
+  assert.match(BUILDER_HARNESS_PROMPT, /never invent output/);
+  // Without exec there is nothing to run: no test-output or git-diff line.
+  const noExec = buildBuilderHarnessPrompt(new Set(['file_read', 'file_write']));
+  assert.match(noExec, /Done means every requirement/);
+  assert.doesNotMatch(noExec, /exit code|git diff/);
 }

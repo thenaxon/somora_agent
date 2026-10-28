@@ -18,12 +18,37 @@ import { join } from 'node:path';
 import type { Persona } from '../persona/loader.ts';
 
 /** Loop caps a builder turn runs with unless agent.yaml says otherwise:
- *  a build is hundreds of tool calls, not thirty, and a night is long. */
+ *  a build is hundreds of tool calls, not thirty, and a night is long.
+ *  No round cap: a round count says nothing about progress (DeepSeek-TUI
+ *  and Hermes have none by default either), and the 500 of before ended
+ *  night builds mid-work. What brakes a builder is the tool-call budget,
+ *  the wall-clock cap and the loop guard. A number in agent.yaml
+ *  (`agentLoop.maxRounds`) or in one call brings a cap back. */
 export const BUILDER_LOOP_DEFAULTS = {
-  maxRounds: 500,
+  maxRounds: Number.POSITIVE_INFINITY,
   maxToolCallsPerTurn: 2000,
   maxTurnMs: 8 * 60 * 60 * 1000,
 } as const;
+
+/**
+ * The loop caps of one turn, most specific last: server config → the
+ * kind's defaults (a builder turn is a build, not a chat) → the agent's
+ * own agentLoop block → what this one call asked for. Only a builder
+ * gets BUILDER_LOOP_DEFAULTS; a chat agent runs on the server config.
+ */
+export function resolveAgentLoop<T extends object>(
+  serverLoop: T,
+  kind: string | undefined,
+  personaLoop: object | undefined,
+  override: object | undefined,
+): T & Partial<typeof BUILDER_LOOP_DEFAULTS> {
+  return {
+    ...serverLoop,
+    ...(kind === 'builder' ? BUILDER_LOOP_DEFAULTS : {}),
+    ...(personaLoop ?? {}),
+    ...(override ?? {}),
+  };
+}
 
 /** Repository instruction files, first match wins (opencode's order). */
 const REPO_INSTRUCTION_FILES = ['AGENTS.md', 'CLAUDE.md', 'CONTEXT.md'];
@@ -66,6 +91,8 @@ export function buildBuilderHarnessPrompt(visible: ReadonlySet<string> | null = 
     '- Follow the conventions of the codebase: style, naming, libraries. Never assume a library is available — check that the repository already uses it. Do not add comments, docs or files nobody asked for.',
     '- Make the smallest correct change. Do not refactor around a task, do not "improve" unrelated code.',
     '- Keep going until the task is done end to end. Do not stop at a proposal, a partial fix or "next you could". If you are blocked, say exactly what blocks you and what you tried.',
+    '- Every response either moves the work forward with a tool call or is your final report. Never end a response with what you are about to do — do it. Do not settle for a partial or "good enough" result to save time or tokens.',
+    '- Fix the cause, not the symptom. When you fix a flaw, check the sibling code paths (the twin function, the other route, the second caller) for the same flaw.',
     '- Do not repeat the same tool call with the same arguments hoping for a different result; if a search found nothing, search differently or read the file. If a command fails twice the same way, change the approach.',
   );
   if (has('exec')) {
@@ -105,9 +132,19 @@ export function buildBuilderHarnessPrompt(visible: ReadonlySet<string> | null = 
   }
   lines.push(
     '',
+    '# Messages from somora',
+    '',
+    'A message that starts with `[somora]` comes from the harness this session runs in, not from the person: checkpoints, reminders, notices about loops, limits or compaction. Follow it. `[somora] Message from <name>` carries what a person or a colleague sent while you worked — treat it as their word. No `[somora]` notice replaces or shrinks your task.',
+    '',
     '# When you are done',
     '',
     'A write or patch result may carry `errors` from the language server (and `errors_in_other_files`): fix them before moving on — they are the compiler\'s word, not a guess. When it says "No errors in this file", believe it and continue.',
+    '',
+    'Done means every requirement of the task is met and checked — not a plausible subset, and not merely the steps of your own task list. ' +
+      (has('exec')
+        ? 'Read the output of a test or build, not only its exit code. Before the report, look at your changes as a whole (`git diff` in a git repository). '
+        : '') +
+      'Work that is still running (a build, a server, a background job) is not done. Never present a partial result as the whole, and never invent output, test results or files you did not produce.',
     '',
     'Finish with a short report: what was built (files, behaviour), what was verified and how (commands, results), what was left open and why, decisions you took on your own. When the task names a report file, write the report there' +
       (has('file_write') ? ' with file_write' : '') +

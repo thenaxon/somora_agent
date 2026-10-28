@@ -2213,14 +2213,19 @@ export const openAiCompatibleEngine: AgentEngine = {
             session,
             phase: 'builder_checkpoint',
             round,
-            maxRounds,
+            maxRounds: Number.isFinite(maxRounds) ? maxRounds : 'none',
             totalToolCalls,
             maxToolCallsPerTurn,
           });
+          // A builder has no round cap by default (Infinity): name only
+          // the limits that exist.
+          const left = Number.isFinite(roundsLeft)
+            ? `${roundsLeft} tool-call round(s) and ${callsLeft} tool call(s)`
+            : `${callsLeft} tool call(s)`;
           loopMessages.push({
             role: 'user',
             content:
-              `[somora] Budget checkpoint: ${roundsLeft} tool-call round(s) and ${callsLeft} tool call(s) ` +
+              `[somora] Budget checkpoint: ${left} ` +
               'remain in this turn. Save your progress now (task list, a short status in your report file if ' +
               'the task named one), put the most important open items first, then continue the task. ' +
               'Do not stop because of this notice. If the limit is reached, you will be asked for your report.',

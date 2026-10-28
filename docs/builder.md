@@ -255,15 +255,21 @@ byte. In order:
 2. **Harness rules.** How to work: everything through tools, read
    before patching, search before assuming, verify after every change
    with the repository's own build and test commands, the smallest
-   correct change, git only when asked, no secrets, and what the final
-   report contains.
-3. **Team, compact.** The principal and the colleagues it can consult
+   correct change, git only when asked, no secrets. A fix covers the
+   cause and the sibling code paths. Every response either makes
+   progress with a tool call or is the final report.
+3. **Done and messages.** Done means every requirement checked, test
+   output read, the diff looked at, nothing still running, nothing
+   invented. A `[somora]` message is a notice from the harness, or a
+   message someone sent during the turn. Then what the final report
+   contains.
+4. **Team, compact.** The principal and the colleagues it can consult
    with `agent_ask`, one line each, plus the team rules.
-4. **Rules for this builder.** The body of its `AGENTS.md`.
-5. **Repository instructions.** `AGENTS.md`, `CLAUDE.md` or
+5. **Rules for this builder.** The body of its `AGENTS.md`.
+6. **Repository instructions.** `AGENTS.md`, `CLAUDE.md` or
    `CONTEXT.md` from the working directory. The first one found is
    used, cut at 20 000 characters.
-6. **Skills**, **this session** with mode and phase, and **project**.
+7. **Skills**, **this session** with mode and phase, and **project**.
 
 What keeps the prompt small:
 
@@ -306,9 +312,17 @@ The list is what you watch.
 its task list and append a short status to its report file, so a crash
 late in a long build loses minutes.
 
-**Budget notices.** At 75 % of `maxRounds` or `maxToolCallsPerTurn`
-the builder gets a checkpoint: save progress, most important open items
-first, keep working. It is not told to stop there; a chat agent is.
+**No round cap.** A builder has no `maxRounds` unless its `agent.yaml`
+sets one. A round count says nothing about progress, and the earlier
+cap of 500 ended night builds mid-work. The brakes are the tool-call
+budget (2000), the time cap (8 hours) and the loop guard below. A number
+in `agentLoop.maxRounds`, or `maxRounds` in one `spawn_subagent` call,
+brings a cap back. Chat agents keep the server's `agentLoop` values.
+
+**Budget notices.** At 75 % of `maxToolCallsPerTurn`, or of
+`maxRounds` when one is set, the builder gets a checkpoint: save
+progress, most important open items first, keep working. It is not told
+to stop there; a chat agent is.
 
 At the limit the tools are switched off and the builder writes its
 report: that the limit was reached, what is done and how it was
@@ -321,7 +335,7 @@ being cut off. `turn_end.forced_final` names the reason:
 
 | Reason | What happened |
 |---|---|
-| `round_cap` | `maxRounds` reached. |
+| `round_cap` | `maxRounds` reached. Only when one is set. |
 | `tool_budget` | `maxToolCallsPerTurn` reached. |
 | `time_cap` | `maxTurnMs` reached. |
 | `doom_loop` | The same tool calls with the same arguments five rounds in a row. The model gets a notice after three. |
@@ -345,7 +359,6 @@ All of them are per agent, in `agent.yaml`:
 kind: builder
 steering: true
 agentLoop:
-  maxRounds: 500
   maxToolCallsPerTurn: 2000
   maxTurnMs: 28800000
 tools:
@@ -361,7 +374,7 @@ skills:
 | `model` | the server default | Any configured model alias. |
 | `workspace.path` | the server's `workspace.default` | Working directory when no project is pinned. |
 | `steering` | `false` | `true` sends a message typed during a turn into that turn by default. |
-| `agentLoop.maxRounds` | `500` | Model rounds per turn. |
+| `agentLoop.maxRounds` | none | Model rounds per turn. Unset means no round cap. |
 | `agentLoop.maxToolCallsPerTurn` | `2000` | Tool calls per turn. |
 | `agentLoop.maxTurnMs` | `28800000` (8 h) | Wall-clock limit per turn. |
 | `tools.allow` | none | Adds tools to the builder list. |

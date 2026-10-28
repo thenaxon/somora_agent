@@ -45,7 +45,7 @@ import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
 import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
 import { drainSteer, frameSteerMessage, markSteerable, requeueSteer, unmarkSteerable } from './steer-inbox.ts';
-import { BUILDER_LOOP_DEFAULTS } from './builder-prompt.ts';
+import { resolveAgentLoop } from './builder-prompt.ts';
 import { ensureBuilderState, type BuilderSessionState } from './builder-session.ts';
 import { TURN_ASKER_KEY, TURN_ATTENDED_KEY, askerOf, isAttendedOrigin, sessionToolAllows } from './ask-attended.ts';
 import { builderToolDescription } from '../tools/builder/short-descriptions.ts';
@@ -1079,15 +1079,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         externalMcpServers: Object.entries(deps.config.mcp.servers)
           .filter(([, cfg]) => cfg.enabled)
           .map(([name, cfg]) => ({ name, timeoutMs: cfg.timeoutMs })),
-        // Loop caps, most specific last: server config → the kind's
-        // defaults (a builder turn is a build, not a chat) → the agent's
-        // own agentLoop block → what this one call asked for.
-        agentLoopConfig: {
-          ...deps.config.agentLoop,
-          ...(persona.kind === 'builder' ? BUILDER_LOOP_DEFAULTS : {}),
-          ...(persona.agentLoop ?? {}),
-          ...(agentLoopOverride ?? {}),
-        },
+        // Loop caps, most specific last (see resolveAgentLoop).
+        agentLoopConfig: resolveAgentLoop(deps.config.agentLoop, persona.kind, persona.agentLoop, agentLoopOverride),
         idleTimeoutMs: pickIdleTimeoutForEngine(
           deps.config.engineWatchdog,
           resolvedModel.provider.engine,

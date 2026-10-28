@@ -189,7 +189,7 @@ const AgentYamlSchema = z
     /**
      * Per-agent loop limits (openai-compatible engine): override the
      * server's agentLoop caps for this agent. A builder's defaults are
-     * generous (500 rounds, 2000 calls, 8 h); a chat agent inherits the
+     * generous (no round cap, 2000 calls, 8 h); a chat agent inherits the
      * server config unless set here.
      */
     agentLoop: z
