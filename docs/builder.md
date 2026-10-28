@@ -295,8 +295,10 @@ tool loop itself.
 
 **Mid-turn compaction.** When the next request would not fit the
 context window, the older rounds of the running turn are summarised
-into a work-state block: objective, details, completed, active,
-blocked, next move, relevant files. The last six rounds stay verbatim.
+into a work-state block: objective, the person's directions quoted
+word for word, details, completed (each verified or not), active,
+blocked, checks still owed with the last failure, repository state,
+what is still running, next move, relevant files. The last six rounds stay verbatim.
 The task list travels with the block, so the builder keeps ticking it
 off.
 
@@ -328,7 +330,27 @@ At the limit the tools are switched off and the builder writes its
 report: that the limit was reached, what is done and how it was
 verified, what is not done or not verified, what comes next. The log
 line for the checkpoint is `engine.budget_soft_warn` with `phase`
-`builder_checkpoint`.
+`builder_checkpoint`. The chat shows it as a `budget checkpoint` row.
+
+**Open tasks at the end.** A builder that wants to end its turn while
+its task list still has open items is told to go on: mark what is
+really done, continue with the rest, or name the blocker and write the
+report. This happens at most twice per turn, and only when:
+
+- the turn wrote the task list itself (a turn that answers a question
+  about the state is left alone),
+- the session is in the build phase (the plan phase ends with open
+  steps by design),
+- the builder did not end right after such a notice (that answer
+  stands).
+
+The chat shows an `open tasks` row.
+
+**A cut-off answer.** When the builder's answer runs into the output
+limit (`maxTokens`), it is told to continue exactly where it stopped,
+at most twice per turn. The parts are joined into one answer. The
+chat shows an `answer cut off` row. The test is the token count of
+that response, because routers rewrite the stop reason.
 
 **Brakes.** A turn that hits a limit is asked for its report instead of
 being cut off. `turn_end.forced_final` names the reason:
@@ -349,7 +371,8 @@ short.
 text nor a tool call hit the model's output cap (`maxTokens`, which
 includes reasoning). The engine tells the model to continue with shorter
 thinking, at most twice per turn. This and the doom-loop brake apply to
-every agent on this engine, not only builders.
+every agent on this engine. Everything else in this section applies to
+builders only.
 
 ## Settings
 

@@ -232,9 +232,13 @@ record of what it did. A trimmed turn leaves a `context trimmed` row.
 
 A [builder](builder.md#long-turns) turn takes one step before trimming.
 When the next request no longer fits, the earlier rounds of the turn are
-summarised into a work-state block: what was done, what is in progress,
-what is blocked, the next move and the relevant files. The task list is
-appended. The last six rounds stay word for word.
+summarised into a work-state block: the objective, the person's
+directions quoted word for word, what was done (verified or not), what
+is in progress, what is blocked, the checks still owed with the last
+failure, the repository state, what is still running, the next move and
+the relevant files.
+
+The task list is appended. The last six rounds stay word for word.
 
 This leaves a `context compacted` row. It uses `workers` and
 `preferSessionModel`, asks at most three models, and falls back to

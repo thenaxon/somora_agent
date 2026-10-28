@@ -1039,6 +1039,10 @@ most notes have a readable `payload.text`.
 | `session_model` | An agent switched this session's model (label `model switched`). |
 | `voice_handover`, `voice_spoken` | A call was handed to or from another agent. What a call said out loud, in older sessions. |
 | `reasoning_effort_adjusted`, `sampling_dropped` | The backend refused a parameter and the turn was retried without it. |
+| `doom_loop_notice`, `doom_loop_stop` | The same tool calls three rounds in a row: the model was told to change course (label `loop noticed`). Five rounds: the turn was stopped (`loop stopped`). |
+| `budget_checkpoint` | A builder used 75 % of its turn budget and was told to save its progress and keep working. `payload` has `round`, `toolCalls`, `maxRounds` (`null` without a round cap) and `maxToolCallsPerTurn`. |
+| `open_tasks_notice` | A builder wanted to end its turn with open items on its task list and was told to continue or to name the blocker (label `open tasks`). `payload.open` is the count. |
+| `answer_cut_off` | A builder's answer was cut off by the output limit and it was told to continue where it stopped. |
 
 An unknown `itemType` keeps its raw name as label.
 

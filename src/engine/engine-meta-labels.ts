@@ -65,6 +65,17 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     // tool rounds, so the oldest tool results were shortened to keep it
     // going. Nothing was re-run.
     context_trimmed: 'context trimmed',
+    // somora-emitted: the same tool calls three rounds in a row (a notice
+    // to the model), and five (the turn was stopped). Were missing here,
+    // so clients outside the web window showed the raw item type.
+    doom_loop_notice: 'loop noticed',
+    doom_loop_stop: 'loop stopped',
+    // somora-emitted, builders only: the 75 % checkpoint, the turn-end
+    // notice about open task-list items, and the continue after an answer
+    // the output cap cut off.
+    budget_checkpoint: 'budget checkpoint',
+    open_tasks_notice: 'open tasks',
+    answer_cut_off: 'answer cut off',
   },
   // Rows a realtime call writes. Keyed by 'voice' because that is the
   // engine the call stamps them with — filed under openai-compatible
@@ -159,6 +170,17 @@ export function summariseEngineMeta(
   if ((engine === 'a2a' && itemType === 'a2a_task') || (engine === 'acp' && (itemType === 'external_session_new' || itemType === 'external_unprompted'))) {
     const p = payload as { text?: unknown; message?: unknown } | null | undefined;
     return typeof p?.text === 'string' ? p.text : typeof p?.message === 'string' ? p.message : undefined;
+  }
+  if (
+    engine === 'openai-compatible' &&
+    (itemType === 'doom_loop_notice' ||
+      itemType === 'doom_loop_stop' ||
+      itemType === 'budget_checkpoint' ||
+      itemType === 'open_tasks_notice' ||
+      itemType === 'answer_cut_off')
+  ) {
+    const p = payload as { text?: unknown } | null | undefined;
+    return typeof p?.text === 'string' ? p.text : undefined;
   }
   if (itemType === 'voice_spoken' || itemType === 'voice_handover') {
     const p = payload as { text?: unknown } | null | undefined;

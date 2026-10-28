@@ -69,6 +69,11 @@ export function renderRoundsTranscript(messages: LoopMessage[]): string {
   return out.join('\n');
 }
 
+// Builder turns only (the engine compacts mid-turn for builders). The
+// sections after Work State follow DeepSeek-TUI's compaction prompt and
+// OpenCode's rules (2026-10-28): the person's words verbatim, verified
+// kept apart from assumed, the check still owed with its last failure,
+// the repository state, and what is still running.
 export const WORK_STATE_TEMPLATE = [
   'You summarise the work an engineering agent did so far in ONE turn, so',
   'that the same agent can continue with the summary in place of the',
@@ -79,16 +84,28 @@ export const WORK_STATE_TEMPLATE = [
   '## Objective',
   '- [what the turn is trying to accomplish]',
   '',
+  '## User Direction',
+  '- [the task as given, and every correction, limit or permission from the person or the orderer — quoted exactly, never paraphrased or narrowed; or "(none)"]',
+  '',
   '## Important Details',
   '- [constraints, decisions and why, facts needed to continue, or "(none)"]',
   '',
   '## Work State',
   '### Completed',
-  '- [finished, verified work and changes made, or "(none)"]',
+  '- [finished work and changes made, each marked "verified: <how>" or "not verified", or "(none)"]',
   '### Active',
   '- [current work, partial changes, investigation state, or "(none)"]',
   '### Blocked',
   '- [blockers, failing commands, unknowns, or "(none)"]',
+  '',
+  '## Verification Left',
+  '- [checks still to run, as exact commands; the last failure verbatim; or "(none)"]',
+  '',
+  '## Repository State',
+  '- [changed files, whether committed, uncommitted or pushed, the branch; or "(none)"]',
+  '',
+  '## Still Running',
+  '- [servers, watchers, background jobs started in this turn: what, port or process, how to stop it; or "(none)"]',
   '',
   '## Next Move',
   '1. [immediate concrete action, or "(none)"]',

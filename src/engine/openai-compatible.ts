@@ -66,6 +66,14 @@ const MAX_REASONING_ONLY_NUDGES = 2;
 const TODO_STALE_ROUNDS = 12;
 /** Rounds of a builder turn kept verbatim when it compacts itself. */
 const MIDTURN_KEEP_ROUNDS = 6;
+// A builder that ends its turn while its task list still has open items
+// is asked to go on (or to say what blocks it) at most this often per
+// turn. Hermes and DeepSeek-TUI do the same at turn end; night builds
+// 2026-10-27/28 ended with work open.
+const MAX_OPEN_TASK_NUDGES = 2;
+// A builder answer cut off by the output cap is continued at most this
+// often per turn (OpenCode: 2, Hermes: 4).
+const MAX_CUT_ANSWER_CONTINUES = 2;
 
 // Hard fallbacks if the server forgot to pass an agent-loop config.
 // Should never fire in practice — `config.agentLoop` is non-optional in
@@ -1035,6 +1043,15 @@ export const openAiCompatibleEngine: AgentEngine = {
     let argRerolls = 0;
     let reasoningOnlyNudges = 0;
     let lastTodoRound = 1;
+    /** Whether this turn wrote the task list: a turn that works the list
+     *  is held to it at its end; a turn that only answers a question is
+     *  not. */
+    let todoWrittenThisTurn = false;
+    let openTaskNudges = 0;
+    let lastOpenTaskNudgeRound = -1;
+    let cutAnswerContinues = 0;
+    /** The next round continues a cut-off answer: no paragraph break. */
+    let joinNextContent = false;
 
     // An EMPTY array is not "no tools" to a backend: LiteLLM answers
     // `400 "tools must not be an empty array. Either provide at least one
@@ -1465,6 +1482,9 @@ export const openAiCompatibleEngine: AgentEngine = {
         let roundReasoningAfterContent = '';
         const roundToolCalls = new Map<number, StreamingToolCall>();
         let finishReason: string | null = null;
+        /** Output tokens of THIS round (lastCompletionTokens may be an
+         *  earlier round's when a backend sends no usage). */
+        let roundCompletionTokens: number | undefined;
 
         // Manual iteration with abort-race instead of plain `for await
         // (const chunk of stream)`. The OpenAI SDK passes our
@@ -1627,6 +1647,7 @@ export const openAiCompatibleEngine: AgentEngine = {
             // turn cost; this is how full the window actually got.
             lastPromptTokens = chunk.usage.prompt_tokens ?? lastPromptTokens;
             lastCompletionTokens = chunk.usage.completion_tokens ?? lastCompletionTokens;
+            roundCompletionTokens = chunk.usage.completion_tokens ?? roundCompletionTokens;
             // Calibrate: what did the provider count for what we sent?
             if (chunk.usage.prompt_tokens && estimateInFlight && estimateInFlight > 0) {
               tokenRatio = chunk.usage.prompt_tokens / estimateInFlight;
@@ -1725,9 +1746,11 @@ export const openAiCompatibleEngine: AgentEngine = {
         // Merge the round's content into the cumulative (separator only when
         // there's previous content AND new content).
         if (roundContent) {
-          cumulative = cumulative ? `${cumulative}\n\n${roundContent}` : roundContent;
+          cumulative = cumulative ? `${cumulative}${joinNextContent ? '' : '\n\n'}${roundContent}` : roundContent;
         }
-        lastRoundContent = roundContent;
+        // A continued answer is one answer: its parts stay together.
+        lastRoundContent = joinNextContent && roundContent ? lastRoundContent + roundContent : roundContent;
+        joinNextContent = false;
         if (roundThinking) {
           turnThinking = turnThinking ? `${turnThinking}\n\n${roundThinking}` : roundThinking;
           roundThinking = '';
@@ -1770,6 +1793,95 @@ export const openAiCompatibleEngine: AgentEngine = {
                 'next tool or write the answer.',
             });
             continue;
+          }
+          // A builder answer that ran into the output cap: text, no tool
+          // call, and the round used (nearly) the whole cap. The stop
+          // reason alone is not trusted (routers rewrite it), the token
+          // count is the structural test. Ending here would hand over
+          // half a report.
+          const outputCap = resolvedModel.model.maxTokens;
+          const cutOff =
+            finishReason === 'length' ||
+            (outputCap !== undefined && roundCompletionTokens !== undefined && roundCompletionTokens >= outputCap * 0.98);
+          if (isBuilderTurn && roundContent && cutOff && cutAnswerContinues < MAX_CUT_ANSWER_CONTINUES) {
+            cutAnswerContinues++;
+            logger.warn({
+              msg: 'engine.builder_answer_cut',
+              engine: ENGINE,
+              agent,
+              session,
+              round,
+              attempt: cutAnswerContinues,
+              finishReason,
+              outputTokens: roundCompletionTokens,
+              outputCap,
+            });
+            yield {
+              kind: 'engine_meta',
+              ts: ts(),
+              engine: ENGINE,
+              itemType: 'answer_cut_off',
+              payload: {
+                text: `The answer was cut off by the output limit (${roundCompletionTokens ?? '?'} of ${outputCap ?? '?'} tokens); the builder was told to continue where it stopped.`,
+                round,
+                attempt: cutAnswerContinues,
+              },
+            };
+            loopMessages.push({ role: 'assistant', content: roundContent } as ChatMessage);
+            loopMessages.push({
+              role: 'user',
+              content:
+                '[somora] Your last response was cut off by the output limit. Continue exactly where it stopped, ' +
+                'mid-sentence if needed. Do not repeat or summarise what you already wrote. If much remains, ' +
+                'put details into a file and keep the answer short.',
+            } as ChatMessage);
+            joinNextContent = true;
+            continue;
+          }
+          // A builder that ends while its task list still has open items
+          // is asked to go on or to say what blocks it — only when this
+          // turn worked the list (a turn answering a question is left
+          // alone), only in the build phase (the plan phase ends with open
+          // steps by design: no file_write/file_patch there), and not
+          // again when it ends right after such a notice: that is its
+          // considered answer.
+          if (
+            isBuilderTurn &&
+            todoWrittenThisTurn &&
+            openTaskNudges < MAX_OPEN_TASK_NUDGES &&
+            round !== lastOpenTaskNudgeRound + 1 &&
+            toolList.some((t) => t.name === 'file_write' || t.name === 'file_patch')
+          ) {
+            const todosNow = ((await metaStore.get(agent, session)) as { todos?: { content?: string; status?: string }[] }).todos;
+            const open = Array.isArray(todosNow) ? todosNow.filter((t) => t.status === 'pending' || t.status === 'in_progress') : [];
+            if (open.length > 0) {
+              openTaskNudges++;
+              lastOpenTaskNudgeRound = round;
+              const names = open.slice(0, 5).map((t) => `"${String(t.content ?? '').slice(0, 80)}"`).join(', ');
+              logger.info({ msg: 'engine.builder_open_tasks', engine: ENGINE, agent, session, round, open: open.length, attempt: openTaskNudges });
+              yield {
+                kind: 'engine_meta',
+                ts: ts(),
+                engine: ENGINE,
+                itemType: 'open_tasks_notice',
+                payload: {
+                  text: `The builder wanted to end with ${open.length} open item(s) on its task list; it was told to continue or to name the blocker.`,
+                  round,
+                  open: open.length,
+                  attempt: openTaskNudges,
+                },
+              };
+              if (roundContent) loopMessages.push({ role: 'assistant', content: roundContent } as ChatMessage);
+              loopMessages.push({
+                role: 'user',
+                content:
+                  `[somora] Your task list still has ${open.length} open item(s): ${names}${open.length > 5 ? ', …' : ''}. ` +
+                  'Do not end the turn and do not shrink the task to what is done. If an item is in fact done and ' +
+                  'verified, mark it completed with todo_write. Otherwise continue with it. If something truly ' +
+                  'blocks you, name the blocker and what you tried, then write your report.',
+              } as ChatMessage);
+              continue;
+            }
           }
           // No tools requested — model gave its final answer this round.
           break;
@@ -2062,7 +2174,10 @@ export const openAiCompatibleEngine: AgentEngine = {
           // Timeout → error-shaped result the model can retry against.
           // Abort → AbortError so the turn ends without waiting out the
           // full tool budget (stop-button felt broken during long exec).
-          if (runName === 'todo_write') lastTodoRound = round;
+          if (runName === 'todo_write') {
+            lastTodoRound = round;
+            todoWrittenThisTurn = true;
+          }
           const invoked = await raceToolInvoke(tools.invoke(runName, runArgs), {
             timeoutMs: toolTimeoutMs,
             signal: effectiveSignal,
@@ -2217,6 +2332,19 @@ export const openAiCompatibleEngine: AgentEngine = {
             totalToolCalls,
             maxToolCallsPerTurn,
           });
+          yield {
+            kind: 'engine_meta',
+            ts: ts(),
+            engine: ENGINE,
+            itemType: 'budget_checkpoint',
+            payload: {
+              text: `75 % of the turn budget used (round ${round}, ${totalToolCalls} tool calls); the builder was told to save its progress and keep working.`,
+              round,
+              toolCalls: totalToolCalls,
+              maxRounds: Number.isFinite(maxRounds) ? maxRounds : null,
+              maxToolCallsPerTurn,
+            },
+          };
           // A builder has no round cap by default (Infinity): name only
           // the limits that exist.
           const left = Number.isFinite(roundsLeft)

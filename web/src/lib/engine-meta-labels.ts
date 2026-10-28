@@ -32,6 +32,12 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     context_compacted: 'context compacted',
     doom_loop_notice: 'loop noticed',
     doom_loop_stop: 'loop stopped',
+    context_trimmed: 'context trimmed',
+    reasoning_effort_adjusted: 'reasoning effort adjusted',
+    sampling_dropped: 'sampling dropped',
+    budget_checkpoint: 'budget checkpoint',
+    open_tasks_notice: 'open tasks',
+    answer_cut_off: 'answer cut off',
   },
 };
 

@@ -169,3 +169,16 @@ test('a builder without a round cap names only the tool-call budget', async (t) 
   const end = events.find((e) => e.kind === 'turn_end') as { forced_final?: string } | undefined;
   assert.equal(end?.forced_final, 'tool_budget');
 });
+
+test('the checkpoint is a visible row for a builder, and there is none for a chat agent', async (t) => {
+  const { server, port } = await startBackend();
+  t.after(() => server.close());
+  const rows = (evs: NormalizedEvent[]) =>
+    evs.filter((e) => e.kind === 'engine_meta' && (e as { itemType?: string }).itemType === 'budget_checkpoint') as Array<{ payload?: { text?: string; maxRounds?: unknown } }>;
+  const builder = rows(await run(port, 'builder', Number.POSITIVE_INFINITY, 40));
+  assert.equal(builder.length, 1);
+  assert.match(String(builder[0]!.payload?.text), /keep working/);
+  assert.equal(builder[0]!.payload?.maxRounds, null, 'no round cap is null, not Infinity');
+  const chat = rows(await run(port, 'chat', 40));
+  assert.equal(chat.length, 0);
+});

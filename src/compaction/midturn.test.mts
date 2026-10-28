@@ -38,6 +38,9 @@ const r = await compactTurnMidway({
   agent: 'dan',
   summarize: async (_w, system, user) => {
     assert.match(system, /## Work State/);
+    for (const h of ['## User Direction', '## Verification Left', '## Repository State', '## Still Running']) assert.ok(system.includes(h), h);
+    assert.match(system, /quoted exactly/);
+    assert.match(system, /"verified: <how>" or "not verified"/);
     assert.match(user, /<transcript>/);
     return { text: '## Objective\n- build the thing\n## Next Move\n1. round 5' };
   },
