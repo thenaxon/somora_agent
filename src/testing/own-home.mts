@@ -5,12 +5,21 @@
 // installation but trusts the runner's shared home; this one never shares.)
 // Import it FIRST — ES modules run their imports in order, so everything
 // imported after it sees the new home.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const home = mkdtempSync(join(tmpdir(), 'somora-test-own-'));
 process.env.SOMORA_HOME = home;
 process.env.CLAUDE_CONFIG_DIR = join(home, 'claude-home');
+// Gone with the test file's process. Left behind, about a thousand of
+// these (some 90 MB each) filled a 12 GB /tmp (2026-10-29).
+process.on('exit', () => {
+  try {
+    rmSync(home, { recursive: true, force: true });
+  } catch {
+    /* best effort */
+  }
+});
 
 export const OWN_HOME = home;
