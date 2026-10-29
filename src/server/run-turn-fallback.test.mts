@@ -7,11 +7,11 @@ import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
 import { listUnavailableModels, markModelUnavailable, modelUnavailable, resetModelAvailability } from '../engine/model-availability.ts';
 
-const mk = (id: string): any => ({ id, alias: id, contextWindow: 1000, capabilities: ['text'] });
+const mk = (id: string, contextWindow = 1000): any => ({ id, alias: id, contextWindow, capabilities: ['text'] });
 const config: any = {
   engineWatchdog: { claudeCliIdleMs: 1, codexCliIdleMs: 1, grokCliIdleMs: 1, openaiCompatibleIdleMs: 1 },
   providers: {
-    a: { engine: 'openai-compatible', baseUrl: 'http://x/v1', apiKey: 'k', models: [mk('m1'), mk('m2'), mk('m3')] },
+    a: { engine: 'openai-compatible', baseUrl: 'http://x/v1', apiKey: 'k', models: [mk('m1'), mk('m2'), mk('m3'), mk('small', 500), mk('big', 5000)] },
   },
 };
 const rm = (id: string) => ({ providerName: 'a', modelId: id, model: mk(id), provider: config.providers.a });
@@ -19,7 +19,8 @@ const rm = (id: string) => ({ providerName: 'a', modelId: id, model: mk(id), pro
 //              marked provider error (the 2026-09-09 Claude case).
 // 'lateflop' — a real answer was streaming and then something broke.
 // 'toolthen' — a tool already ran, so the turn had side effects.
-type Behaviour = 'ok' | 'die' | 'quota' | 'lateflop' | 'toolthen';
+// 'overflow' — the conversation does not fit the window, even compacted.
+type Behaviour = 'ok' | 'die' | 'quota' | 'lateflop' | 'toolthen' | 'overflow';
 const behaviour = new Map<string, Behaviour>();
 (engineRegistry as any)['openai-compatible'] = {
   name: 'openai-compatible',
@@ -28,6 +29,10 @@ const behaviour = new Map<string, Behaviour>();
     const end = { kind: 'turn_end', ts: 1, engine: 'openai-compatible', turnId: 't-' + id };
     yield { kind: 'turn_start', ts: 1, engine: 'openai-compatible', turnId: 't-' + id };
     switch (behaviour.get(id)) {
+      case 'overflow':
+        yield { kind: 'error', ts: 1, engine: 'openai-compatible', message: `does not fit ${id}`, providerError: false, contextOverflow: true };
+        yield end;
+        return;
       case 'die':
         yield { kind: 'error', ts: 1, engine: 'openai-compatible', message: `${id} down` };
         yield end;
@@ -53,6 +58,8 @@ const behaviour = new Map<string, Behaviour>();
     }
   },
 };
+/** The scripted engine above; some tests below swap runTurn out. */
+const scriptedRunTurn = (engineRegistry as any)['openai-compatible'].runTurn;
 async function run(refs: string[]) {
   const out: any[] = [];
   for await (const ev of runTurnWithFallback({ primary: rm('m1'), fallbackRefs: refs, baseInput: {} as any, config })) out.push(ev);
@@ -210,4 +217,46 @@ test('a plain refusal (4xx wording) marks nothing', async () => {
   };
   await run(['m2']);
   assert.equal(modelUnavailable('a/m1'), null, 'a 400 is a config problem, not an outage');
+});
+
+// ── a conversation too big for the window (report 2026-10-28) ───────
+
+test('a context overflow skips a fallback with no larger window, and says so', async () => {
+  resetModelAvailability();
+  (engineRegistry as any)['openai-compatible'].runTurn = scriptedRunTurn;
+  behaviour.set('m1', 'overflow');
+  behaviour.set('small', 'ok');
+  behaviour.set('m2', 'ok');
+  const out = await run(['small', 'm2']);
+  assert.equal(out.filter((e) => e.kind === 'model_fallback').length, 0, 'no switch to a model that cannot hold it');
+  assert.ok(!out.some((e) => e.kind === 'assistant_message'), 'neither smaller nor equal model ran');
+  const errs = out.filter((e) => e.kind === 'error');
+  assert.equal(errs.length, 1);
+  assert.match(errs[0].message, /does not fit m1/);
+  assert.match(errs[0].message, /a\/small: not tried: its context window \(500\) is no larger/);
+  assert.match(errs[0].message, /a\/m2: not tried/);
+  assert.equal(out[out.length - 1].kind, 'turn_end');
+});
+
+test('a context overflow moves on to a model with a larger window', async () => {
+  resetModelAvailability();
+  (engineRegistry as any)['openai-compatible'].runTurn = scriptedRunTurn;
+  behaviour.set('m1', 'overflow');
+  behaviour.set('small', 'ok');
+  behaviour.set('big', 'ok');
+  const out = await run(['small', 'big']);
+  const fb = out.filter((e) => e.kind === 'model_fallback');
+  assert.equal(fb.length, 1);
+  assert.equal(fb[0].actual, 'a/big');
+  assert.deepEqual(fb[0].hops.map((h: any) => h.model), ['a/m1', 'a/small']);
+  assert.ok(out.some((e) => e.kind === 'assistant_message' && e.text === 'hi from big'));
+});
+
+test('an ordinary failure still falls back to a smaller model', async () => {
+  resetModelAvailability();
+  (engineRegistry as any)['openai-compatible'].runTurn = scriptedRunTurn;
+  behaviour.set('m1', 'die');
+  behaviour.set('small', 'ok');
+  const out = await run(['small']);
+  assert.equal(out.filter((e) => e.kind === 'model_fallback')[0]?.actual, 'a/small');
 });

@@ -69,6 +69,10 @@ export interface AskResultOutcome {
   response?: string;
   error?: string;
   outcome?: string;
+  /** `provider/model` that produced the answer. */
+  model?: string;
+  /** Present when a fallback model answered instead of the one asked for. */
+  fallback?: { requested: string; reason: string };
   ms?: number;
   source?: 'registry' | 'history';
   hint?: string;
@@ -84,6 +88,8 @@ interface ServerAskResult {
   response?: string;
   error?: string;
   outcome?: string;
+  model?: string;
+  fallback?: { requested: string; reason: string };
   source?: 'registry' | 'history';
   circular_wait?: boolean;
   chain?: string[];
@@ -200,6 +206,8 @@ export const agentAskResult: ToolDefinition<InputT, AskResultOutcome> = {
         state: 'done',
         response: data.response ?? '',
         ...(data.outcome ? { outcome: data.outcome } : {}),
+        ...(data.model ? { model: data.model } : {}),
+        ...(data.fallback ? { fallback: data.fallback } : {}),
       };
     }
     if (data.state === 'failed') {

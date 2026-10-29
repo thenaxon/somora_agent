@@ -45,7 +45,7 @@ function label(m: ResolvedModel): string {
 async function* attempt(
   model: ResolvedModel,
   input: TurnInput,
-  onFail: (message: string) => void,
+  onFail: (message: string, contextOverflow?: boolean) => void,
 ): AsyncGenerator<NormalizedEvent> {
   const engine = engineRegistry[model.provider.engine];
   if (!engine) {
@@ -70,6 +70,7 @@ async function* attempt(
   let sawToolCall = false;
   let sawText = false;
   let failure: string | null = null;
+  let overflow = false;
   const mayRetry = (providerError: boolean): boolean => {
     if (sawToolCall || input.signal?.aborted) return false;
     return !sawText || providerError;
@@ -80,6 +81,7 @@ async function* attempt(
       if (ev.kind === 'assistant_delta' || ev.kind === 'assistant_message') sawText = true;
       if (ev.kind === 'error' && mayRetry(ev.providerError === true)) {
         failure = ev.message;
+        overflow = ev.contextOverflow === true;
         continue;
       }
       if (ev.kind === 'turn_end' && failure) continue;
@@ -92,7 +94,7 @@ async function* attempt(
     if (!mayRetry(true)) throw err;
     failure = (err as Error).message;
   }
-  if (failure) onFail(failure);
+  if (failure) onFail(failure, overflow);
 }
 
 export async function* runTurnWithFallback(args: Args): AsyncGenerator<NormalizedEvent> {
@@ -105,8 +107,16 @@ export async function* runTurnWithFallback(args: Args): AsyncGenerator<Normalize
   // Holder rather than a plain `let`: the failure is written from the
   // attempt() callback, which TypeScript's narrowing cannot see.
   const failed: { message: string | null } = { message: null };
-  const onFail = (m: string): void => {
+  /** The largest window a conversation has been found too big for, on
+   *  this turn. A context overflow is not a provider failure: a model
+   *  whose window is no larger cannot hold it either, so the chain only
+   *  moves on to a larger one (report 2026-10-28: a whole build moved
+   *  to a smaller model, and only got going because that attempt
+   *  compacted again). */
+  let overflowWindow = 0;
+  const onFail = (m: string, contextOverflow?: boolean): void => {
     failed.message = m;
+    if (contextOverflow) overflowWindow = Math.max(overflowWindow, current.model.contextWindow);
   };
   // A failure that says "the host was not there" is written down for
   // every other cascade (model-availability.ts); a model that answers
@@ -184,6 +194,14 @@ export async function* runTurnWithFallback(args: Args): AsyncGenerator<Normalize
         hops.push({ model: label(candidate), reason: unavailableReason(mark) });
         continue;
       }
+    }
+    if (overflowWindow > 0 && candidate.model.contextWindow <= overflowWindow) {
+      logger.info({ msg: 'engine.fallback_skip_context', hop: hop + 1, model: label(candidate), window: candidate.model.contextWindow, tooBigFor: overflowWindow });
+      hops.push({
+        model: label(candidate),
+        reason: `not tried: its context window (${candidate.model.contextWindow.toLocaleString('en-US')}) is no larger than the one the conversation did not fit`,
+      });
+      continue;
     }
     if (!engineRegistry[candidate.provider.engine]) {
       logger.warn({ msg: 'engine.fallback_engine_missing', hop: hop + 1, ref, engine: candidate.provider.engine });

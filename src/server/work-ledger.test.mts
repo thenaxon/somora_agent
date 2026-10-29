@@ -833,5 +833,16 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = BEA):
   check('9g the result is still readable for agent_ask_result', getWork('w-1')?.state === 'done' && getWork('w-1')?.result?.finalText === 'here is the research anyway');
 }
 
+// ── 10. an answer from a fallback model says so (report 2026-10-28) ─
+{
+  _resetWorkLedger();
+  openWork({ id: 'fb-1', origin: { kind: 'agent', from: { agent: 'ada' }, callId: 'fb-1' }, target: { agent: 'bea', session: 'main' }, text: 'q', waiting: false });
+  finishWork('fb-1', { ...ok('built it'), fallback: { requested: 'p/big', actual: 'p/small', reason: 'does not fit' } } as ChatTurnResult);
+  check('10a the wake names the model that answered', wakeTextFor(getWork('fb-1')!).text.includes('A fallback model answered: p/small instead of p/big.'));
+  openWork({ id: 'fb-2', origin: { kind: 'agent', from: { agent: 'ada' }, callId: 'fb-2' }, target: { agent: 'bea', session: 'main' }, text: 'q', waiting: false });
+  finishWork('fb-2', ok('built it'));
+  check('10b no fallback, no line', !wakeTextFor(getWork('fb-2')!).text.includes('fallback'));
+}
+
 console.log(`\n${pass} ok, ${fail} failed`);
 assert.equal(fail, 0);

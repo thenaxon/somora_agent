@@ -1677,13 +1677,15 @@ The outcome of one agent's question to another, by call id.
 { "call_id": "…", "state": "done", "target_agent": "<other-agent>",
   "target_session": "20260906-172957_research", "started_at": 1788000000000,
   "finished_at": 1788000042000, "response": "…", "outcome": "completed",
-  "source": "registry" }
+  "model": "<provider>/<model>", "source": "registry" }
 ```
 
 | Field | Meaning |
 |---|---|
 | `state` | `queued`, `running`, `done` or `failed`. Read from history it can also be `unknown`: the turn never ended. |
 | `response`, `outcome` | The reply and the turn's outcome, once done. |
+| `model` | `provider/model` that produced the reply. Read from history, it comes from the turn's end. |
+| `fallback` | `{requested, reason}` when a backup model answered instead of the one asked for. Absent otherwise. |
 | `error` | Why it failed. `stopped by the user` and `removed from the queue by the user before it started` mean a person intervened. An agent should not retry those by itself. |
 | `source` | `registry` (in memory) or `history` (read from the target session). |
 
@@ -1844,6 +1846,7 @@ The builder state of a session.
 |---|---|
 | `state` | `{mode, phase, planPath, todos, orderer?}`, or `null` before the session's first turn. `mode` is `attended` or `unattended`, `phase` is `plan` or `build`. |
 | `acceptance` | `{items, required}`: the acceptance list (see below) and whether the order requires it. |
+| `writeAllow` | Folders the builder may write in besides the project: set by the orderer or by "Allow this folder for the session". |
 | `question` | `{questionId, question, header?, options: [{label, description?}], multiple, askedAt, expiresAt}` or `null`. Also carries the question a builder raises before writing outside its project folder. |
 | `turn` | Progress of the running turn, else `null`. |
 
@@ -1858,6 +1861,7 @@ Changes mode, phase or plan file. Sends `builder_state`.
 | `planPath` | An absolute path, or `null` to clear it. |
 | `orderer` | `{agent, session?}`: the agent that handed the order over. Set by `builder_dispatch`. |
 | `acceptanceRequired` | `true` makes the acceptance list required for this session. Set by `builder_dispatch`. |
+| `writeAllow` | Absolute folders the builder may also write in, added to those already allowed. At most 4. Each must exist and be narrow: not `/`, not the home folder, not a folder holding the project, not inside somora's home. Needs a pinned project. Set by `builder_dispatch` `write_allow`. |
 
 Returns `{agent, session, state}`. `400` for a value outside these.
 

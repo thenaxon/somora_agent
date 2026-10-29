@@ -703,6 +703,13 @@ How the fallback chain works:
 - **Refusals as text.** Some providers send their refusal, such as a
   quota notice, as answer text and then report an error. That text is
   not an answer, so the chain still runs.
+- **A conversation too big is not a failure.** When it does not fit
+  the model's window even after compacting twice, the chain skips
+  every backup whose window is no larger. A smaller model cannot hold
+  what a bigger one could not.
+- **The asking agent sees it.** An agent that asked this one gets the
+  model that answered (`model`) and, after a switch, `fallback` with
+  the model it asked for and why. Its wake-up says so too.
 - **You see it.** The turn carries a fallback chip and the web client
   shows a notice.
 - **Dead models are remembered.** A model that was unreachable is

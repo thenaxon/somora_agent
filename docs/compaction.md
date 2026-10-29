@@ -225,6 +225,16 @@ token counts. If the request does not fit:
    message that names the numbers. Tool results already produced stay in
    the session.
 
+On the turn's first request, before anything has run, step 4 waits
+for one more try. somora compacts again on the same model, keeping
+only the newest exchange (a builder keeps only the turn in flight),
+and starts the turn over. The row reads `history compacted again`.
+
+Only if that does not fit either does the turn stop. That error
+counts as a context overflow, not a failure of the model: the
+[fallback chain](agents.md#model-and-fallback) then moves on only to
+a model with a larger window.
+
 No message is ever dropped, only shortened, so the model keeps its own
 record of what it did. A trimmed turn leaves a `context trimmed` row.
 
@@ -424,6 +434,7 @@ Environment variables override the file:
 
 | Symptom | Look for | What to do |
 |---|---|---|
+| A turn stops with "does not fit … nothing left to shorten" | Even the second compaction (`engine.compaction_done` with `reason: context_budget`) left too much: a huge last exchange or system prompt. Backups with no larger window were skipped (`engine.fallback_skip_context`) | Start a new session (`/reset`) or switch to a model with a larger window (`/model`). |
 | The backend still answers "prompt too long" | `engine.context_overflow` in the log, with a hint naming the window the backend enforces | Lower the model's `contextWindow` to that value. |
 | Compaction runs every turn | `engine.compaction_ineffective` | The recent exchanges alone are too big. Lower `safetyCushionPairs` or use a model with a larger window. |
 | A builder has little room after compacting | `engine.builder_headroom` with `reached: false`, `engine.builder_compaction_again` | What is left is too big on its own: the system prompt, the summary or the turn in flight. Shorten the repository instructions, or use a model with a larger window. |

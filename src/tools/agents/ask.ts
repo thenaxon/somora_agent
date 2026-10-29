@@ -150,6 +150,10 @@ interface AskDoneResult {
   /** e.g. "session already existed — model ignored". */
   session_note?: string;
   response: string;
+  /** `provider/model` that produced the answer. */
+  model?: string;
+  /** Present when a fallback model answered instead of the one asked for. */
+  fallback?: { requested: string; reason: string };
   ms: number;
   usage?: {
     tokens_in: number;
@@ -574,6 +578,9 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
         session_model?: string;
         session_note?: string;
         outcome?: string;
+        provider?: string;
+        model?: string;
+        fallback?: { requested: string; reason: string };
         error?: string;
       };
       if (data.error) {
@@ -634,6 +641,8 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
         ...(data.session_model ? { session_model: data.session_model } : {}),
         ...(data.session_note ? { session_note: data.session_note } : {}),
         response: data.finalText ?? '',
+        ...(data.provider && data.model ? { model: `${data.provider}/${data.model}` } : {}),
+        ...(data.fallback ? { fallback: { requested: data.fallback.requested, reason: data.fallback.reason } } : {}),
         ms: Date.now() - start,
         ...(data.usage ? { usage: data.usage } : {}),
       };

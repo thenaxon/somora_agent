@@ -168,7 +168,7 @@ Toolset `agents`.
 | `subagent_list` | Lists the agent's sub-agent tasks. |
 | `subagent_cancel` | Stops a sub-agent and everything it started. |
 | `agent_ask` | Sends a message into another agent's session and returns its reply. |
-| `agent_ask_result` | Fetches or waits for the outcome of an earlier `agent_ask`: `done`, `failed` or `pending`. The message is never sent twice. |
+| `agent_ask_result` | Fetches or waits for the outcome of an earlier `agent_ask`: `done`, `failed` or `pending`, with the model that answered and, after a fallback, the one asked for. The message is never sent twice. |
 | `agent_ask_cancel` | Takes an own `agent_ask` back. |
 | `session_list` | Lists chat sessions: the agent's own, another agent's with `agent`, everyone's with `"*"`. |
 | `session_model` | Switches the model of an existing session, or clears the override with `clear:true`. |
@@ -234,7 +234,8 @@ More parameters:
   [A2A](a2a.md) explains the rest.
 - **Builders.** `builder_dispatch` may omit `builder` when exactly one
   builder exists. A project folder another builder is working in is
-  refused.
+  refused. Work in a worktree beside the project needs that folder in
+  `write_allow` ([builder](builder.md#a-second-folder-for-the-order)).
 
 ### Skills, sentinel and projects
 

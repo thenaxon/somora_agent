@@ -901,10 +901,8 @@ export const openAiCompatibleEngine: AgentEngine = {
     // Without the provider's count the history estimate runs low against
     // what is actually replayed (a builder, 2026-10-28: 702k estimated before a
     // rebuild, 785k after it). A builder checks the request itself.
-    const builderNow =
-      builderTarget !== undefined && decision.source === 'estimated'
-        ? Math.max(decision.estimatedTokens, await builderRequestTokens(compactions))
-        : decision.estimatedTokens;
+    const requestBefore = builderTarget !== undefined && decision.source === 'estimated' ? await builderRequestTokens(compactions) : undefined;
+    const builderNow = requestBefore !== undefined ? Math.max(decision.estimatedTokens, requestBefore) : decision.estimatedTokens;
     const wantCompaction = decision.shouldCompact || (builderTarget !== undefined && builderNow >= builderTarget);
     /** How many newest pairs a builder keeps verbatim (by size). */
     const cushionFor = async (cs: Compaction[] | undefined): Promise<number> => {
@@ -1194,12 +1192,20 @@ export const openAiCompatibleEngine: AgentEngine = {
       // them added so both numbers mean the same thing.
       const window = resolvedModel.model.contextWindow;
       const toolTokens = calibratedEstimate(estimateRequestTokens([], openAiTools), tokenRatio);
-      const before = decision.source === 'measured' ? decision.estimatedTokens : decision.estimatedTokens + toolTokens;
+      // Before and after on one basis where it exists: a builder measured
+      // the request it would have sent, as "after" is measured. A chat
+      // turn's "before" is the history estimate, which runs low on long
+      // tool turns — the log says which basis each number has (a
+      // builder's 702k → 785k "after compacting" was two bases, report
+      // 2026-10-28).
+      const beforeBasis = decision.source === 'measured' ? 'provider' : requestBefore !== undefined ? 'request' : 'history-estimate';
+      const before =
+        decision.source === 'measured' ? decision.estimatedTokens : requestBefore !== undefined ? requestBefore : decision.estimatedTokens + toolTokens;
       const after = calibratedEstimate(estimateRequestTokens(messages, openAiTools), tokenRatio);
       const pct = (v: number) => `${Math.round((v / window) * 100)}%`;
       const budgetForRow = inputBudget(window, resolvedModel.model.maxTokens);
       const n = (v: number) => v.toLocaleString('en-US');
-      logger.info({ msg: 'engine.compaction_context', engine: ENGINE, agent, session, contextBefore: before, contextAfter: after, contextWindow: window, source: decision.source });
+      logger.info({ msg: 'engine.compaction_context', engine: ENGINE, agent, session, contextBefore: before, contextAfter: after, contextWindow: window, source: decision.source, beforeBasis, afterBasis: 'request' });
       yield {
         kind: 'engine_meta',
         ts: ts(),
@@ -1497,6 +1503,69 @@ export const openAiCompatibleEngine: AgentEngine = {
               },
             };
           }
+          if (!trim.fits && round === 1 && !cumulative && !CONTEXT_RETRIED.has(input)) {
+            // The first request does not fit even trimmed, and nothing has
+            // run yet: compact once more on THIS model, keeping only the
+            // newest exchange (a builder: only the turn in flight), and
+            // start the turn again — the same remedy as a backend that
+            // rejects the prompt (below). Before, this ended the turn and
+            // the fallback chain moved a whole build to a smaller model
+            // (report 2026-10-28).
+            CONTEXT_RETRIED.add(input);
+            const forced = await runCompaction({
+              systemPrompt,
+              history,
+              resolvedModel,
+              availableModels,
+              compactions,
+              config: { ...compactionConfig, safetyCushionPairs: isBuilderTurn ? 0 : Math.min(1, compactionConfig.safetyCushionPairs) },
+            }).catch((cErr: unknown) => {
+              logger.warn({ msg: 'engine.compaction_fail', engine: ENGINE, agent, session, reason: 'context_budget', err: String(cErr) });
+              return null;
+            });
+            if (forced) {
+              const added = forced;
+              await metaStore.update(agent, session, (latest) => ({
+                ...latest,
+                compactions: [...((latest as OpenAiCompatibleMeta).compactions ?? []), added],
+              }));
+              logger.info({
+                msg: 'engine.compaction_done',
+                engine: ENGINE,
+                agent,
+                session,
+                reason: 'context_budget',
+                estimated: trim.estimate,
+                budget,
+                throughTs: forced.throughTs,
+                tokensBefore: forced.tokensBefore,
+                tokensAfter: forced.tokensAfter,
+              });
+              yield {
+                kind: 'engine_meta',
+                ts: ts(),
+                engine: ENGINE,
+                itemType: 'context_compacted',
+                payload: {
+                  text:
+                    `history compacted again for ${resolvedModel.modelId} (${resolvedModel.model.contextWindow.toLocaleString('en-US')}-token window): ` +
+                    `about ${trim.estimate.toLocaleString('en-US')} tokens did not fit the budget of ${budget.toLocaleString('en-US')} — retrying`,
+                  reason: 'context_budget',
+                  tokensBefore: forced.tokensBefore,
+                  tokensAfter: forced.tokensAfter,
+                },
+              };
+              disarmIdleTimer();
+              if (signal) signal.removeEventListener('abort', onUpstreamAbort);
+              // Same as the reactive retry: the rerun reads the new
+              // compactions, rebuilds the request and owns its watchdog.
+              for await (const ev of openAiCompatibleEngine.runTurn(input)) {
+                if (ev.kind === 'turn_start') continue;
+                yield ev;
+              }
+              return;
+            }
+          }
           if (!trim.fits) {
             // Even trimmed it does not fit. Stop with an explanation
             // instead of letting the backend answer with a raw 400 —
@@ -1526,6 +1595,7 @@ export const openAiCompatibleEngine: AgentEngine = {
                     `against a budget of ${budget.toLocaleString('en-US')}. The tool results so far are in the ` +
                     'session — ask for the next step in a new message, or switch to a model with a larger window (/model).',
               providerError: false,
+              contextOverflow: true,
             };
             yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
             return;
@@ -2983,6 +3053,7 @@ export const openAiCompatibleEngine: AgentEngine = {
               `The conversation stopped fitting ${resolvedModel.modelId}'s context window during this turn` +
               (limits.promptTokens ? ` (the backend counted ${limits.promptTokens.toLocaleString('en-US')} input tokens)` : '') +
               '. The work done so far is in the session — send the next step as a new message, and somora will compact first.',
+            contextOverflow: true,
           };
           yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
           return;
@@ -3093,6 +3164,7 @@ export const openAiCompatibleEngine: AgentEngine = {
             `(${resolvedModel.model.contextWindow.toLocaleString('en-US')} tokens) and ${why}. ` +
             `Switch to a model with a larger window (/model) or start a new session (/reset). ` +
             `Backend: ${backendMessage.slice(0, 200)}`,
+          contextOverflow: true,
         };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       } else {

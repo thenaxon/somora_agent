@@ -759,6 +759,11 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
         started_at: entry.started_at,
         ...(entry.finished_at !== undefined ? { finished_at: entry.finished_at } : {}),
         ...(entry.result ? { response: entry.result.finalText, outcome: entry.result.outcome } : {}),
+        // The model that did the work, and why when it is not the one
+        // asked for: an orderer credits a result to the right model
+        // (report 2026-10-28: a fallback carried a whole build unseen).
+        ...(entry.result ? { model: `${entry.result.provider}/${entry.result.model}` } : {}),
+        ...(entry.result?.fallback ? { fallback: { requested: entry.result.fallback.requested, reason: entry.result.fallback.reason } } : {}),
         ...(entry.error ? { error: entry.error } : {}),
         source: 'registry',
       });
@@ -780,12 +785,16 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
     let response: string | undefined;
     let error: string | undefined;
     let finishedAt: number | undefined;
+    let model: string | undefined;
+    let fallback: { requested: string; reason: string } | undefined;
     for (const e of events.slice(idx + 1)) {
       if (e.kind === 'user_message') break;
       if (e.kind === 'assistant_message') response = e.text;
       else if (e.kind === 'error') error = e.message;
+      else if (e.kind === 'model_fallback') fallback = { requested: e.requested, reason: e.reason };
       else if (e.kind === 'turn_end') {
         finishedAt = e.ts;
+        if (typeof e.model === 'string') model = e.model;
         break;
       }
     }
@@ -800,6 +809,8 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
       started_at: startedAt,
       ...(finishedAt !== undefined ? { finished_at: finishedAt } : {}),
       ...(response !== undefined ? { response } : {}),
+      ...(model ? { model } : {}),
+      ...(fallback ? { fallback } : {}),
       ...(error ? { error } : {}),
       source: 'history',
     });

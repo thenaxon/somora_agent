@@ -669,6 +669,7 @@ function wakeTextBase(it: WorkItem): { text: string; prefix: string } {
       text:
         `[agent answer] ${it.target.agent} has answered the question you sent to session ` +
         `'${it.target.session}' — you had stopped waiting for it.` +
+        (it.result?.fallback ? ` A fallback model answered: ${it.result.fallback.actual} instead of ${it.result.fallback.requested}.` : '') +
         (h ? ` It begins: "${h}"` : ''),
       prefix:
         `Read the whole answer with agent_ask_result({ call_id: "${it.id}" }), then do what ` +

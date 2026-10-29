@@ -403,6 +403,13 @@ export type NormalizedEvent =
        * the turn result counts as failed rather than completed.
        */
       providerError?: boolean;
+      /**
+       * The conversation does not fit this model's context window, even
+       * after compacting. Not a provider failure: the fallback chain
+       * moves on only to a model with a LARGER window (a smaller one
+       * cannot hold what this one could not).
+       */
+      contextOverflow?: boolean;
     }
   // Server-side marker for project focus changes within a session. Fired
   // whenever the user pins a project via slash-command OR an agent
