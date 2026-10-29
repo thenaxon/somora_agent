@@ -16,6 +16,9 @@ import { useWakeLock } from '../hooks/useWakeLock';
 import { WorkBadge, WorkSheet } from './WorkSheet';
 import { useSessionWork, type WorkItemDto } from '../hooks/useSessionWork';
 import { useSessionModel } from '../hooks/useSessionModel';
+import { useToolSwitch } from '../hooks/useToolSwitch';
+import { useBuilderTurn } from '../hooks/useBuilderTurn';
+import { resolveAgentColor } from '../hooks/agentColors';
 import { SessionSheet } from './SessionSheet';
 import { AgentOrderSheet } from './AgentOrderSheet';
 import { QuestionCard, useSessionQuestion } from './QuestionCard';
@@ -85,6 +88,14 @@ export function MobileApp() {
   // and every 3 s while the sheet is open.
   const [workOpen, setWorkOpen] = useState(false);
   const { work, refresh: refreshWork } = useSessionWork(activeAgent, session.id, chat.subscribeTurnEvents, workOpen);
+  // Tool activity in the chat (docs/mobile.md "Tool activity"): the
+  // header switch per session, and a builder's lists for the block.
+  const activeInfo = agents.find((a) => a.name === activeAgent);
+  const activeKind = activeInfo?.kind;
+  const activeColor = activeInfo ? resolveAgentColor(activeInfo) : undefined;
+  const [showTools, toggleTools] = useToolSwitch(activeAgent, session.id, activeKind);
+  const sessionBusy = Boolean(work && (work.busy || work.active));
+  const builderTurn = useBuilderTurn(activeAgent, session.id, activeKind === 'builder' && showTools, sessionBusy);
   useEffect(() => {
     setWorkOpen(false);
     setSessionSheetOpen(false);
@@ -370,6 +381,22 @@ export function MobileApp() {
           setSessionSheetOpen(false);
           setWorkOpen((v) => !v);
         }} />
+        {activeAgent && (
+          <button
+            type="button"
+            onClick={toggleTools}
+            aria-pressed={showTools}
+            aria-label={showTools ? 'tool activity shown' : 'tool activity hidden'}
+            title={showTools ? 'tool activity shown in the chat' : 'tool activity hidden'}
+            className={`header-tools ${showTools ? 'on' : ''}`}
+            style={showTools && activeColor ? { borderColor: `${activeColor}88`, background: `${activeColor}25`, color: activeColor } : undefined}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+            </svg>
+            <span>tools</span>
+          </button>
+        )}
         {!wakeLock.unsupported && (
           <button
             type="button"
@@ -385,7 +412,7 @@ export function MobileApp() {
                   : 'screen sleeps as usual'
             }
             style={{
-              marginLeft: 'auto',
+              marginLeft: activeAgent ? 6 : 'auto',
               background: 'transparent',
               border: '1px solid var(--border-2, #444)',
               borderRadius: 6,
@@ -412,7 +439,7 @@ export function MobileApp() {
                 : 'voice auto-play off (mic input ⇒ text only)'
             }
             style={{
-              marginLeft: wakeLock.unsupported ? 'auto' : 6,
+              marginLeft: wakeLock.unsupported && !activeAgent ? 'auto' : 6,
               background: 'transparent',
               border: '1px solid var(--border-2, #444)',
               borderRadius: 6,
@@ -502,6 +529,10 @@ export function MobileApp() {
             hasOlder={chat.hasOlder}
             loadingOlder={chat.loadingOlder}
             onLoadOlder={() => void chat.loadOlder()}
+            showTools={showTools}
+            busy={sessionBusy}
+            {...(work?.active?.startedAt !== undefined ? { liveStartedAt: work.active.startedAt } : {})}
+            builder={builderTurn}
             onRecall={(id) => {
               void chat.recall(id).then((r) => {
                 if (r) setDraftInject({ text: r.text, nonce: Date.now() });

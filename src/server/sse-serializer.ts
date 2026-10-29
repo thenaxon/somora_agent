@@ -34,6 +34,7 @@ export function createTurnSerializer() {
           data: {
             phase: 'call',
             tool,
+            callId: ev.callId,
             summary: formatArgs(ev.tool, ev.input),
             details: formatDetails(ev.input),
           },
@@ -44,7 +45,7 @@ export function createTurnSerializer() {
         if (ev.error) {
           return {
             event: 'tool',
-            data: { phase: 'error', tool, error: ev.error },
+            data: { phase: 'error', tool, callId: ev.callId, error: ev.error },
           };
         }
         const summary = formatResult(tool, ev.output);
@@ -56,6 +57,7 @@ export function createTurnSerializer() {
           data: {
             phase: 'result',
             tool,
+            callId: ev.callId,
             summary,
             details: formatDetails(ev.output),
           },

@@ -34,6 +34,8 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import type { ChatMessage, ThinkingContent } from '../hooks/useChatStream';
 import type { AgentInfo } from '../hooks/useAgents';
+import type { BuilderTurnInfo } from '../hooks/useBuilderTurn';
+import { ActivityBlock } from './ActivityBlock';
 import { resolveAgentColor } from '../hooks/agentColors';
 // The presentation table for system-originated inbounds is shared
 // with the desktop client — one file, both surfaces.
@@ -65,6 +67,14 @@ interface Props {
   hasOlder?: boolean;
   loadingOlder?: boolean;
   onLoadOlder?: () => void;
+  /** The session's tool switch: activity rows are drawn only when on. */
+  showTools?: boolean;
+  /** A turn runs in this session (its work queue says so), and since
+   *  when. The latest activity row is then the live one. */
+  busy?: boolean;
+  liveStartedAt?: number;
+  /** A builder session's lists and running turn, for the latest row. */
+  builder?: BuilderTurnInfo | null;
 }
 
 export function ChatArea({
@@ -79,6 +89,10 @@ export function ChatArea({
   hasOlder = false,
   loadingOlder = false,
   onLoadOlder,
+  showTools = false,
+  busy = false,
+  liveStartedAt,
+  builder,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
@@ -141,6 +155,16 @@ export function ChatArea({
 
   const activeAgentInfo = agentLookup.get(agent);
 
+  // The latest activity row: live while the session works, and the one
+  // a builder's lists describe.
+  const lastActivityId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) if (messages[i]!.role === 'activity') return messages[i]!.id;
+    return null;
+  }, [messages]);
+  // The live block says the agent is working: no typing dots beside it.
+  const liveActivityShown =
+    showTools && busy && messages.some((m) => m.id === lastActivityId && m.activity?.endedAt === undefined);
+
   return (
     <>
       {connectionError && <div className="banner info">{connectionError}</div>}
@@ -162,7 +186,19 @@ export function ChatArea({
             Say something to <strong>{agent}</strong>.
           </div>
         )}
-        {messages.map((m) => (
+        {messages.map((m) => m.role === 'activity' ? (
+          showTools && m.activity ? (
+            <ActivityBlock
+              key={m.id}
+              agent={agent}
+              activity={m.activity}
+              live={busy && m.id === lastActivityId && m.activity.endedAt === undefined}
+              {...(liveStartedAt !== undefined ? { liveStartedAt } : {})}
+              {...(m.id === lastActivityId && builder ? { builder } : {})}
+              {...(activeAgentInfo?.color ? { color: activeAgentInfo.color } : {})}
+            />
+          ) : null
+        ) : (
           <MobileMessage
             key={m.id}
             msg={m}
@@ -178,7 +214,7 @@ export function ChatArea({
             ToolSearch, tool_call still running). Disappears as soon
             as the first chat.delta lands and the streaming bubble
             takes over. Three-dot animation lives in styles.css. */}
-        {streaming && !messages.some((m) => m.role === 'agent' && m.streaming) && (
+        {streaming && !liveActivityShown && !messages.some((m) => m.role === 'agent' && m.streaming) && (
           <div className="msg-row agent" aria-live="polite">
             <div
               className="msg-bubble agent typing-indicator"

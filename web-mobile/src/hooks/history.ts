@@ -12,6 +12,7 @@
 
 // Origin types are shared with the desktop client — one source.
 import type { FromSystem, TurnOrigin } from '../../../web/src/types/origin';
+import { addCall, closeActivity, joinActivities, newActivity, settleCall, stepLabel, type Activity } from './activity';
 
 /** Model reasoning attached to an agent row. Arrives over SSE
  *  (`thinking` event, cumulative deltas then a final) or from the
@@ -38,8 +39,10 @@ export interface ChatMessage {
    *  (or after) an assistant message. Rendered as a compact error
    *  block inside the turn, so following turns don't shift.
    *  `note`: a line about the conversation itself — today only "context
-   *  compacted" — drawn as a centered divider; `text` is its sentence. */
-  role: 'user' | 'agent' | 'error' | 'note';
+   *  compacted" — drawn as a centered divider; `text` is its sentence.
+   *  `activity`: the tool calls of one turn (`activity`), shown when the
+   *  session's tool switch is on. */
+  role: 'user' | 'agent' | 'error' | 'note' | 'activity';
   text: string;
   ts: number;
   /** True while the agent's response is still streaming. */
@@ -98,6 +101,8 @@ export interface ChatMessage {
    *  user_message. */
   steer?: boolean;
   steerId?: string;
+  /** activity rows: the turn's tool calls (hooks/activity.ts). */
+  activity?: Activity;
 }
 
 export interface HistoryEvent {
@@ -126,6 +131,11 @@ export interface HistoryEvent {
   actual?: string;
   reason?: string;
   hops?: Array<{ model: string; reason: string }>;
+  /** `tool_call` / `tool_result` rows. */
+  tool?: string;
+  callId?: string;
+  input?: unknown;
+  error?: string;
 }
 
 /** Split a media list by type. An entry whose type this client doesn't
@@ -226,11 +236,45 @@ export function historyEventsToMessages(events: readonly HistoryEvent[]): ChatMe
   // model_fallback precedes the fallback model's assistant_message:
   // fold it onto the NEXT agent row, same as thinking.
   let pendingFallback: ModelFallback | null = null;
+  // The activity row of the turn being read: one per turn, placed where
+  // its first tool call was. A page that starts mid-turn opens one too.
+  let actIdx = -1;
+  let turnStartTs: number | undefined;
+  const updateAct = (fn: (a: Activity) => Activity) => {
+    const row = out[actIdx]!;
+    out[actIdx] = { ...row, activity: fn(row.activity!) };
+  };
   for (const ev of events) {
     if (ev.kind === 'turn_start') {
       currentTurnId = typeof ev.turnId === 'string' ? ev.turnId : undefined;
       pendingThinking = null;
       pendingFallback = null;
+      actIdx = -1;
+      turnStartTs = ev.ts;
+      continue;
+    }
+    if (ev.kind === 'tool_call' && typeof ev.tool === 'string') {
+      const tool = ev.tool.replace(/^mcp__[^_]+__/, '');
+      const ts = ev.ts ?? 0;
+      if (actIdx < 0) {
+        out.push({
+          id: `t-${ts}-${msgIdCounter++}`,
+          role: 'activity',
+          text: '',
+          ts,
+          ...(currentTurnId ? { turnId: currentTurnId } : {}),
+          // The turn's time counts from its start, not its first call.
+          activity: newActivity(turnStartTs ?? ts),
+        });
+        actIdx = out.length - 1;
+      }
+      updateAct((a) => addCall(a, { tool, label: stepLabel(tool, ev.input), ts, ...(ev.callId ? { callId: ev.callId } : {}) }));
+      continue;
+    }
+    if (ev.kind === 'tool_result') {
+      if (actIdx >= 0) {
+        updateAct((a) => settleCall(a, { ...(ev.callId ? { callId: ev.callId } : {}), ...(typeof ev.error === 'string' && ev.error ? { error: ev.error } : {}) }));
+      }
       continue;
     }
     if (ev.kind === 'model_fallback' && typeof ev.requested === 'string' && typeof ev.actual === 'string') {
@@ -247,6 +291,9 @@ export function historyEventsToMessages(events: readonly HistoryEvent[]): ChatMe
       // turn_end. The next turn_start replaces it.
       if (typeof ev.turnId === 'string') currentTurnId = ev.turnId;
       pendingThinking = null;
+      if (actIdx >= 0) updateAct((a) => closeActivity(a, ev.ts ?? 0));
+      actIdx = -1;
+      turnStartTs = undefined;
       continue;
     }
     if (ev.kind === 'thinking_message') {
@@ -324,7 +371,9 @@ export function historyEventsToMessages(events: readonly HistoryEvent[]): ChatMe
 export function mergeHistorySnapshot(restored: ChatMessage[], live: readonly ChatMessage[]): ChatMessage[] {
   if (restored.length === 0) return [...live];
   const oldestPersistedTs = restored[0]!.ts;
-  const newestPersistedTs = restored[restored.length - 1]!.ts;
+  // An activity row stands where its turn's first call was but covers
+  // every call after it: the snapshot reaches as far as its last one.
+  const newestPersistedTs = Math.max(...restored.map(lastTsOf));
   // The snapshot is the newest window only: what was scrolled in before
   // it stays, what the stream added after it stays.
   return [
@@ -334,8 +383,105 @@ export function mergeHistorySnapshot(restored: ChatMessage[], live: readonly Cha
   ];
 }
 
-/** An older page of history in front of what is shown. */
+/** The newest moment a row stands for. */
+function lastTsOf(m: ChatMessage): number {
+  if (!m.activity) return m.ts;
+  const last = m.activity.steps[m.activity.steps.length - 1];
+  return Math.max(m.ts, last?.ts ?? 0, m.activity.endedAt ?? 0);
+}
+
+/** An older page of history in front of what is shown. A turn cut by
+ *  the page boundary keeps one activity row. */
 export function prependOlderMessages(older: ChatMessage[], shown: readonly ChatMessage[]): ChatMessage[] {
   const firstShownTs = shown.length > 0 ? shown[0]!.ts : Number.POSITIVE_INFINITY;
-  return [...older.filter((m) => m.ts < firstShownTs), ...shown];
+  const kept = older.filter((m) => m.ts < firstShownTs);
+  const tail = kept[kept.length - 1];
+  const head = shown[0];
+  if (
+    tail?.activity && head?.activity && tail.activity.endedAt === undefined &&
+    (!head.turnId || !tail.turnId || head.turnId === tail.turnId)
+  ) {
+    const joined: ChatMessage = {
+      ...tail,
+      ...(tail.turnId ?? head.turnId ? { turnId: tail.turnId ?? head.turnId } : {}),
+      activity: joinActivities(tail.activity, head.activity),
+    };
+    return [...kept.slice(0, -1), joined, ...shown.slice(1)];
+  }
+  return [...kept, ...shown];
+}
+
+/** A live `tool` event (GET /chat/stream). */
+export interface LiveToolEvent {
+  phase: 'call' | 'result' | 'error';
+  tool: string;
+  callId?: string;
+  /** The input (call) or output (result) as pretty JSON. */
+  details?: string;
+  error?: string;
+}
+
+/**
+ * Fold a live tool event into the list: onto the activity row of the
+ * running turn, or a new one placed where the turn's reply will stand —
+ * above its streaming bubble and above messages still waiting to be
+ * sent, like the compaction note.
+ */
+export function applyLiveTool(prev: readonly ChatMessage[], d: LiveToolEvent, now: number, turnId: string | null): ChatMessage[] {
+  const tool = d.tool.replace(/^mcp__[^_]+__/, '');
+  let idx = -1;
+  for (let i = prev.length - 1; i >= 0; i -= 1) {
+    const m = prev[i]!;
+    if (m.role === 'activity') {
+      const sameTurn = !turnId || !m.turnId || m.turnId === turnId;
+      if (m.activity && m.activity.endedAt === undefined && sameTurn) idx = i;
+      break;
+    }
+    // A message that started a later turn: the row before it is not ours.
+    if (m.role === 'user' && !m.pending && !m.steer) break;
+  }
+  if (d.phase !== 'call') {
+    if (idx < 0) return prev as ChatMessage[];
+    const row = prev[idx]!;
+    const next = prev.slice();
+    next[idx] = {
+      ...row,
+      activity: settleCall(row.activity!, {
+        tool,
+        ...(d.callId ? { callId: d.callId } : {}),
+        ...(d.phase === 'error' ? { error: d.error || 'tool failed' } : {}),
+      }),
+    };
+    return next;
+  }
+  const step = { tool, label: stepLabel(tool, d.details), ts: now, ...(d.callId ? { callId: d.callId } : {}) };
+  if (idx >= 0) {
+    const row = prev[idx]!;
+    const next = prev.slice();
+    next[idx] = { ...row, activity: addCall(row.activity!, step) };
+    return next;
+  }
+  const row: ChatMessage = {
+    id: newId('t'),
+    role: 'activity',
+    text: '',
+    ts: now,
+    ...(turnId ? { turnId } : {}),
+    activity: addCall(newActivity(now), step),
+  };
+  let at = prev.findIndex((m) => (m.role === 'agent' && m.streaming) || (m.role === 'user' && m.pending && !m.steer));
+  if (at < 0) at = prev.length;
+  return [...prev.slice(0, at), row, ...prev.slice(at)];
+}
+
+/** The turn ended (agent end, turn error): every open activity row
+ *  closes. Returns the same array when nothing was open. */
+export function closeLiveActivities(prev: ChatMessage[], now: number): ChatMessage[] {
+  let changed = false;
+  const next = prev.map((m) => {
+    if (!m.activity || m.activity.endedAt !== undefined) return m;
+    changed = true;
+    return { ...m, activity: closeActivity(m.activity, now) };
+  });
+  return changed ? next : prev;
 }

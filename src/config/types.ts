@@ -1162,9 +1162,10 @@ export type TuiConfig = z.infer<typeof TuiConfigSchema>;
 // view on phone too.
 export const MobileConfigSchema = z.object({
   show: z.object({
-    /** Show `[tool call · …]` / `[tool result · …]` rows in the
-     *  mobile chat. Default off; flip to true if you want
-     *  desktop-parity verbosity. */
+    /** Where the phone's tools switch starts for a chat agent's
+     *  session (the activity card, docs/mobile.md "Tool activity").
+     *  Builders always start on; the person's choice per session on
+     *  the phone wins. */
     tools: z.boolean().default(false),
     /** Show `[memory · …]` inject rows in the mobile chat. Default
      *  off; same rationale as `tools`. */

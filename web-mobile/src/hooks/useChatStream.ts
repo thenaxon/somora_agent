@@ -16,8 +16,8 @@ import type { AttachmentRef } from '../components/AttachmentPicker';
 //                                          the chat final of the turn
 //   - 'agent' { phase: 'start'|'end', usage?: ... } — turn lifecycle
 //   - 'status' { msg }                  — error / connection messages
-//   - 'tool' { phase, tool, summary }   — tool call/result (ignored in
-//                                          default mobile view)
+//   - 'tool' { phase, tool, callId?, details? } — folded into the turn's
+//                                          activity row (history.ts)
 //   - 'memory' { ... }                  — memory inject (ignored by default)
 //   - 'project' ...                     — project pin (ignored by mobile)
 //
@@ -32,6 +32,8 @@ import type { AttachmentRef } from '../components/AttachmentPicker';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  applyLiveTool,
+  closeLiveActivities,
   compactionNoteText,
   countMedia,
   findTurnRow,
@@ -42,6 +44,7 @@ import {
   type ChatMessage,
   type ModelFallback,
   type HistoryEvent,
+  type LiveToolEvent,
   type ThinkingContent,
 } from './history';
 
@@ -428,7 +431,7 @@ export function useChatStream(agent: string | null, session: string = 'main'): C
         // pulse) — an aborted turn sends neither final.
         const fb = d.fallback;
         setMessages((prev) => {
-          const settled = settleStreams(prev);
+          const settled = closeLiveActivities(settleStreams(prev), Date.now());
           if (!fb) return settled;
           // phase:'end' carries the fallback of the turn that just
           // finished — stamp the last agent row so the ⇄ marker shows
@@ -457,7 +460,7 @@ export function useChatStream(agent: string | null, session: string = 'main'): C
         setConnectionError(d.msg);
         setStreaming(false);
         streamingIdRef.current = null;
-        setMessages(settleStreams);
+        setMessages((prev) => closeLiveActivities(settleStreams(prev), Date.now()));
       }
     };
 
@@ -765,6 +768,15 @@ export function useChatStream(agent: string | null, session: string = 'main'): C
     es.addEventListener('turn_error', onTurnError);
     es.addEventListener('turn_dequeued', onTurnDequeued);
     es.addEventListener('engine_meta', onEngineMeta);
+    const onTool = (e: MessageEvent) => {
+      bump();
+      let d: LiveToolEvent | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d || typeof d.tool !== 'string' || !d.phase) return;
+      const ev = d;
+      setMessages((prev) => applyLiveTool(prev, ev, Date.now(), currentTurnIdRef.current));
+    };
+    es.addEventListener('tool', onTool);
     const onSessionModel = () => {
       bump();
       modelListenersRef.current.forEach((fn) => fn());
@@ -796,6 +808,7 @@ export function useChatStream(agent: string | null, session: string = 'main'): C
       es.removeEventListener('turn_error', onTurnError);
       es.removeEventListener('turn_dequeued', onTurnDequeued);
       es.removeEventListener('engine_meta', onEngineMeta);
+      es.removeEventListener('tool', onTool);
       es.removeEventListener('question_asked', onQuestion);
       es.removeEventListener('question_answered', onQuestion);
       es.close();

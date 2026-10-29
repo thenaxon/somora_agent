@@ -513,11 +513,12 @@ export type SseEvent =
       //            so clients never see "boring" rows like {ok:true})
       //   error  → tool name + error string
       // Clients render summary/error directly without inspecting raw payloads.
+      // callId pairs a result or error with its call (parallel calls).
       event: 'tool';
       data:
-        | { phase: 'call'; tool: string; summary: string; details: string }
-        | { phase: 'result'; tool: string; summary: string; details: string }
-        | { phase: 'error'; tool: string; error: string; details?: string };
+        | { phase: 'call'; tool: string; callId: string; summary: string; details: string }
+        | { phase: 'result'; tool: string; callId: string; summary: string; details: string }
+        | { phase: 'error'; tool: string; callId: string; error: string; details?: string };
     }
   | { event: 'status'; data: { msg: string } }
   | {

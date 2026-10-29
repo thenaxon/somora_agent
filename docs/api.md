@@ -894,7 +894,7 @@ All events:
 | `memory` | After `agent` start: what recall put into the turn | `{count, topScore?, refs, fullText}` |
 | `thinking` | The model's reasoning text | `{state: "delta"\|"final", text, truncated?}` |
 | `chat` | The reply text | `{state: "delta"\|"final", text}` |
-| `tool` | A tool is called, returns or fails | `{phase: "call"\|"result"\|"error", tool, summary?, details?, error?}` |
+| `tool` | A tool is called, returns or fails | `{phase: "call"\|"result"\|"error", tool, callId, summary?, details?, error?}`. `callId` pairs a result with its call. |
 | `engine_meta` | A side note of the engine or of somora | `{engine, itemType, label, summary?, payload}` |
 | `model_fallback` | A backup model takes over the turn | `{requested, actual, reason, hops?}` |
 | `turn_error` | The turn ended with an error | `{turnId?, message, engine}` |
@@ -1061,7 +1061,7 @@ curl -H "Authorization: Bearer $KEY" -N $BASE/activity/stream
 |---|---|---|
 | `status` | On connect | `{msg: "connected"}` |
 | `heartbeat` | Every `sse.heartbeatMs` | The current time in ms |
-| `streaming` | A turn starts or ends on any session | `{agent, session, phase: "start"\|"end"}` |
+| `streaming` | A turn starts or ends on any session. Right after `status`, one `start` for every session already working. | `{agent, session, phase: "start"\|"end"}` |
 | `turn` | Something a person should read arrived in a session | `{agent, session, unreadAt}` |
 | `seen` | A client marked a session as seen | `{agent, session, seenAt}` |
 

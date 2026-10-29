@@ -12,6 +12,8 @@ talking to your agents.
 - **Steer or queue.** While an agent works, send a note into the
   running turn or queue the next message behind it.
 - **Thinking level per session**, in the same sheet as the model.
+- **What the agent is doing.** The tools switch shows a turn's tool
+  calls in the chat, and a builder's current task, while it works.
 - **Voice in and out.** Dictate a message, have the answer read aloud.
 - **Photos and PDFs** from the camera, the photo library or files.
 - **Dots that show what happens elsewhere**: which agents are working,
@@ -60,7 +62,7 @@ Otherwise the link points at `127.0.0.1`, which the phone cannot open.
 
 | Part | What it does |
 |---|---|
-| **Header** | Shows `agent · session ▾ model`. Tap it to switch session or model. On the right: the work badge, the screen-awake toggle and the voice toggle. |
+| **Header** | Shows `agent · session ▾ model`. Tap it to switch session or model. On the right: the work badge, the **tools** switch (a wrench; on a wide screen with its name), the screen-awake toggle and the voice toggle. |
 | **Avatar row** | One tile per agent. Tap to switch. The app remembers the last agent. Long-press a tile to change the order, see below. |
 | **Chat** | The history of the open session, newest first loaded. Scroll to the top, or tap **Load older messages**, for the next older part. Replies are rendered as Markdown. A wide code block scrolls sideways. |
 | **Input bar** | Paperclip, microphone, text field, Send. Enter sends, Shift+Enter starts a new line. |
@@ -214,7 +216,8 @@ is open. It is off by default and remembered per browser.
 
 | Marker | Meaning |
 |---|---|
-| Three pulsing dots | The agent is thinking or running tools. The reply replaces them. |
+| Three pulsing dots | The agent is thinking or running tools. The reply replaces them. With the tools switch on, the activity card stands in their place. |
+| Activity card or `▸ N tool calls · time` line | The turn's tool calls, see "Tool activity" below. Only with the tools switch on. |
 | `🧠 thinking` | The model's reasoning, when the engine provides it. While it thinks, the newest line peeks below. Tap the row to read all of it. |
 | `⇄ fallback · <model>` | A backup model answered. The tooltip names the models that failed and why. |
 | **⚠** block | The turn ended in an error. |
@@ -225,11 +228,46 @@ is open. It is off by default and remembered per browser.
 The thinking row only exists when the server captures reasoning.
 `thinkingContent.capture: false` in `config.yaml` hides it everywhere.
 
+### Tool activity
+
+The **tools** switch in the header shows what the agent does between
+its messages. A builder writes almost no text while it works, so
+without it a build of several hours shows an empty chat.
+
+While a turn runs, a card stands where its reply will appear:
+
+```text
+<builder> is working · 2:08 h · 168 tool calls
+Task 15 of 23: Fix the tool ceiling tests
+· exec        pytest tests/test_tool_ceiling.py   running for 4 min
+· file_patch  tests/test_tool_ceiling.py
+· file_read   backend/models.py
+Tap for all tasks and calls
+```
+
+It shows the last three calls. A call that is still running says for
+how long, so a hanging command stands out. The task line, the count and
+the time come from the server for a builder, so they are right even when
+you open the app in the middle of a long turn.
+
+Tap the card for every call of the turn and, for a builder, its task
+list and acceptance list. You can read them there; mode, phase, Go and
+reviews stay in the [web client](web.md).
+
+Once the turn has ended, the card becomes one line above the reply,
+such as `▸ 214 tool calls · 2:41 h · tasks 23/23 · acceptance 6/7
+passed`. Tap it to open the calls again. A turn without tools has no
+card.
+
+The switch is kept per session on this phone. Until you touch it, it
+is on in a builder's sessions and follows `mobile.show.tools` for chat
+agents, off by default.
+
 ## Dots on the avatars
 
 | Dot | Meaning |
 |---|---|
-| **Pulsing** | A turn is running in one of that agent's sessions. |
+| **Pulsing** | A turn is running in one of that agent's sessions, also one that started before you opened the app. |
 | **Unread**, top left | Something arrived since you last looked: a reply, a message from another agent, or a sentinel message. Your own messages and sub-agent sessions do not count. |
 | **REM / DEEP / LUCID pulse** | The agent is in a dream phase. |
 | **Number badge** | REM findings waiting for review. |
@@ -268,9 +306,10 @@ Use the [web client](web.md) for these:
 - Several windows side by side
 - Renaming, archiving or resetting a session
 - Switching the project of a session
-- A builder's task panel: mode and phase, Go and the task list. You
-  can chat with a builder from the phone and answer its questions there,
-  but its plan is approved in the web client.
+- A builder's task panel: mode and phase, Go, and reviewing its
+  acceptance list. You can chat with a builder from the phone, answer
+  its questions and read its lists in the activity card, but its plan
+  is approved in the web client.
 
 REM, Deep and Lucid have no button in any client. Ask the agent to run
 one, for example "catch up on your memories": it starts the phase with
@@ -288,11 +327,11 @@ mobile:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `mobile.show.tools` | `false` | Reserved for showing tool calls in the mobile chat. |
+| `mobile.show.tools` | `false` | Whether the tools switch starts on for a chat agent's session. Builders always start on. Your choice per session on the phone wins. |
 | `mobile.show.memory` | `false` | Reserved for showing recalled notes in the mobile chat. |
 
 Both are reported by `GET /mobile-config`. The mobile app does not draw
-tool or memory rows yet, so they change nothing today.
+memory rows yet, so `mobile.show.memory` changes nothing today.
 
 Settings the phone depends on elsewhere:
 
