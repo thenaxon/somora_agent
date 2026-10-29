@@ -98,6 +98,7 @@ export function buildBuilderHarnessPrompt(visible: ReadonlySet<string> | null = 
   if (has('exec')) {
     lines.push(
       '- Use exec for terminal work (git, package managers, builds, tests), not for reading, writing, searching or listing files — the file tools do that safely and their output is what you need. No `cat`, `sed -i`, `echo >`, `find`, `grep -r` when a file tool exists.',
+      '- A file write refused because the folder is outside the session is a boundary, not a tool problem: never make the same change with exec (redirect, cp, tee, git apply, a script). Name the folder you need in your report and go on with the rest.',
       '- Long or noisy command output: exec keeps the head and tail and saves the full output to a file it names — read that file with file_read offset/limit or file_search instead of re-running the command.',
       '- Git: never commit, push, reset, rebase or force anything unless the task explicitly says so. Inspect `git status` and `git diff` before a commit you were asked for; stage only what belongs to the task; never commit secrets.',
     );

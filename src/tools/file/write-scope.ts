@@ -11,10 +11,13 @@
 //   unattended — refused, the message names the allowed folders.
 //   attended   — a question in the task panel: allow once, allow this
 //                folder for the session, deny. The session-wide grants
-//                live on the session meta (`builderWriteAllow`).
+//                live on the session meta (`builderWriteAllow`). An
+//                orderer can set them up front (builder_dispatch
+//                `write_allow`), for a worktree beside the project.
 // The shell can still write anywhere; that is what command approvals
 // (stage 3, not built) would gate. Documented as the limit.
 
+import { realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, normalize, sep } from 'node:path';
 import { homedir } from 'node:os';
 import type { Config } from '../../config/types.ts';
@@ -44,6 +47,48 @@ export function writeScopeRoots(agent: string, workdir: string, extra: readonly 
   return [normalize(workdir), agentTempDir(agent), ...extra.map((e) => normalize(e))];
 }
 
+export const MAX_WRITE_ALLOW = 4;
+
+/**
+ * Folders an orderer allows besides the project (builder_dispatch
+ * `write_allow`, PATCH …/builder `writeAllow`): a worktree beside the
+ * project, a second checkout. Each must exist as a directory and be
+ * narrow — never `/`, the home folder, a folder that holds the project
+ * (that would open its neighbours, e.g. all of ~/Projects) or one inside
+ * somora's home. Returns the real paths, or the first reason to refuse.
+ */
+export function checkWriteAllow(
+  folders: readonly unknown[],
+  workdir: string,
+  fsx: { realpath(p: string): string; isDirectory(p: string): boolean } = defaultFs,
+): { ok: true; folders: string[] } | { ok: false; error: string } {
+  if (folders.length > MAX_WRITE_ALLOW) return { ok: false, error: `write_allow: at most ${MAX_WRITE_ALLOW} folders` };
+  const out: string[] = [];
+  const home = normalize(homedir());
+  const project = normalize(workdir);
+  for (const f of folders) {
+    if (typeof f !== 'string' || !isAbsolute(f.replace(/^~(?=$|\/)/, home))) return { ok: false, error: `write_allow: '${String(f)}' is not an absolute path` };
+    const raw = normalize(f.replace(/^~(?=$|\/)/, home));
+    let real: string;
+    try {
+      real = fsx.realpath(raw);
+    } catch {
+      return { ok: false, error: `write_allow: '${raw}' does not exist — create it first (e.g. git worktree add)` };
+    }
+    if (!fsx.isDirectory(real)) return { ok: false, error: `write_allow: '${real}' is not a folder` };
+    if (real === sep || real === home || isUnder(home, real)) return { ok: false, error: `write_allow: '${real}' is too wide (the root or the home folder)` };
+    if (isUnder(project, real)) return { ok: false, error: `write_allow: '${real}' holds the project folder — name the one folder the work needs, not its parent` };
+    if (isUnder(real, normalize(SOMORA_HOME)) || isUnder(normalize(SOMORA_HOME), real)) return { ok: false, error: `write_allow: '${real}' is inside somora's home` };
+    if (!out.includes(real)) out.push(real);
+  }
+  return { ok: true, folders: out };
+}
+
+const defaultFs = {
+  realpath: (p: string) => realpathSync(p),
+  isDirectory: (p: string) => statSync(p).isDirectory(),
+};
+
 export function isWithinRoots(absolute: string, roots: readonly string[]): boolean {
   return roots.some((r) => isUnder(absolute, r));
 }
@@ -67,12 +112,16 @@ export function decideWriteScope(args: {
   const roots = writeScopeRoots(args.agent, args.workdir, args.sessionGrants);
   if (isWithinRoots(args.absolute, roots)) return { kind: 'inside' };
   if (args.mode === 'attended') return { kind: 'ask', roots };
+  const granted = roots.slice(2);
   return {
     kind: 'refused',
     reason:
       `write refused: '${args.absolute}' is outside the project folder. A builder writes only inside ` +
-      `${roots[0]} (the pinned project) or ${roots[1]} (its temp folder). Use a path inside the project, ` +
-      'or say in your report why the file is needed elsewhere.',
+      `${roots[0]} (the pinned project), ${roots[1]} (its temp folder)` +
+      (granted.length > 0 ? ` or a folder allowed for this session (${granted.join(', ')})` : '') +
+      '. Use a path inside these folders. This is a limit of the order, not of the tool: do not write the ' +
+      'file with exec instead (no shell redirect, cp, tee or git apply there). If the work needs that folder, ' +
+      'stop that part and name the folder in your report — the person, or the agent that gave the order, can allow it.',
   };
 }
 

@@ -331,6 +331,9 @@ async function assembleBuilderPrompt(args: {
   const modeBlock = renderBuilderSessionBlock(readBuilderState(sessionMeta), {
     projectFolder: wd.source === 'project',
     acceptanceRequired: (sessionMeta as Record<string, unknown>).acceptanceRequired === true,
+    writeAllow: Array.isArray((sessionMeta as Record<string, unknown>).builderWriteAllow)
+      ? ((sessionMeta as Record<string, unknown>).builderWriteAllow as string[])
+      : [],
   });
   const sessionBlock = buildSessionBlock(agent, session, sessionMeta) + (modeBlock ? `\n\n${modeBlock}` : '');
   const projectBlock = await buildProjectBlock(sessionMeta, deps.config);

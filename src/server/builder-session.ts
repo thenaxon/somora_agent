@@ -152,7 +152,7 @@ export function builderSessionAllows(state: BuilderSessionState | null, toolName
 /** The lines the builder prompt adds for the session's mode and phase. */
 export function renderBuilderSessionBlock(
   state: BuilderSessionState | null,
-  opts: { projectFolder?: boolean; acceptanceRequired?: boolean } = {},
+  opts: { projectFolder?: boolean; acceptanceRequired?: boolean; writeAllow?: readonly string[] } = {},
 ): string {
   if (!state) return '';
   const lines: string[] = ['## Mode and phase', ''];
@@ -180,6 +180,9 @@ export function renderBuilderSessionBlock(
     lines.push(
       `- Phase: BUILD. ${state.planPath ? `If a plan exists at ${state.planPath}, it is approved: read it first and execute it.` : 'Execute the task you were given.'} Keep the task list current with todo_write, verify as you go, and end with the report.`,
     );
+  }
+  if (opts.projectFolder !== false && opts.writeAllow && opts.writeAllow.length > 0) {
+    lines.push(`- Also allowed to write, besides the project folder: ${opts.writeAllow.join(', ')}. Use the file tools there as in the project.`);
   }
   if (opts.acceptanceRequired) {
     lines.push(

@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
 import { listAgents, loadPersona } from '../../persona/loader.ts';
 import { projectWorkdir } from '../../projects/focus.ts';
+import { MAX_WRITE_ALLOW, checkWriteAllow } from '../file/write-scope.ts';
 import type { ToolDefinition } from '../types.ts';
 import { agentAsk } from './ask.ts';
 
@@ -52,6 +53,15 @@ const Input = z
       .min(1)
       .optional()
       .describe('Slug for the new builder session (default: build-<project or ts>-<rand>).'),
+    write_allow: z
+      .array(z.string().min(1))
+      .min(1)
+      .max(MAX_WRITE_ALLOW)
+      .optional()
+      .describe(
+        'Absolute folders the builder may write in besides the project folder, e.g. a git worktree beside it. ' +
+          'Needs `project`. Each must exist and be narrow (not the home folder, not a folder holding the project).',
+      ),
     timeout_ms: z.number().int().min(1_000).max(7_200_000).optional().describe('Passed to agent_ask (wait:false — the wake comes when the report lands).'),
   })
   .strict();
@@ -108,7 +118,19 @@ const ACCEPTANCE_ORDER_LINE =
   'Keep the acceptance list with acceptance_write: one item per requirement of this order (A01, A02, …, in its words), ' +
   'each passed, failed or not_run with its evidence by the end. An item still open is not done.';
 
-export function composeBuildOrder(input: { task: string; plan_path?: string; done_criteria?: string; report_path?: string; phase?: 'plan' | 'build' }): string {
+export function composeBuildOrder(input: {
+  task: string;
+  plan_path?: string;
+  done_criteria?: string;
+  report_path?: string;
+  phase?: 'plan' | 'build';
+  /** Checked folders (real paths) allowed besides the project. */
+  write_allow?: readonly string[];
+}): string {
+  const allowLine =
+    input.write_allow && input.write_allow.length > 0
+      ? `Besides the project folder you may write in: ${input.write_allow.join(', ')} (allowed for this order). Nowhere else — do not work around a refused write with exec.`
+      : '';
   const parts: string[] = [];
   if (input.phase === 'plan') {
     parts.push(input.task.trim());
@@ -119,12 +141,14 @@ export function composeBuildOrder(input: { task: string; plan_path?: string; don
         'When the plan is complete say "Plan ready" and stop; the build starts with Go.' +
         (input.report_path ? ` The report at the end goes to ${input.report_path}.` : ''),
     );
+    if (allowLine) parts.push(allowLine);
     return parts.join('\n\n');
   }
   if (input.plan_path) parts.push(`Read the plan at ${input.plan_path} first and follow it.`);
   parts.push(input.task.trim());
   if (input.done_criteria) parts.push(`Done means: ${input.done_criteria.trim()}`);
   if (input.report_path) parts.push(`At the end write your report to ${input.report_path} with file_write, and give the same report as your answer.`);
+  if (allowLine) parts.push(allowLine);
   parts.push(ACCEPTANCE_ORDER_LINE);
   parts.push('Decide open questions yourself and list every decision in the report. Do not stop for approval.');
   return parts.join('\n\n');
@@ -141,6 +165,7 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
     'report goes; the builder sees nothing of this conversation. Do not check in on it or send corrections into ' +
     'running work: wait for the report, then send a new message into that session if something must change. ' +
     'One builder per project folder at a time: a folder another builder is working in is refused (wait for that report). ' +
+    'The builder writes only in the project folder: work in a worktree or second checkout beside it needs write_allow. ' +
     'Several builders: choose by their team description; two orders to different folders may run at the same time.',
   inputSchema: Input,
   jsonSchema: {
@@ -155,6 +180,13 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
       mode: { type: 'string', enum: ['attended', 'unattended'], description: 'Default unattended.' },
       phase: { type: 'string', enum: ['plan', 'build'], description: 'Default build. plan = plan first, then wait for Go.' },
       session: { type: 'string', description: 'Slug for the new builder session.' },
+      write_allow: {
+        type: 'array',
+        items: { type: 'string' },
+        minItems: 1,
+        maxItems: MAX_WRITE_ALLOW,
+        description: 'Absolute folders the builder may write in besides the project (e.g. a worktree beside it). Needs project; each must exist.',
+      },
       timeout_ms: { type: 'integer', description: 'Passed to agent_ask.' },
     },
     required: ['task'],
@@ -170,12 +202,20 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
     }
     // One builder per folder: a project whose folder another builder is
     // working in right now is refused before anything is created.
-    if (input.project) {
-      const folder = await projectWorkdir(input.project);
-      if (folder) {
-        const q = await get<{ busy: { agent: string; session: string; reason: string } | null }>(`/builders/busy?workdir=${encodeURIComponent(folder)}`);
-        if (q.busy) throw new Error(`builder_dispatch: folder busy — ${q.busy.reason}`);
-      }
+    const folder = input.project ? await projectWorkdir(input.project) : null;
+    if (folder) {
+      const q = await get<{ busy: { agent: string; session: string; reason: string } | null }>(`/builders/busy?workdir=${encodeURIComponent(folder)}`);
+      if (q.busy) throw new Error(`builder_dispatch: folder busy — ${q.busy.reason}`);
+    }
+    // Extra write folders are checked before anything is created: a
+    // worktree the order names but the builder may not write in used to
+    // surface only mid-build, as a refused write (report 2026-10-28).
+    let writeAllow: string[] | undefined;
+    if (input.write_allow) {
+      if (!folder) throw new Error('builder_dispatch: write_allow needs `project` with a folder (workdir) — without one the builder is not held to a folder');
+      const checked = checkWriteAllow(input.write_allow, folder);
+      if (!checked.ok) throw new Error(`builder_dispatch: ${checked.error}`);
+      writeAllow = checked.folders;
     }
     const rand = Math.random().toString(36).slice(2, 6);
     const slug = (input.session ?? `build-${input.project ?? new Date().toISOString().slice(0, 10)}-${rand}`).replace(/[^A-Za-z0-9_-]/g, '-');
@@ -192,11 +232,12 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
       // An order from an agent carries requirements someone will check:
       // the builder keeps the acceptance list (docs/builder.md).
       acceptanceRequired: true,
+      ...(writeAllow ? { writeAllow } : {}),
       ...(input.plan_path ? { planPath: input.plan_path } : {}),
       // Go (after a plan phase) wakes this agent with the report.
       orderer: { agent: ctx.agent, ...(ctx.session ? { session: ctx.session } : {}) },
     });
-    const order = composeBuildOrder({ ...input, phase });
+    const order = composeBuildOrder({ ...input, phase, ...(writeAllow ? { write_allow: writeAllow } : {}) });
     const ask = await agentAsk.handler(
       {
         agent: builderName,
@@ -215,6 +256,7 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
       ...(input.project ? { project: input.project } : {}),
       mode: input.mode ?? 'unattended',
       phase,
+      ...(writeAllow ? { write_allow: writeAllow } : {}),
       dispatch: ask,
       note:
         phase === 'plan'

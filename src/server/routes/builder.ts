@@ -9,6 +9,7 @@ import { LSP_SERVERS, findBinary } from '../../lsp/registry.ts';
 import { type Persona, listAgents, loadPersona } from '../../persona/loader.ts';
 import { resolveSessionId, sessionMetaStore } from '../../storage/sessions.ts';
 import { checkWriteAllowed, expandHome } from '../../tools/file/policy.ts';
+import { checkWriteAllow } from '../../tools/file/write-scope.ts';
 import { registerAskCall } from '../ask-calls.ts';
 import { claimOfSession, describeClaim, listWorkdirClaims, workdirClaimedBy } from '../builder-busy.ts';
 import { answerQuestion, askQuestion, pendingQuestion } from '../builder-questions.ts';
@@ -71,6 +72,7 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
       kind: r.persona.kind,
       state,
       acceptance: readAcceptance(meta as Record<string, unknown>),
+      writeAllow: Array.isArray((meta as Record<string, unknown>).builderWriteAllow) ? ((meta as Record<string, unknown>).builderWriteAllow as string[]) : [],
       question: q
         ? { questionId: q.id, question: q.question, header: q.header, options: q.options, multiple: q.multiple, askedAt: q.askedAt, expiresAt: q.expiresAt }
         : null,
@@ -89,7 +91,24 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
       planPath?: string | null;
       orderer?: { agent?: unknown; session?: unknown };
       acceptanceRequired?: unknown;
+      writeAllow?: unknown;
     };
+    if (body.writeAllow !== undefined) {
+      // Folders the builder may write in besides the project, set by the
+      // orderer up front (a worktree beside the project). Added to the
+      // grants "allow this folder for the session" makes.
+      if (!Array.isArray(body.writeAllow)) return c.json({ error: 'writeAllow must be an array of absolute folder paths' }, 400);
+      const meta = (await sessionMetaStore.get(r.agent, r.session)) as Record<string, unknown>;
+      const wd = workdirFromMeta(meta, r.persona, config);
+      if (wd.source !== 'project') return c.json({ error: 'writeAllow needs a pinned project: without one the builder is not held to a folder' }, 400);
+      const checked = checkWriteAllow(body.writeAllow, wd.path);
+      if (!checked.ok) return c.json({ error: checked.error }, 400);
+      await sessionMetaStore.update(r.agent, r.session, (current) => {
+        const prev = Array.isArray((current as Record<string, unknown>).builderWriteAllow) ? ((current as Record<string, unknown>).builderWriteAllow as string[]) : [];
+        return { ...current, builderWriteAllow: [...new Set([...prev, ...checked.folders])] } as typeof current;
+      });
+      logger.info({ msg: 'builder.write_allow', agent: r.agent, session: r.session, folders: checked.folders, workdir: wd.path });
+    }
     if (body.acceptanceRequired !== undefined) {
       if (typeof body.acceptanceRequired !== 'boolean') return c.json({ error: 'acceptanceRequired must be a boolean' }, 400);
       await sessionMetaStore.update(r.agent, r.session, (current) => ({ ...current, acceptanceRequired: body.acceptanceRequired }));

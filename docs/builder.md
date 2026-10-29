@@ -198,6 +198,7 @@ The caller returns at once. It is woken with the builder's report as an
 | `mode` | `unattended` (default) or `attended`. |
 | `phase` | `build` (default) or `plan`. |
 | `session` | Name for the new session. Default: `build-<project or date>-<random>`. |
+| `write_allow` | Absolute folders the builder may write in besides the project, such as a git worktree beside it. Needs `project`. Checked before the session is created: see [Where a builder may write](#where-a-builder-may-write). |
 | `timeout_ms` | Passed on to the underlying `agent_ask`. |
 
 With `phase: "plan"` the builder plans first and stops with "Plan
@@ -265,12 +266,33 @@ this on every engine, after the general path blacklist.
 
 | Mode | A write outside the two folders |
 |---|---|
-| **unattended** | Refused. The message names the two allowed folders and tells the builder to use a path inside the project, or to explain in its report why the file is needed elsewhere. |
+| **unattended** | Refused. The message names the allowed folders and says this is a limit of the order: the builder must not write the file through `exec` instead, but name the folder it needs in its report. |
 | **attended** | A question appears in the task panel: *Allow once*, *Allow this folder for the session*, or *Deny*. No answer within five minutes counts as deny. |
 
 "Allow this folder for the session" is remembered on the session, so
 the next write there passes. A path inside the project that leads
 outside through a symlink is refused.
+
+### A second folder for the order
+
+Work in a worktree or a second checkout beside the project needs that
+folder allowed. The orderer passes it in `builder_dispatch`:
+
+```json
+{ "project": "<project>", "write_allow": ["/home/<you>/Projects/<project>-next"],
+  "task": "…" }
+```
+
+The folders are checked before the session is created. Each must
+exist (create the worktree first) and be narrow. The root, the home
+folder, a folder that holds the project (it would open every
+neighbour) and anything inside somora's home are refused. At most
+four. The order and the session block name the folders to the
+builder. A person can add one with `PATCH …/builder` `writeAllow`.
+
+A worktree inside the project folder, kept out of git (for example
+`.worktrees/<name>`, listed in `.git/info/exclude`), needs no
+`write_allow` at all.
 
 Chat agents, and a builder without a pinned folder, are bound by the
 blacklist alone.
@@ -503,7 +525,7 @@ is `GET /agents/:agent/sessions/:session/builder`.
 | Route | Body | Returns |
 |---|---|---|
 | `GET …/builder` | | `{agent, session, kind, state, acceptance, question, turn}` |
-| `PATCH …/builder` | `{mode?, phase?, planPath?, orderer?, acceptanceRequired?}` | `{state}`. Publishes `builder_state`. |
+| `PATCH …/builder` | `{mode?, phase?, planPath?, orderer?, acceptanceRequired?, writeAllow?}` | `{state}`. Publishes `builder_state`. |
 | `POST …/builder/go` | `{note?}` | 202 with `{state, turnId, callId?, wakes?}`. 409 `folder busy` when another builder turn holds the folder. |
 | `PUT …/todos` | `{todos: [{content, status, priority?}]}` | `{todos}`. Publishes `todo_updated`. Used by `todo_write`. |
 | `PUT …/plan` | `{content}` | `{path, bytes, archived?}`. Used by `plan_write`. |
