@@ -9,7 +9,7 @@ import { listAllModels, resolveAnyRef } from '../../config/types.ts';
 import { agentKnown, isExternalAgent } from '../../external/registry.ts';
 import { AgentRenamingError, isRenaming } from '../../persona/rename-lock.ts';
 import { createSession, getHistory, listSessions, resolveSessionId, sessionMetaStore } from '../../storage/sessions.ts';
-import { markSeen, subscribeActivity } from '../activity-stream.ts';
+import { listStreaming, markSeen, subscribeActivity } from '../activity-stream.ts';
 import { completeAskCall, failAskCall, getAskCall, markAskCallPending, markAskCallRunning, registerAskCall, waitForAskCall } from '../ask-calls.ts';
 import { findWaitCycle, registerWait } from '../ask-wait-graph.ts';
 import { triggerChatAbort } from '../chat-aborts.ts';
@@ -245,6 +245,10 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
         await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data ?? null) });
       });
       await stream.writeSSE({ event: 'status', data: JSON.stringify({ msg: 'connected' }) });
+      // Turns already running when this client connected.
+      for (const s of listStreaming()) {
+        await stream.writeSSE({ event: 'streaming', data: JSON.stringify({ ...s, phase: 'start' }) });
+      }
       let done = false;
       let resolveDone: () => void = () => {};
       const donePromise = new Promise<void>((resolve) => {

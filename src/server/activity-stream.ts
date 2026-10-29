@@ -49,6 +49,16 @@ type Subscriber = (e: ActivityEvent) => Promise<void> | void;
 
 const subscribers = new Set<Subscriber>();
 
+// Sessions whose model call started and has not ended, so a client that
+// connects in the middle of a long turn still lights its dot: the
+// stream replays these as `streaming` start right after connecting.
+const streamingNow = new Map<string, { agent: string; session: string }>();
+
+/** The sessions working right now, as the `streaming` events left them. */
+export function listStreaming(): Array<{ agent: string; session: string }> {
+  return [...streamingNow.values()];
+}
+
 export function subscribeActivity(sub: Subscriber): () => void {
   subscribers.add(sub);
   return () => {
@@ -104,6 +114,9 @@ export async function tapPublish(
     if (event.event === 'agent') {
       const phase = (event.data as { phase?: string } | undefined)?.phase;
       if (phase === 'start' || phase === 'end') {
+        const k = `${agent}\u0000${session}`;
+        if (phase === 'start') streamingNow.set(k, { agent, session });
+        else streamingNow.delete(k);
         await broadcast({ event: 'streaming', data: { agent, session, phase } });
       }
       return;

@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sessionMetaStore, createSession, listSessions } from '../storage/sessions.ts';
-import { subscribeActivity, tapPublish } from './activity-stream.ts';
+import { listStreaming, subscribeActivity, tapPublish } from './activity-stream.ts';
 
 const final = { event: 'chat', data: { state: 'final', text: 'done' } } as never;
 
@@ -40,4 +40,17 @@ test('a sub-agent session is never unread: no mark, no signal, old marks ignored
     const row = (await listSessions('ada')).find((s) => s.id === id)!;
     assert.equal(row.unreadAt, null, kind);
   }
+});
+
+test('a client that connects mid-turn learns which sessions are working', async () => {
+  // The case of 2026-10-29: a builder had worked for two hours when the
+  // phone opened, and its tile never pulsed — the start had gone by.
+  const start = { event: 'agent', data: { phase: 'start' } } as never;
+  const end = { event: 'agent', data: { phase: 'end' } } as never;
+  await tapPublish('ada', 'long', start);
+  await tapPublish('ada', 'short', start);
+  await tapPublish('ada', 'short', end);
+  assert.deepEqual(listStreaming(), [{ agent: 'ada', session: 'long' }]);
+  await tapPublish('ada', 'long', end);
+  assert.deepEqual(listStreaming(), []);
 });

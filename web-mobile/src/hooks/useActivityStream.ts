@@ -103,6 +103,12 @@ export function useActivityStream(agents: AgentInfo[]): ActivityState {
   // the browser's built-in EventSource retry.
   useEffect(() => {
     const es = new EventSource('/activity/stream');
+    // Every (re)connect starts over: the server sends the sessions
+    // working right now as `streaming` start after `status`, so a turn
+    // that ended while the link was down does not keep its dot.
+    es.addEventListener('status', () => {
+      setStreamingKeys((prev) => (prev.size === 0 ? prev : new Set()));
+    });
     es.addEventListener('streaming', (ev) => {
       try {
         const d = JSON.parse((ev as MessageEvent).data) as {
