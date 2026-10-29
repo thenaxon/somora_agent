@@ -139,8 +139,9 @@ a shell.
 ## Builders write inside their project
 
 A builder agent pinned to a project folder may write only there and in
-its temp folder, `~/.somora/agents/<name>/tmp`. Outside of it the write
-is refused. When you are attending, you are asked in the task panel
+its temp folder, `~/.somora/agents/<name>/tmp`, plus folders allowed for
+the session, such as a worktree beside the project. Outside of them the
+write is refused. When you are attending, you are asked in the task panel
 and have five minutes to answer. See
 [Where a builder may write](builder.md#where-a-builder-may-write).
 

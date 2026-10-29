@@ -17,7 +17,7 @@ agent can hand it an order.
 - **Hand-over from another agent.** An agent that planned with you
   sends the order with one tool call and is woken with the report.
 - **It stays in its project.** A builder pinned to a project folder
-  writes only there.
+  writes only there, and in folders its order allows.
 - **Turns that run for hours.** Generous limits, compaction inside the
   turn, and compiler errors after every write keep long builds on
   track.
@@ -259,12 +259,12 @@ never to let two helpers edit the same file.
 
 ## Where a builder may write
 
-A builder session pinned to a project folder writes only in two places:
-the project folder and its own temp folder,
-`~/.somora/agents/<agent>/tmp/`. `file_write` and `file_patch` check
+A builder session pinned to a project folder writes only in the project
+folder, its own temp folder `~/.somora/agents/<agent>/tmp/`, and the
+folders allowed for the session. `file_write` and `file_patch` check
 this on every engine, after the general path blacklist.
 
-| Mode | A write outside the two folders |
+| Mode | A write outside these folders |
 |---|---|
 | **unattended** | Refused. The message names the allowed folders and says this is a limit of the order: the builder must not write the file through `exec` instead, but name the folder it needs in its report. |
 | **attended** | A question appears in the task panel: *Allow once*, *Allow this folder for the session*, or *Deny*. No answer within five minutes counts as deny. |
@@ -387,8 +387,7 @@ its task list and append a short status to its report file, so a crash
 late in a long build loses minutes.
 
 **No round cap.** A builder has no `maxRounds` unless its `agent.yaml`
-sets one. A round count says nothing about progress, and the earlier
-cap of 500 ended night builds mid-work. The brakes are the tool-call
+sets one. A round count says nothing about progress. The brakes are the tool-call
 budget (2000), the time cap (8 hours) and the loop guard below. A number
 in `agentLoop.maxRounds`, or `maxRounds` in one `spawn_subagent` call,
 brings a cap back. Chat agents keep the server's `agentLoop` values.
@@ -524,7 +523,7 @@ is `GET /agents/:agent/sessions/:session/builder`.
 
 | Route | Body | Returns |
 |---|---|---|
-| `GET …/builder` | | `{agent, session, kind, state, acceptance, question, turn}` |
+| `GET …/builder` | | `{agent, session, kind, state, acceptance, writeAllow, question, turn}` |
 | `PATCH …/builder` | `{mode?, phase?, planPath?, orderer?, acceptanceRequired?, writeAllow?}` | `{state}`. Publishes `builder_state`. |
 | `POST …/builder/go` | `{note?}` | 202 with `{state, turnId, callId?, wakes?}`. 409 `folder busy` when another builder turn holds the folder. |
 | `PUT …/todos` | `{todos: [{content, status, priority?}]}` | `{todos}`. Publishes `todo_updated`. Used by `todo_write`. |
@@ -565,7 +564,7 @@ for other clients.
 | What you see | Reason and fix |
 |---|---|
 | `folder busy: …` | Another builder turn works in this folder or a nested one. Wait for its report or use another project folder. |
-| `write refused: … is outside the project folder` | The write scope. Use a path inside the project, or switch the session to attended and allow the folder. |
+| `write refused: … is outside the project folder` | The write scope. The message names the allowed folders. Use a path inside one of them, give the order `write_allow`, or switch the session to attended and allow the folder. The builder must not write the file with `exec` instead. |
 | The builder never asks | The session is unattended, so `ask_user` is hidden. Switch the mode in the task panel. |
 | The builder cannot edit files | The session is in the plan phase. Press Go. |
 | The project cannot be unpinned or switched | A builder turn is running. Stop the turn first. |

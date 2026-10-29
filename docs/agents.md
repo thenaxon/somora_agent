@@ -74,7 +74,7 @@ and is set up in `config.yaml`, not in an agent folder.
 | **Skills** | All, minus what you hide | None, plus what you allow |
 | **Turn limits** | The server's `agentLoop` values: 8 rounds, 30 tool calls | No round cap, 2000 tool calls, 8 hours |
 | **Memory** | Notices facts, dreams them into notes and the wiki | Reads memory, never writes it, does not dream |
-| **Works in** | Its workspace | The pinned project's folder |
+| **Works in** | Its workspace | The pinned project's folder, and folders an order allows |
 | **Window** | Chat | Chat plus a task panel |
 
 ## The agent folder

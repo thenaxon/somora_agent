@@ -167,7 +167,7 @@ Toolset `agents`.
 | `subagent_result` | Fetches a sub-agent's result, or waits for it. |
 | `subagent_list` | Lists the agent's sub-agent tasks. |
 | `subagent_cancel` | Stops a sub-agent and everything it started. |
-| `agent_ask` | Sends a message into another agent's session and returns its reply. |
+| `agent_ask` | Sends a message into another agent's session and returns its reply, with the model that answered. |
 | `agent_ask_result` | Fetches or waits for the outcome of an earlier `agent_ask`: `done`, `failed` or `pending`, with the model that answered and, after a fallback, the one asked for. The message is never sent twice. |
 | `agent_ask_cancel` | Takes an own `agent_ask` back. |
 | `session_list` | Lists chat sessions: the agent's own, another agent's with `agent`, everyone's with `"*"`. |

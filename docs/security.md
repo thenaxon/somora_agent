@@ -228,7 +228,8 @@ overwritten, somora copies it to `<file>.bak-<timestamp>` and keeps the
 last five.
 
 A builder agent pinned to a project folder writes only in that folder
-and in its own temp folder. Outside of it the write is refused, or asked
+and in its own temp folder, plus folders allowed for the session.
+Outside of them the write is refused, or asked
 about in the task panel when you are attending. This covers the file
 tools only. The builder's shell can still write anywhere.
 

@@ -110,8 +110,8 @@ one you give a repository to.
 | **Tools** | The whole programme, gated per agent | A short coding set: files, shell, task list, questions, helpers, colleagues, search |
 | **Turns** | A few rounds; on an OpenAI-compatible model the loop stops at 30 tool calls (the CLI engines run their own loop) | Hours; hundreds of rounds, compaction mid-turn, a task list you watch |
 | **Memory** | Notices facts, dreams them into notes and the wiki | Reads memory, never writes it; does not dream |
-| **Works in** | Its workspace | The pinned project's folder, and only there |
-| **Window** | Chat | Chat plus a task panel: mode, plan → Go, tasks, questions, running time |
+| **Works in** | Its workspace | The pinned project's folder, and folders an order allows besides it |
+| **Window** | Chat | Chat plus a task panel: mode, plan → Go, tasks, acceptance list, questions, running time |
 | **Made how** | `somora setup agent`, or a folder with an `AGENTS.md` and an `agent.yaml` | A folder whose `agent.yaml` says `kind: builder` — fixed for life |
 
 You can talk to a builder directly — describe the project, let it plan,

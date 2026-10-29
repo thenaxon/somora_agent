@@ -786,7 +786,7 @@ Every event has `kind` and `ts`. The kinds:
 | `model_fallback` | A backup model answered. Stands before the assistant message it produced. |
 | `assistant_audio`, `assistant_media` | Spoken audio and generated media of a turn, paired by `turnId`. |
 | `project_switched` | The session's project changed. |
-| `error` | An error text. |
+| `error` | An error text. `contextOverflow: true` when the conversation did not fit the model's window even after compacting; a backup model with a window no larger is then skipped. |
 | `turn_start`, `turn_end` | Bookkeeping around a turn. |
 
 `400` when `agent` or `session` is missing or `before` is not a number.
@@ -1034,7 +1034,7 @@ most notes have a readable `payload.text`.
 | `thread_recreated` | The Codex thread was gone. A new one was started with the history replayed. |
 | `tools_changed` | The agent's tool set changed, so a new Codex thread was started with the history replayed. |
 | `mcp_server_renamed` | The engine session was rebuilt (label `session restarted`). |
-| `context_compacted` | The history was compacted: by somora before a turn (`payload.reason: "auto"`, with `contextBefore`, `contextAfter` and `contextWindow` in tokens), during a turn, after the backend refused the prompt (`"context_overflow"`), or by the engine itself (`"engine_side"`). A compaction by hand has engine `somora`, see below. |
+| `context_compacted` | The history was compacted: by somora before a turn (`payload.reason: "auto"`, with `contextBefore`, `contextAfter` and `contextWindow` in tokens; for a builder also `builderTarget`, `reachedTarget` and `freeTokens`), during a turn, after the backend refused the prompt (`"context_overflow"`), when the first request did not fit even trimmed and the turn starts over on the same model (`"context_budget"`), or by the engine itself (`"engine_side"`). A compaction by hand has engine `somora`, see below. |
 | `context_trimmed` | The oldest tool results of the running turn were shortened to fit the window. The turn goes on. |
 | `attachments_unsupported` | The engine cannot pass attachments on. |
 | `session_model` | An agent switched this session's model (label `model switched`). |
@@ -1042,8 +1042,8 @@ most notes have a readable `payload.text`.
 | `reasoning_effort_adjusted`, `sampling_dropped` | The backend refused a parameter and the turn was retried without it. |
 | `doom_loop_notice`, `doom_loop_stop` | The same tool calls three rounds in a row: the model was told to change course (label `loop noticed`). Five rounds: the turn was stopped (`loop stopped`). |
 | `budget_checkpoint` | A builder used 75 % of its turn budget and was told to save its progress and keep working. `payload` has `round`, `toolCalls`, `maxRounds` (`null` without a round cap) and `maxToolCallsPerTurn`. |
-| `open_tasks_notice` | A builder wanted to end its turn with open items on its task list and was told to continue or to name the blocker (label `open tasks`). `payload.open` is the count. |
-| `answer_cut_off` | A builder's answer was cut off by the output limit and it was told to continue where it stopped. |
+| `open_tasks_notice` | A builder wanted to end its turn with open items on its task list and was told to continue or to name the blocker (label `open tasks`). Also when acceptance items are open or the required list is missing. `payload` has `round`, `open` (task items), `acceptanceOpen`, `acceptanceMissing` (only when true) and `attempt` (1 or 2). |
+| `answer_cut_off` | A builder's answer was cut off by the output limit and it was told to continue where it stopped (label `answer cut off`). `payload` has `round` and `attempt` (1 or 2). |
 
 An unknown `itemType` keeps its raw name as label.
 
@@ -1837,6 +1837,7 @@ The builder state of a session.
                   "items": [ { "id": "A01", "requirement": "A rejected result is never shown as completed",
                                "status": "passed", "evidence": "npm test gate.test: rejected → failed",
                                "updatedAt": 1789299998000 } ] },
+  "writeAllow": [],
   "question": null,
   "turn": { "turnId": "…", "startedAt": 1789299991000, "toolCalls": 7,
             "lastTool": "file_write", "lastToolAt": 1789299999000 } }
@@ -1861,7 +1862,7 @@ Changes mode, phase or plan file. Sends `builder_state`.
 | `planPath` | An absolute path, or `null` to clear it. |
 | `orderer` | `{agent, session?}`: the agent that handed the order over. Set by `builder_dispatch`. |
 | `acceptanceRequired` | `true` makes the acceptance list required for this session. Set by `builder_dispatch`. |
-| `writeAllow` | Absolute folders the builder may also write in, added to those already allowed. At most 4. Each must exist and be narrow: not `/`, not the home folder, not a folder holding the project, not inside somora's home. Needs a pinned project. Set by `builder_dispatch` `write_allow`. |
+| `writeAllow` | Absolute folders the builder may also write in, added to those already allowed. At most 4 per request. Each must exist and be narrow: not `/`, not the home folder, not a folder holding the project, not inside somora's home. Needs a pinned project. Set by `builder_dispatch` `write_allow`. |
 
 Returns `{agent, session, state}`. `400` for a value outside these.
 
