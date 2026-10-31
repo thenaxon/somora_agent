@@ -6,6 +6,7 @@
 //
 // Run: npx tsx src/server/builder-follow-up.test.mts
 
+import '../testing/isolated-home.mts';
 import assert from 'node:assert/strict';
 
 import { triggerChatAbort } from './chat-aborts.ts';
