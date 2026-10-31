@@ -108,10 +108,10 @@ away by hand.
 | Part | What it shows |
 |---|---|
 | **Running for** | While a turn runs: elapsed time, the number of tool calls and the last tool. When the last call is more than a minute old its age is shown too, so a stuck turn is visible at a glance. |
-| **Switches** | Mode and phase, the **Go** button while planning, and the plan file's path. |
+| **Switches** | Mode, phase and **list required / list optional** (whether the [acceptance list](#the-acceptance-list) is required), the **Go** button while planning, and the plan file's path. |
 | **Tasks** | The list the builder keeps with `todo_write`: one item in progress at a time, each ticked off the moment it is verified. |
 | **Question** | What the builder asked with `ask_user`: the options as buttons, a free-text field and the minutes left. |
-| **Acceptance** | The [acceptance list](#the-acceptance-list): per requirement its status, evidence and review, with a button to accept and one to reject (with a note). Shown when the list has items or the order requires one. |
+| **Acceptance** | The [acceptance list](#the-acceptance-list): per requirement its status, evidence and review, with a button to accept and one to reject (with a note). Shown when the list has items or the session requires one. |
 
 A question blocks the turn until you answer or the wait runs out. The
 wait is 30 minutes unless the builder asks for another (10 seconds to 4
@@ -119,8 +119,9 @@ hours). An unanswered question comes back to the builder as
 "unanswered", and it decides itself. A session has one open question at
 a time: a newer one replaces it.
 
-The mobile app has no task panel. You can chat with a builder there,
-but Go and answers happen in the web client.
+On the phone the same panel opens as a sheet from the **builder** button
+in the header of a builder session. See
+[Mobile](mobile.md#builder-panel).
 
 ## The acceptance list
 
@@ -134,15 +135,26 @@ green test suite are not an accepted build.
 | `id` | `A01`, `A02`, …, stable for the life of the item. |
 | `requirement` | The requirement as the order states it. |
 | `status` | `open`, `passed`, `failed` or `not_run`. Set by the builder. |
-| `evidence` | What shows the status: the command and its result, the file, the test, the revision. Expected for `passed` and `failed`. |
+| `evidence` | What shows the status: the command and its result, the file, the test, the revision. For `not_run` the reason. Needed for `passed`, `failed` and `not_run`. |
 | `review` | `accepted` or `rejected`, by whom, with a note. Set by you or by the agent that gave the order. |
 
 **Rules.**
 
-- **Required for agent orders.** An order sent with `builder_dispatch`
-  requires the list. The builder writes it before building, or in the
-  plan phase, and keeps it current. A builder may also keep one in a
-  session you opened yourself.
+- **Required for agent orders.** A message from another agent turns
+  the list on for the session, whichever way it came: `builder_dispatch`,
+  `agent_ask`, or an A2A peer. It stays on for the session, also for
+  your own messages there. The builder writes the list before building,
+  or in the plan phase, and keeps it current.
+- **Your own orders.** For a session you work with yourself, the
+  **list required / list optional** switch in the panel turns it on or
+  off. It is off until you or an agent turn it on. A builder may keep a
+  list without it.
+- **Evidence or no status.** When the list is required, an item set to
+  `passed` or `failed` without evidence, or to `not_run` without the
+  reason, is refused: it keeps its status and the builder is told why.
+  Without the requirement this is only a warning. An item sent again
+  with the same status and no evidence keeps the evidence it has, and
+  its review.
 - **The builder cannot narrow the list.** An item it leaves out stays,
   and a requirement keeps its first wording. A changed milestone is a
   new item, not a rewritten one.
@@ -151,18 +163,55 @@ green test suite are not an accepted build.
   status or new evidence clears an earlier review, because that review
   was of the old evidence.
 - **The end is checked.** A builder that wants to end its turn with an
-  item still `open`, or with no list although the order requires one,
-  is told so. This is the same notice as for open tasks: at most twice
-  per turn, and the `open tasks` row counts both.
+  item still `open`, or with no list although the session requires one,
+  is sent back. See [When the builder wants to stop](#when-the-builder-wants-to-stop).
 - **The report ends with the list.** The final answer gets the list as
   the session holds it, as a table under "Acceptance list (from the
-  session)". The orderer reads it there.
+  session)", on every engine. The orderer reads it there. An answer to a
+  question, from a turn that changed nothing, gets no table.
 - **It survives compaction.** The work-state block of a mid-turn
   compaction carries the list word for word. After a compaction before
   a turn, the builder reads it with `acceptance_write` and no items.
 
 At most 60 items. A requirement is cut at 500 characters, evidence and
 review notes at 1000.
+
+## When the builder wants to stop
+
+A builder that ends its turn while it still owes the order something is
+sent back to it. It owes something when:
+
+- its task list has items `pending` or `in_progress`, and this turn
+  wrote the task list,
+- its acceptance list has items still `open`, and the list is required
+  or this turn wrote it,
+- the list is required and there is none.
+
+The builder is told what is open and asked to finish it, to mark what is
+really done, or to name the blocker. It is not asked to shrink the task.
+
+The check applies only when:
+
+- the session is in the build phase (the plan phase ends with open
+  steps by design),
+- the turn worked on the order: it called `file_write`, `file_patch` or
+  `todo_write`, or wrote the acceptance list itself. A turn that only
+  answers a question, such as an orderer's "is the service still up?",
+  is left alone even when the list is required.
+
+How the builder is sent back depends on the engine:
+
+| Engine | How |
+|---|---|
+| openai-compatible | Inside the running turn. The chat shows an `open tasks` row. At most twice per turn, and not again when the builder ends right after such a notice. |
+| claude-cli, codex-cli, grok-cli | These engines run their own tool loop, so somora sees the turn only once it ended. It starts a follow-up turn at once, under the same lock: a message from somora itself (`system · open items`) that names what is open and asks for the complete report again. At most two follow-ups, and none after a follow-up without a tool call: that answer stands. The log line is `builder.turn_end_follow_up`. |
+
+Whoever gave the order gets the answer only after the follow-ups: the
+answer of the last turn, with the acceptance list under it. A follow-up
+that fails (a rate limit, an engine error) leaves the earlier report as
+the answer. The follow-ups run under the order's turn: **Stop** reaches
+them and the time between them, also a stop that names the order's turn
+id, and the asker then reads "stopped by the user".
 
 ## Steering
 
@@ -403,19 +452,10 @@ verified, what is not done or not verified, what comes next. The log
 line for the checkpoint is `engine.budget_soft_warn` with `phase`
 `builder_checkpoint`. The chat shows it as a `budget checkpoint` row.
 
-**Open tasks at the end.** A builder that wants to end its turn while
-its task list still has open items is told to go on: mark what is
-really done, continue with the rest, or name the blocker and write the
-report. This happens at most twice per turn, and only when:
-
-- the turn wrote the task list itself (a turn that answers a question
-  about the state is left alone),
-- the session is in the build phase (the plan phase ends with open
-  steps by design),
-- the builder did not end right after such a notice (that answer
-  stands).
-
-The chat shows an `open tasks` row.
+**Open tasks at the end.** On this engine a builder that wants to end
+its turn with open tasks or an open acceptance list is sent back inside
+the turn. The rules, and how the other engines do it, are in
+[When the builder wants to stop](#when-the-builder-wants-to-stop).
 
 **A cut-off answer.** When the builder's answer runs into the output
 limit (`maxTokens`), it is told to continue exactly where it stopped,
@@ -509,7 +549,7 @@ The builder's tools:
 | `todo_write` | `todos: [{content, status, priority?}]` | Replaces the whole task list. Status is `pending`, `in_progress`, `completed` or `cancelled`. |
 | `ask_user` | `question`, `options` (2 to 6, each `{label, description?}`), `header?`, `multiple?`, `timeout_ms?` | Asks in the task panel and waits. Returns `{answered, answers[], text?}`. |
 | `plan_write` | `content` | Writes the whole plan file. |
-| `acceptance_write` | `items?: [{id, requirement?, status, evidence?}]` | Replaces the acceptance list under its [rules](#the-acceptance-list). Returns the counts, the list and `warnings` for what was not taken. Without `items` it returns the list. |
+| `acceptance_write` | `items?: [{id, requirement?, status, evidence?}]` | Replaces the acceptance list under its [rules](#the-acceptance-list). Returns the counts, the list and `warnings` for what was not taken or refused. Without `items` it returns the list. |
 
 A chat agent never gets `todo_write`, `plan_write` and `acceptance_write`, whatever its
 `agent.yaml` says. `ask_user` belongs to every agent ([Questions to
@@ -524,12 +564,12 @@ is `GET /agents/:agent/sessions/:session/builder`.
 | Route | Body | Returns |
 |---|---|---|
 | `GET …/builder` | | `{agent, session, kind, state, acceptance, writeAllow, question, turn}` |
-| `PATCH …/builder` | `{mode?, phase?, planPath?, orderer?, acceptanceRequired?, writeAllow?}` | `{state}`. Publishes `builder_state`. |
+| `PATCH …/builder` | `{mode?, phase?, planPath?, orderer?, acceptanceRequired?, writeAllow?}` | `{state}`. Publishes `builder_state`, and `acceptance_updated` when `acceptanceRequired` is sent. |
 | `POST …/builder/go` | `{note?}` | 202 with `{state, turnId, callId?, wakes?}`. 409 `folder busy` when another builder turn holds the folder. |
 | `PUT …/todos` | `{todos: [{content, status, priority?}]}` | `{todos}`. Publishes `todo_updated`. Used by `todo_write`. |
 | `PUT …/plan` | `{content}` | `{path, bytes, archived?}`. Used by `plan_write`. |
 | `GET …/acceptance` | | `{items, required}` |
-| `PUT …/acceptance` | `{items: [{id, requirement?, status, evidence?}], by_agent?}` | `{items, required, warnings}`. Publishes `acceptance_updated`. Used by `acceptance_write`. 403 when `by_agent` is another agent. |
+| `PUT …/acceptance` | `{items: [{id, requirement?, status, evidence?}], by_agent?}` | `{items, required, warnings}`. Publishes `acceptance_updated`. Used by `acceptance_write`. 403 when `by_agent` is another agent. When `required`, an item without its evidence or reason is refused and named in `warnings`. |
 | `POST …/acceptance/review` | `{id, verdict: "accepted" \| "rejected", note?, by_agent?}` | `{items, required}`. Publishes `acceptance_updated`. Without `by_agent` the review is yours. With it, it must be the orderer. The builder itself gets 403. 404 for an unknown `id`. |
 | `POST …/ask` | `{question, header?, options[], multiple?, timeout_ms?}` | A builder's question, or one in a task sent over A2A, blocks, then returns `{answered, answers[], text?}`. A chat agent's question in a turn a person started returns at once with `{asked: true, questionId, note}`. Publishes `question_asked`. Used by `ask_user`. |
 | `POST …/answer` | `{questionId, answers?, text?}` | `{ok}`. Publishes `question_answered`. |
@@ -541,7 +581,7 @@ Fields of `GET …/builder`:
 | Field | Content |
 |---|---|
 | `state` | `{mode, phase, planPath, todos, orderer?}`, or `null` before the first turn. |
-| `acceptance` | `{items, required}`: the acceptance list and whether the order requires it. |
+| `acceptance` | `{items, required}`: the acceptance list and whether the session requires it. |
 | `question` | `{questionId, question, header, options, multiple, askedAt, expiresAt}`, or `null`. |
 | `turn` | `{turnId, startedAt, toolCalls, lastTool?, lastToolAt?}` while a turn runs, else `null`. |
 
@@ -555,7 +595,7 @@ Details:
 - The task list holds at most 100 items of 500 characters each.
 
 The web panel reads `GET …/builder` on every turn event and every two
-seconds. The SSE events `builder_state`, `todo_updated`,
+seconds, the phone's sheet every two seconds while it is open. The SSE events `builder_state`, `todo_updated`,
 `acceptance_updated`, `question_asked` and `question_answered` exist
 for other clients.
 
@@ -570,6 +610,8 @@ for other clients.
 | The project cannot be unpinned or switched | A builder turn is running. Stop the turn first. |
 | "No builder state yet" in the panel | Mode and phase appear with the first message. |
 | `builder_dispatch: several builders exist` | Name one in `builder`. The error lists them. |
+| The builder kept going after it said it was done | It ended with open tasks or open acceptance items and was sent back ([When the builder wants to stop](#when-the-builder-wants-to-stop)). The chat shows an `open tasks` row or a `system · open items` message. |
+| `refused — passed without evidence` | The acceptance list is required, so every status but `open` needs its evidence or reason. The builder sends the item again with it. |
 | A turn ended early | Look at `turn_end.forced_final` and the "loop noticed" and "loop stopped" rows. In the log: `engine.doom_loop_stop`, `engine.reasoning_only_round`. |
 
 ## See also

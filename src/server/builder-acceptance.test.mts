@@ -59,6 +59,44 @@ test('passed or failed without evidence is kept but warned about', () => {
   assert.doesNotMatch(r.warnings.join(' '), /A02/);
 });
 
+test('a required list refuses passed or failed without evidence and not_run without a reason', () => {
+  const withEvidence = mergeBuilderAcceptance(first, [{ id: 'A01', status: 'failed', evidence: 'gate.test: 90 vs 100 judged as agreement' }, { id: 'A02', status: 'open' }], T0 + 1).items;
+  const r = mergeBuilderAcceptance(
+    withEvidence,
+    [
+      { id: 'A01', status: 'passed' },
+      { id: 'A02', status: 'not_run' },
+      { id: 'A03', requirement: 'a new one', status: 'passed' },
+    ],
+    T0 + 2,
+    { strict: true },
+  );
+  assert.equal(r.items[0]!.status, 'failed', 'A01 keeps its status');
+  assert.equal(r.items[0]!.evidence, 'gate.test: 90 vs 100 judged as agreement', '… and its evidence');
+  assert.equal(r.items[0]!.updatedAt, T0 + 1, 'nothing changed');
+  assert.equal(r.items[1]!.status, 'open');
+  assert.equal(r.items[2]!.status, 'open', 'a new item without evidence starts open');
+  const w = r.warnings.join(' ');
+  assert.match(w, /A01: refused — passed without evidence; it stays failed/);
+  assert.match(w, /A02: refused — not_run without the reason; it stays open/);
+  assert.match(w, /A03: refused — passed without evidence; it stays open/);
+  const ok = mergeBuilderAcceptance(withEvidence, [{ id: 'A01', status: 'passed', evidence: 'gate.test 3/3' }, { id: 'A02', status: 'not_run', evidence: 'no staging host' }], T0 + 3, { strict: true });
+  assert.deepEqual(ok.items.map((i) => i.status), ['passed', 'not_run']);
+  assert.equal(ok.warnings.length, 0);
+});
+
+test('an item sent again without its evidence keeps the evidence and the review', () => {
+  const withEvidence = mergeBuilderAcceptance(first, [{ id: 'A01', status: 'passed', evidence: 'gate.test 3/3' }, { id: 'A02', status: 'open' }], T0 + 1).items;
+  const reviewed = applyReview(withEvidence, { id: 'A01', verdict: 'accepted', by: 'person' }, T0 + 2)!;
+  for (const strict of [false, true]) {
+    const r = mergeBuilderAcceptance(reviewed, [{ id: 'A01', status: 'passed' }, { id: 'A02', status: 'open' }], T0 + 3, { strict });
+    assert.equal(r.items[0]!.evidence, 'gate.test 3/3');
+    assert.equal(r.items[0]!.review?.verdict, 'accepted');
+    assert.equal(r.items[0]!.updatedAt, T0 + 1);
+    assert.equal(r.warnings.length, 0, `strict ${strict}: ${r.warnings.join(' ')}`);
+  }
+});
+
 test('a review sticks while nothing changes, and is cleared by new evidence', () => {
   const withEvidence = mergeBuilderAcceptance(first, [
     { id: 'A01', status: 'passed', evidence: 'run 1' },

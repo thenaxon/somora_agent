@@ -654,8 +654,10 @@ Response `200`, the turn result:
 |---|---|
 | `finalText` | The reply. |
 | `outcome` | `completed`, `partial`, `degraded` or `failed`. `outcome_reason` and `error` explain the last three. |
-| `tool_calls`, `rounds`, `ms` | How much work the turn was. |
+| `tool_calls`, `rounds`, `ms` | How much work the turn was. For a builder sent back to open work, `tool_calls`, `files_written` and `tools_used` cover the follow-up turns too, and `finalText` is the last turn's report ([Builder](builder.md#when-the-builder-wants-to-stop)). |
 | `files_written`, `media` | Files and generated media of the turn, when there are any. |
+| `tools_used` | The tools the turn called, each once, by their registry name. |
+| `engine`, `agentKind` | The engine that ran the turn (`claude-cli`, `codex-cli`, `grok-cli`, `openai-compatible`) and the agent's kind (`chat` or `builder`). |
 | `follow_ups` | Texts that reached the caller after the report. See `GET /spawn-result`. |
 | `usage`, `contextWindow`, `provider`, `model` | Tokens and the model that answered. `fallback` is added when a backup model answered. |
 | `thinkingActive`, `thinkingLevel` | Whether a thinking level was applied. |
@@ -904,7 +906,7 @@ All events:
 | `project` | The session's project changed | `{from, to, via}` |
 | `builder_state` | A builder session's mode, phase or plan file changed | `{mode, phase, planPath}` |
 | `todo_updated` | A builder replaced its task list | `{todos: [{content, status, priority?}], by?}` |
-| `acceptance_updated` | A builder wrote its acceptance list, or an item was reviewed | `{items: [{id, requirement, status, evidence?, updatedAt, review?}], required, by?}` |
+| `acceptance_updated` | A builder wrote its acceptance list, an item was reviewed, or the list became required or optional | `{items: [{id, requirement, status, evidence?, updatedAt, review?}], required, by?}`. `by` is the builder, `person` or the reviewing agent; absent when only `required` changed. |
 | `question_asked` | An agent asks the person | `{questionId, question, header?, options, multiple, expiresAt, kind?, from?, async?, parts?, source?}`. `kind: "permission"` and `from: "external"` mark an external agent asking to run something; each option's `description` is then its kind (`allow_once`, `reject_once`, …). `async: true` marks a question that does not wait (`expiresAt` is `0`); `parts` lists several questions asked at once, `source` is `ask_user`, or `codex` for Codex's own question tool. |
 | `question_answered` | The open question was answered, replaced or ran out of time | `{questionId?, answered, choice?, by?}`. `by: "message"`: a question that does not wait, answered by writing something else. |
 
@@ -1042,7 +1044,7 @@ most notes have a readable `payload.text`.
 | `reasoning_effort_adjusted`, `sampling_dropped` | The backend refused a parameter and the turn was retried without it. |
 | `doom_loop_notice`, `doom_loop_stop` | The same tool calls three rounds in a row: the model was told to change course (label `loop noticed`). Five rounds: the turn was stopped (`loop stopped`). |
 | `budget_checkpoint` | A builder used 75 % of its turn budget and was told to save its progress and keep working. `payload` has `round`, `toolCalls`, `maxRounds` (`null` without a round cap) and `maxToolCallsPerTurn`. |
-| `open_tasks_notice` | A builder wanted to end its turn with open items on its task list and was told to continue or to name the blocker (label `open tasks`). Also when acceptance items are open or the required list is missing. `payload` has `round`, `open` (task items), `acceptanceOpen`, `acceptanceMissing` (only when true) and `attempt` (1 or 2). |
+| `open_tasks_notice` | A builder on openai-compatible wanted to end its turn with open items on its task list and was told to continue or to name the blocker (label `open tasks`). Also when acceptance items are open or the required list is missing. `payload` has `round`, `open` (task items), `acceptanceOpen`, `acceptanceMissing` (only when true) and `attempt` (1 or 2). On claude-cli, codex-cli and grok-cli the builder gets a follow-up turn instead: a `user_message` with `origin` `{kind: "wake", about: "system", cause: "open items"}`. |
 | `answer_cut_off` | A builder's answer was cut off by the output limit and it was told to continue where it stopped (label `answer cut off`). `payload` has `round` and `attempt` (1 or 2). |
 
 An unknown `itemType` keeps its raw name as label.
@@ -1846,14 +1848,15 @@ The builder state of a session.
 | Field | Meaning |
 |---|---|
 | `state` | `{mode, phase, planPath, todos, orderer?}`, or `null` before the session's first turn. `mode` is `attended` or `unattended`, `phase` is `plan` or `build`. |
-| `acceptance` | `{items, required}`: the acceptance list (see below) and whether the order requires it. |
+| `acceptance` | `{items, required}`: the acceptance list (see below) and whether the session requires it. |
 | `writeAllow` | Folders the builder may write in besides the project: set by the orderer or by "Allow this folder for the session". |
 | `question` | `{questionId, question, header?, options: [{label, description?}], multiple, askedAt, expiresAt}` or `null`. Also carries the question a builder raises before writing outside its project folder. |
 | `turn` | Progress of the running turn, else `null`. |
 
 ### `PATCH /agents/:agent/sessions/:session/builder`
 
-Changes mode, phase or plan file. Sends `builder_state`.
+Changes mode, phase or plan file. Sends `builder_state`, and
+`acceptance_updated` when `acceptanceRequired` is in the body.
 
 | Body field | Meaning |
 |---|---|
@@ -1861,7 +1864,7 @@ Changes mode, phase or plan file. Sends `builder_state`.
 | `phase` | `plan` or `build`. |
 | `planPath` | An absolute path, or `null` to clear it. |
 | `orderer` | `{agent, session?}`: the agent that handed the order over. Set by `builder_dispatch`. |
-| `acceptanceRequired` | `true` makes the acceptance list required for this session. Set by `builder_dispatch`. |
+| `acceptanceRequired` | `true` makes the acceptance list required for this session, `false` optional. The panel's list switch sends it. A message from another agent turns it on by itself (`agent_ask`, `builder_dispatch`, an A2A peer). |
 | `writeAllow` | Absolute folders the builder may also write in, added to those already allowed. At most 4 per request. Each must exist and be narrow: not `/`, not the home folder, not a folder holding the project, not inside somora's home. Needs a pinned project. Set by `builder_dispatch` `write_allow`. |
 
 Returns `{agent, session, state}`. `400` for a value outside these.
@@ -1914,10 +1917,15 @@ whole:
 - an item left out stays,
 - an existing requirement keeps its first wording,
 - `accepted` or `rejected` as a status is refused,
-- a new status or new evidence clears the item's review.
+- a new status or new evidence clears the item's review,
+- when `required` is true, `passed` or `failed` without `evidence`, or
+  `not_run` without the reason in `evidence`, is refused: the item keeps
+  its status and evidence.
+- an item sent again with the same status and no `evidence` keeps its
+  evidence and its review.
 
-`warnings` names each of these, and `passed` or `failed` without
-evidence. `400` for a chat agent.
+`warnings` names each of these. Without `required`, `passed` or
+`failed` without evidence is only a warning. `400` for a chat agent.
 
 ### `POST /agents/:agent/sessions/:session/acceptance/review`
 

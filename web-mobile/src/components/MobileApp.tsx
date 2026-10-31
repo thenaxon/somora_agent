@@ -18,6 +18,8 @@ import { useSessionWork, type WorkItemDto } from '../hooks/useSessionWork';
 import { useSessionModel } from '../hooks/useSessionModel';
 import { useToolSwitch } from '../hooks/useToolSwitch';
 import { useBuilderTurn } from '../hooks/useBuilderTurn';
+import { useBuilderPanel } from '../hooks/useBuilderPanel';
+import { BuilderButton, BuilderSheet } from './BuilderSheet';
 import { resolveAgentColor } from '../hooks/agentColors';
 import { SessionSheet } from './SessionSheet';
 import { AgentOrderSheet } from './AgentOrderSheet';
@@ -96,6 +98,12 @@ export function MobileApp() {
   const [showTools, toggleTools] = useToolSwitch(activeAgent, session.id, activeKind);
   const sessionBusy = Boolean(work && (work.busy || work.active));
   const builderTurn = useBuilderTurn(activeAgent, session.id, activeKind === 'builder' && showTools, sessionBusy);
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const builderPanel = useBuilderPanel(activeAgent, session.id, activeKind === 'builder', builderOpen, sessionBusy);
+  // Another agent or session: the sheet belongs to the one it was opened on.
+  useEffect(() => setBuilderOpen(false), [activeAgent, session.id]);
+  const builderTodos = builderPanel.data?.state?.todos ?? builderTurn?.todos ?? [];
+  const openBuilderTasks = builderTodos.filter((t) => t.status === 'pending' || t.status === 'in_progress').length;
   useEffect(() => {
     setWorkOpen(false);
     setSessionSheetOpen(false);
@@ -353,6 +361,7 @@ export function MobileApp() {
             className="mobile-header-pick"
             onClick={() => {
               setWorkOpen(false);
+              setBuilderOpen(false);
               setSessionSheetOpen((v) => !v);
             }}
             aria-haspopup="dialog"
@@ -379,6 +388,7 @@ export function MobileApp() {
         <WorkBadge work={work} open={workOpen} onToggle={() => {
           if (!workOpen) refreshWork();
           setSessionSheetOpen(false);
+          setBuilderOpen(false);
           setWorkOpen((v) => !v);
         }} />
         {activeAgent && (
@@ -396,6 +406,18 @@ export function MobileApp() {
             </svg>
             <span>tools</span>
           </button>
+        )}
+        {activeAgent && activeKind === 'builder' && (
+          <BuilderButton
+            open={builderOpen}
+            openTasks={openBuilderTasks}
+            color={activeColor}
+            onToggle={() => {
+              setWorkOpen(false);
+              setSessionSheetOpen(false);
+              setBuilderOpen((v) => !v);
+            }}
+          />
         )}
         {!wakeLock.unsupported && (
           <button
@@ -455,6 +477,17 @@ export function MobileApp() {
           </button>
         )}
       </header>
+
+      {activeAgent && activeKind === 'builder' && (
+        <BuilderSheet
+          open={builderOpen}
+          onClose={() => setBuilderOpen(false)}
+          agent={activeAgent}
+          data={builderPanel.data}
+          actions={builderPanel.actions}
+          refresh={builderPanel.refresh}
+        />
+      )}
 
       <WorkSheet
         open={workOpen}

@@ -1062,7 +1062,7 @@ export const api = {
   patchBuilder: async (
     agent: string,
     session: string,
-    patch: { mode?: 'attended' | 'unattended'; phase?: 'plan' | 'build'; planPath?: string | null },
+    patch: { mode?: 'attended' | 'unattended'; phase?: 'plan' | 'build'; planPath?: string | null; acceptanceRequired?: boolean },
   ): Promise<{ state: BuilderStateDto }> => {
     const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/builder`, {
       method: 'PATCH',

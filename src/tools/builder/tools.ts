@@ -217,7 +217,8 @@ export const acceptanceWrite: ToolDefinition<z.infer<typeof AcceptanceInput>> = 
     'requirement in the words of the order), each with a status and the evidence. Not the task list — the task ' +
     'list says what you do, this list says what the order asked for and what shows it is met. Statuses: open, ' +
     'passed, failed, not_run. passed and failed need evidence: the command and its result, the file, the test, ' +
-    'the revision — a test count alone is not evidence that a requirement holds. Check the deciding counter-case ' +
+    'the revision — a test count alone is not evidence that a requirement holds; not_run needs the reason in ' +
+    'evidence. When the session requires the list, an item without them is refused and keeps its status. Check the deciding counter-case ' +
     '(a rejected result, a real contradiction, an interrupted run), not only the happy path. Items cannot be ' +
     'removed or reworded, and accepted is not yours to set: the person or the orderer reviews. Send the whole ' +
     'list every time; call without items to read it.',

@@ -14,6 +14,8 @@ talking to your agents.
 - **Thinking level per session**, in the same sheet as the model.
 - **What the agent is doing.** The tools switch shows a turn's tool
   calls in the chat, and a builder's current task, while it works.
+- **A builder's panel.** Mode, phase, Go, its task list and its
+  acceptance list, which you accept or reject item by item.
 - **Voice in and out.** Dictate a message, have the answer read aloud.
 - **Photos and PDFs** from the camera, the photo library or files.
 - **Dots that show what happens elsewhere**: which agents are working,
@@ -62,7 +64,7 @@ Otherwise the link points at `127.0.0.1`, which the phone cannot open.
 
 | Part | What it does |
 |---|---|
-| **Header** | Shows `agent · session ▾ model`. Tap it to switch session or model. On the right: the work badge, the **tools** switch (a wrench; on a wide screen with its name), the screen-awake toggle and the voice toggle. |
+| **Header** | Shows `agent · session ▾ model`. Tap it to switch session or model. On the right: the work badge, the **tools** switch (a wrench; on a wide screen with its name), in a builder session the **builder** button (a clipboard, with the number of open tasks), the screen-awake toggle and the voice toggle. |
 | **Avatar row** | One tile per agent. Tap to switch. The app remembers the last agent. Long-press a tile to change the order, see below. |
 | **Chat** | The history of the open session, newest first loaded. Scroll to the top, or tap **Load older messages**, for the next older part. Replies are rendered as Markdown. A wide code block scrolls sideways. |
 | **Input bar** | Paperclip, microphone, text field, Send. Enter sends, Shift+Enter starts a new line. |
@@ -251,8 +253,8 @@ the time come from the server for a builder, so they are right even when
 you open the app in the middle of a long turn.
 
 Tap the card for every call of the turn and, for a builder, its task
-list and acceptance list. You can read them there; mode, phase, Go and
-reviews stay in the [web client](web.md).
+list and acceptance list. To change anything, open the
+[builder panel](#builder-panel).
 
 Once the turn has ended, the card becomes one line above the reply,
 such as `▸ 214 tool calls · 2:41 h · tasks 23/23 · acceptance 6/7
@@ -262,6 +264,29 @@ card.
 The switch is kept per session on this phone. Until you touch it, it
 is on in a builder's sessions and follows `mobile.show.tools` for chat
 agents, off by default.
+
+### Builder panel
+
+In a builder's session the header has a **builder** button. A yellow
+number on it counts the open tasks. Tap it for the builder's panel as a
+sheet from the bottom, the same panel as in the
+[web client](builder.md#the-task-panel):
+
+| Part | What you do there |
+|---|---|
+| **Running for** | While a turn runs: how long, how many tool calls, the last tool. |
+| **Switches** | Tap **attended / unattended** for the mode, **plan / build** for the phase, **list required / list optional** for the [acceptance list](builder.md#the-acceptance-list). **▶ Go** approves the plan while the session plans. |
+| **Plan, folders** | The plan file and the folders the builder may also write in. |
+| **Tasks** | The task list, `✓` done, `▶` in progress, `○` open. |
+| **Acceptance** | Per requirement its status and evidence. Tap a requirement for its whole evidence. **accept** accepts the item; **reject** opens a field for the reason, then **reject** below it sends the review. |
+
+A question from the builder is answered on the card above the input,
+as for every agent; the panel only points to it. The sheet reads the
+panel every two seconds while it is open. Tap outside it to close it.
+
+The acceptance list is required on its own when another agent gave the
+order. For your own orders, turn it on with **list optional** before
+you send the order, or at any time later.
 
 ## Dots on the avatars
 
@@ -306,10 +331,8 @@ Use the [web client](web.md) for these:
 - Several windows side by side
 - Renaming, archiving or resetting a session
 - Switching the project of a session
-- A builder's task panel: mode and phase, Go, and reviewing its
-  acceptance list. You can chat with a builder from the phone, answer
-  its questions and read its lists in the activity card, but its plan
-  is approved in the web client.
+- Reading a builder's plan file. The [builder panel](#builder-panel)
+  shows its path; the file opens in the web client's file viewer.
 
 REM, Deep and Lucid have no button in any client. Ask the agent to run
 one, for example "catch up on your memories": it starts the phase with

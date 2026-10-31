@@ -1,9 +1,9 @@
 // The task panel docked to the right of a builder's chat window
-// (docs/builder.md): mode and phase switches, the Go button, the task
-// list the builder keeps with todo_write, the acceptance list it keeps
-// with acceptance_write (reviewed here: accept or reject per item), and
-// the question it asked with ask_user — answered here with buttons or
-// free text.
+// (docs/builder.md): mode, phase and acceptance-list switches, the Go
+// button, the task list the builder keeps with todo_write, the
+// acceptance list it keeps with acceptance_write (reviewed here: accept
+// or reject per item), and the question it asked with ask_user —
+// answered here with buttons or free text.
 
 import { useEffect, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Circle, CircleDot, Minus, Play, ThumbsDown, ThumbsUp, X, Zap } from 'lucide-react';
@@ -75,7 +75,7 @@ export function BuilderPanel({
       return next;
     });
   };
-  const patch = async (p: { mode?: 'attended' | 'unattended'; phase?: 'plan' | 'build' }) => {
+  const patch = async (p: { mode?: 'attended' | 'unattended'; phase?: 'plan' | 'build'; acceptanceRequired?: boolean }) => {
     setBusy('patch');
     try {
       await api.patchBuilder(agent, session, p);
@@ -164,6 +164,20 @@ export function BuilderPanel({
               onClick={() => patch({ phase: state.phase === 'plan' ? 'build' : 'plan' })}
             >
               {state.phase}
+            </button>
+            <button
+              type="button"
+              className={`builder-switch${data?.acceptance?.required ? ' is-on' : ''}`}
+              title={
+                data?.acceptance?.required
+                  ? 'Acceptance list required: the builder keeps one item per requirement with its evidence and is sent back when it stops with the list missing or items open. Set by itself when another agent gives an order. Click to make it optional.'
+                  : 'Acceptance list optional. Click to require it for this session: the builder then keeps one item per requirement with its evidence before it may end.'
+              }
+              aria-pressed={data?.acceptance?.required === true}
+              disabled={busy !== null}
+              onClick={() => patch({ acceptanceRequired: !data?.acceptance?.required })}
+            >
+              {data?.acceptance?.required ? 'list required' : 'list optional'}
             </button>
             {state.phase === 'plan' && (
               <button

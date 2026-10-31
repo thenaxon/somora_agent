@@ -111,7 +111,9 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
     }
     if (body.acceptanceRequired !== undefined) {
       if (typeof body.acceptanceRequired !== 'boolean') return c.json({ error: 'acceptanceRequired must be a boolean' }, 400);
-      await sessionMetaStore.update(r.agent, r.session, (current) => ({ ...current, acceptanceRequired: body.acceptanceRequired }));
+      const next = await sessionMetaStore.update(r.agent, r.session, (current) => ({ ...current, acceptanceRequired: body.acceptanceRequired }));
+      logger.info({ msg: 'builder.acceptance_required', agent: r.agent, session: r.session, required: body.acceptanceRequired, by: 'patch' });
+      await publish(r.agent, r.session, { event: 'acceptance_updated', data: readAcceptance(next as Record<string, unknown>) });
     }
     const patch: { mode?: BuilderMode; phase?: BuilderPhase; planPath?: string | null; orderer?: { agent: string; session?: string } } = {};
     if (body.orderer !== undefined) {
@@ -297,8 +299,8 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
     }
     let result: { items: unknown[]; warnings: string[] } = { items: [], warnings: [] };
     const next = await sessionMetaStore.update(r.agent, r.session, (current) => {
-      const { items } = readAcceptance(current as Record<string, unknown>);
-      result = mergeBuilderAcceptance(items, body.items as unknown[]);
+      const { items, required } = readAcceptance(current as Record<string, unknown>);
+      result = mergeBuilderAcceptance(items, body.items as unknown[], Date.now(), { strict: required });
       return { ...current, acceptance: result.items };
     });
     const acc = readAcceptance(next as Record<string, unknown>);

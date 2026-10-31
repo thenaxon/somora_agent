@@ -1583,10 +1583,81 @@ button { cursor: pointer; }
   font-family: inherit;
 }
 .header-tools.on { color: var(--accent); }
-/* A narrow phone: the switch keeps its icon, the header its title. */
+/* A narrow phone: the switch keeps its icon, the header its title. The
+   builder button shows its count instead of its icon when tasks are
+   open, and the buttons sit closer. */
 @media (max-width: 420px) {
   .header-tools span { display: none; }
+  .mobile-header { gap: 6px; padding-left: calc(12px + var(--safe-left)); padding-right: calc(12px + var(--safe-right)); }
+  .header-tools { padding: 4px 6px; }
+  .header-builder.has-count svg { display: none; }
 }
+/* The builder panel's header button sits right of the tools switch. */
+.header-tools.header-builder { margin-left: 6px; position: relative; }
+.header-builder-count {
+  font-weight: 700;
+  font-size: 10px;
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--warn);
+  color: var(--bg-0);
+  text-align: center;
+}
+/* The builder panel sheet (BuilderSheet.tsx), on the work sheet's frame. */
+.builder-sheet { max-height: 80vh; }
+.builder-progress { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--text-1); padding: 2px 0 6px; }
+.builder-progress-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  animation: builder-pulse 1.4s ease-in-out infinite;
+}
+@keyframes builder-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .builder-progress-dot { animation: none; } }
+.builder-switches { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0; }
+.builder-switch, .builder-go {
+  font: inherit;
+  font-size: 12px;
+  min-height: 32px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--text-2);
+}
+.builder-switch.on { color: var(--accent); border-color: var(--accent-dim); background: rgba(92, 242, 214, 0.08); }
+.builder-switch.plan { color: var(--warn); border-color: rgba(245, 185, 66, 0.4); }
+.builder-go { color: var(--bg-0); background: var(--accent); border-color: var(--accent); font-weight: 700; }
+.builder-switch:disabled, .builder-go:disabled { opacity: 0.5; }
+.builder-hint, .builder-muted { color: var(--text-3); font-size: 11px; padding: 3px 0; overflow-wrap: anywhere; }
+.builder-question-hint { color: var(--warn); font-size: 11px; padding: 4px 0; }
+.builder-list, .builder-acc-list { list-style: none; margin: 0; padding: 0; }
+.builder-list li { display: flex; gap: 4px; padding: 3px 0; overflow-wrap: anywhere; }
+.builder-list li.todo-completed { color: var(--text-2); }
+.builder-list li.todo-completed .builder-glyph { color: var(--accent); }
+.builder-list li.todo-in_progress { color: var(--text-0); }
+.builder-list li.todo-in_progress .builder-glyph { color: var(--warn); }
+.builder-glyph { display: inline-block; width: 1.3em; flex-shrink: 0; color: var(--text-3); }
+.builder-acc { padding: 6px 0; border-top: 1px solid var(--line); }
+.builder-acc:first-child { border-top: none; }
+.builder-acc-main { all: unset; display: block; cursor: pointer; color: var(--text-0); overflow-wrap: anywhere; }
+.builder-acc-meta { padding: 2px 0 0 1.3em; color: var(--text-2); overflow-wrap: anywhere; }
+.builder-acc-evidence:not(.full) { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.builder-acc-review { display: flex; align-items: center; gap: 6px; padding: 4px 0 0 1.3em; }
+.builder-acc-review > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.builder-verdict.accepted { color: var(--accent); }
+.builder-verdict.rejected { color: var(--danger); }
+.builder-review-btn {
+  min-height: 32px; padding: 4px 10px; border-radius: 6px;
+  border: 1px solid var(--line-2); background: transparent;
+  font: inherit; font-size: 12px; color: var(--text-1);
+}
+.builder-review-btn:disabled { opacity: 0.5; }
+.builder-reject { padding: 6px 0 0 1.3em; }
+.builder-reject textarea {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: 12px;
+  background: var(--bg-2); color: var(--text-0); border: 1px solid var(--line-2); border-radius: 6px; padding: 6px;
+}
+.builder-reject-foot { display: flex; justify-content: flex-end; gap: 6px; padding-top: 4px; }
 .activity-row { display: flex; justify-content: flex-start; padding: 0 2px; }
 .activity-line {
   all: unset;

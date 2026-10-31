@@ -55,6 +55,14 @@ export interface ChatTurnResult {
    *  from the tool calls that returned without error. Remote targets
    *  are prefixed `<resource>:`. */
   files_written?: string[];
+  /** Tools the engine called this turn, by registry name, each once. */
+  tools_used?: string[];
+  /** The engine that ran the turn (claude-cli, codex-cli, grok-cli,
+   *  openai-compatible) and the agent's kind — start-turn.ts decides
+   *  from them whether a builder's turn end is checked after the turn
+   *  (builder-turn-end.ts). */
+  engine?: string;
+  agentKind?: string;
   /** Media generated during the turn (images, finished videos), oldest
    *  first. Absent when the turn produced none or media is not
    *  configured. Independent of finalText: present even when the model

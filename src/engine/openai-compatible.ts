@@ -27,7 +27,8 @@ import {
   type Compaction,
 } from '../compaction/index.ts';
 import { inputBudget } from '../compaction/policy.ts';
-import { openAcceptance, readAcceptance, renderAcceptanceTable } from '../server/builder-acceptance.ts';
+import { readAcceptance, renderAcceptanceTable } from '../server/builder-acceptance.ts';
+import { MAX_OPEN_TASK_NUDGES, checkBuilderTurnEnd, describeTurnEnd, turnEndNoticeParts, turnWorked } from '../server/builder-turn-end.ts';
 import { logger } from '../server/logger.ts';
 import { compactTurnMidway, type LoopMessage } from '../compaction/midturn.ts';
 import {
@@ -69,11 +70,6 @@ const MAX_REASONING_ONLY_NUDGES = 2;
 const TODO_STALE_ROUNDS = 12;
 /** Rounds of a builder turn kept verbatim when it compacts itself. */
 const MIDTURN_KEEP_ROUNDS = 6;
-// A builder that ends its turn while its task list still has open items
-// is asked to go on (or to say what blocks it) at most this often per
-// turn. Hermes and DeepSeek-TUI do the same at turn end; night builds
-// 2026-10-27/28 ended with work open.
-const MAX_OPEN_TASK_NUDGES = 2;
 // A builder answer cut off by the output cap is continued at most this
 // often per turn (OpenCode: 2, Hermes: 4).
 const MAX_CUT_ANSWER_CONTINUES = 2;
@@ -1159,6 +1155,10 @@ export const openAiCompatibleEngine: AgentEngine = {
      *  not. */
     let todoWrittenThisTurn = false;
     let acceptanceWrittenThisTurn = false;
+    /** file_write, file_patch or todo_write ran this turn: it worked on
+     *  the order, so a required acceptance list is held to (a turn that
+     *  only answers a question is not). */
+    let workedThisTurn = false;
     let openTaskNudges = 0;
     let lastOpenTaskNudgeRound = -1;
     let cutAnswerContinues = 0;
@@ -2041,77 +2041,49 @@ export const openAiCompatibleEngine: AgentEngine = {
             joinNextContent = true;
             continue;
           }
-          // A builder that ends while its task list still has open items
-          // is asked to go on or to say what blocks it — only when this
-          // turn worked the list (a turn answering a question is left
-          // alone), only in the build phase (the plan phase ends with open
-          // steps by design: no file_write/file_patch there), and not
-          // again when it ends right after such a notice: that is its
-          // considered answer.
+          // A builder that ends while it still owes something (open task
+          // list items, open acceptance items, a required list missing) is
+          // asked to go on or to say what blocks it — the same check the
+          // CLI engines get as a follow-up turn (server/builder-turn-end.ts).
+          // Only in the build phase (the plan phase ends with open steps by
+          // design: no file_write/file_patch there), and not again when it
+          // ends right after such a notice: that is its considered answer.
           if (
             isBuilderTurn &&
             openTaskNudges < MAX_OPEN_TASK_NUDGES &&
             round !== lastOpenTaskNudgeRound + 1 &&
             toolList.some((t) => t.name === 'file_write' || t.name === 'file_patch')
           ) {
-            const metaNow = (await metaStore.get(agent, session)) as Record<string, unknown>;
-            const todosNow = metaNow.todos as { content?: string; status?: string }[] | undefined;
-            // The task list counts when this turn worked it; the acceptance
-            // list when the order requires it (builder_dispatch) or this
-            // turn wrote it.
-            const open = todoWrittenThisTurn && Array.isArray(todosNow) ? todosNow.filter((t) => t.status === 'pending' || t.status === 'in_progress') : [];
-            const acc = readAcceptance(metaNow);
-            const accCounts = acc.required || acceptanceWrittenThisTurn;
-            const accOpen = accCounts ? openAcceptance(acc.items) : [];
-            const accMissing = accCounts && acc.required && acc.items.length === 0 && toolList.some((t) => t.name === 'acceptance_write');
-            if (open.length > 0 || accOpen.length > 0 || accMissing) {
+            const check = checkBuilderTurnEnd({
+              meta: (await metaStore.get(agent, session)) as Record<string, unknown>,
+              worked: workedThisTurn,
+              todoWritten: todoWrittenThisTurn,
+              acceptanceWritten: acceptanceWrittenThisTurn,
+              acceptanceTool: toolList.some((t) => t.name === 'acceptance_write'),
+            });
+            if (check) {
               openTaskNudges++;
               lastOpenTaskNudgeRound = round;
-              const names = open.slice(0, 5).map((t) => `"${String(t.content ?? '').slice(0, 80)}"`).join(', ');
-              const accNames = accOpen.slice(0, 8).map((i) => i.id).join(', ');
-              logger.info({ msg: 'engine.builder_open_tasks', engine: ENGINE, agent, session, round, open: open.length, acceptanceOpen: accOpen.length, acceptanceMissing: accMissing, attempt: openTaskNudges });
-              const what = [
-                ...(open.length > 0 ? [`${open.length} open item(s) on its task list`] : []),
-                ...(accOpen.length > 0 ? [`${accOpen.length} open acceptance item(s)`] : []),
-                ...(accMissing ? ['no acceptance list although the order requires one'] : []),
-              ].join(' and ');
+              logger.info({ msg: 'engine.builder_open_tasks', engine: ENGINE, agent, session, round, open: check.open.length, acceptanceOpen: check.accOpen.length, acceptanceMissing: check.accMissing, attempt: openTaskNudges });
               yield {
                 kind: 'engine_meta',
                 ts: ts(),
                 engine: ENGINE,
                 itemType: 'open_tasks_notice',
                 payload: {
-                  text: `The builder wanted to end with ${what}; it was told to continue or to name the blocker.`,
+                  text: `The builder wanted to end with ${describeTurnEnd(check)}; it was told to continue or to name the blocker.`,
                   round,
-                  open: open.length,
-                  acceptanceOpen: accOpen.length,
-                  ...(accMissing ? { acceptanceMissing: true } : {}),
+                  open: check.open.length,
+                  acceptanceOpen: check.accOpen.length,
+                  ...(check.accMissing ? { acceptanceMissing: true } : {}),
                   attempt: openTaskNudges,
                 },
               };
-              const parts: string[] = [];
-              if (open.length > 0) {
-                parts.push(
-                  `Your task list still has ${open.length} open item(s): ${names}${open.length > 5 ? ', …' : ''}. ` +
-                    'If an item is in fact done and verified, mark it completed with todo_write. Otherwise continue with it.',
-                );
-              }
-              if (accOpen.length > 0) {
-                parts.push(
-                  `Your acceptance list still has ${accOpen.length} open item(s): ${accNames}${accOpen.length > 8 ? ', …' : ''}. ` +
-                    'Check each against the order itself and set passed or failed with the evidence, or not_run with the reason.',
-                );
-              }
-              if (accMissing) {
-                parts.push(
-                  'This order requires an acceptance list and there is none. Write it with acceptance_write: one item per requirement of the order, each with its status and evidence.',
-                );
-              }
               if (roundContent) loopMessages.push({ role: 'assistant', content: roundContent } as ChatMessage);
               loopMessages.push({
                 role: 'user',
                 content:
-                  `[somora] ${parts.join(' ')} ` +
+                  `[somora] ${turnEndNoticeParts(check).join(' ')} ` +
                   'Do not end the turn and do not shrink the task to what is done. If something truly ' +
                   'blocks you, name the blocker and what you tried, then write your report.',
               } as ChatMessage);
@@ -2414,6 +2386,7 @@ export const openAiCompatibleEngine: AgentEngine = {
             todoWrittenThisTurn = true;
           }
           if (runName === 'acceptance_write') acceptanceWrittenThisTurn = true;
+          if (turnWorked([runName])) workedThisTurn = true;
           const invoked = await raceToolInvoke(tools.invoke(runName, runArgs), {
             timeoutMs: toolTimeoutMs,
             signal: effectiveSignal,
@@ -2890,10 +2863,11 @@ export const openAiCompatibleEngine: AgentEngine = {
         }
         // A builder's report ends with its acceptance list as the session
         // holds it — the orderer reads the answer, not the panel, and the
-        // model's own retelling of the list is not the list.
+        // model's own retelling of the list is not the list. Not under an
+        // answer to a question (a turn that did not work on the order).
         if (isBuilderTurn) {
           const acc = readAcceptance((await metaStore.get(agent, session)) as Record<string, unknown>);
-          if (acc.items.length > 0 && (acc.required || acceptanceWrittenThisTurn)) {
+          if (acc.items.length > 0 && ((acc.required && workedThisTurn) || acceptanceWrittenThisTurn)) {
             const block = `\n\n## Acceptance list (from the session)\n\n${renderAcceptanceTable(acc.items)}`;
             cumulative += block;
             if (lastRoundContent) lastRoundContent += block;

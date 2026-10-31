@@ -68,7 +68,15 @@ export interface AcceptanceWriteResult {
  * open | passed | failed | not_run is refused — so the list cannot be
  * narrowed to what happens to be done.
  */
-export function mergeBuilderAcceptance(stored: AcceptanceItem[], sent: unknown[], now = Date.now()): AcceptanceWriteResult {
+export function mergeBuilderAcceptance(
+  stored: AcceptanceItem[],
+  sent: unknown[],
+  now = Date.now(),
+  /** The session requires the list: passed or failed without evidence,
+   *  or not_run without a reason, is refused — the item keeps its status.
+   *  Without it, only a warning. */
+  opts: { strict?: boolean } = {},
+): AcceptanceWriteResult {
   const warnings: string[] = [];
   const byId = new Map(stored.map((i) => [i.id, i]));
   const seen = new Set<string>();
@@ -95,8 +103,11 @@ export function mergeBuilderAcceptance(stored: AcceptanceItem[], sent: unknown[]
           : `${id}: unknown status "${status}"; use open, passed, failed or not_run`,
       );
     }
-    const nextStatus = ((BUILDER_ACCEPTANCE_STATUSES as readonly string[]).includes(status) ? status : prev?.status ?? 'open') as AcceptanceStatus;
-    const evidence = typeof o.evidence === 'string' && o.evidence.trim() ? o.evidence.trim().slice(0, MAX_EVIDENCE_CHARS) : undefined;
+    let nextStatus = ((BUILDER_ACCEPTANCE_STATUSES as readonly string[]).includes(status) ? status : prev?.status ?? 'open') as AcceptanceStatus;
+    let evidence = typeof o.evidence === 'string' && o.evidence.trim() ? o.evidence.trim().slice(0, MAX_EVIDENCE_CHARS) : undefined;
+    // The whole list comes every time: an item sent again with its status
+    // and without evidence keeps the evidence it has (and so its review).
+    if (!evidence && prev?.evidence && prev.status === nextStatus) evidence = prev.evidence;
     let requirement = typeof o.requirement === 'string' ? o.requirement.trim().slice(0, MAX_REQUIREMENT_CHARS) : '';
     if (prev) {
       if (requirement && requirement !== prev.requirement) {
@@ -107,8 +118,17 @@ export function mergeBuilderAcceptance(stored: AcceptanceItem[], sent: unknown[]
       warnings.push(`${id}: a new item needs its requirement; skipped`);
       continue;
     }
-    if ((nextStatus === 'passed' || nextStatus === 'failed') && !evidence) {
-      warnings.push(`${id}: ${nextStatus} without evidence — name the command and its result, the file or the test`);
+    if (nextStatus !== 'open' && !evidence) {
+      const what = nextStatus === 'not_run' ? 'not_run without the reason' : `${nextStatus} without evidence`;
+      const how = nextStatus === 'not_run' ? 'say in evidence why it was not checked' : 'name the command and its result, the file or the test';
+      if (opts.strict) {
+        // Refused: the item stays as it was, and so does its evidence.
+        warnings.push(`${id}: refused — ${what}; it stays ${prev?.status ?? 'open'}. Send it again and ${how}`);
+        nextStatus = prev?.status ?? 'open';
+        evidence = prev?.evidence;
+      } else if (nextStatus !== 'not_run') {
+        warnings.push(`${id}: ${what} — ${how}`);
+      }
     }
     const changed = !prev || prev.status !== nextStatus || (prev.evidence ?? '') !== (evidence ?? '');
     out.push({

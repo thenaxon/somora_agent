@@ -287,16 +287,30 @@ test('a required list with an open item: told to check it, and the report ends w
   assert.equal(row?.payload?.acceptanceOpen, 1);
 });
 
-test('a required list that was never written: told to write it', async (t) => {
+test('a required list that was never written: a turn that worked is told to write it', async (t) => {
   const { server, port } = await startBackend();
   t.after(() => server.close());
   script = (msgs, n) => {
     if (/requires an acceptance list and there is none/.test(lastUserText(msgs))) return { tool: { name: 'acceptance_write', args: { items: [{ id: 'A01', requirement: 'r', status: 'not_run', evidence: 'no browser here' }] } } };
+    if (n === 1) return { tool: { name: 'file_write', args: { path: '/p/x.ts', content: 'x' } } };
     return { text: `answer ${n}` };
   };
   const { events } = await run(port, { kind: 'builder', tools: accTools, meta: { acceptanceRequired: true } as Partial<SessionMeta> });
   assert.equal(notices(/requires an acceptance list and there is none/), 1);
   assert.match(String(finalText(events)), /\| A01 \| r \| not_run \| no browser here \|/);
+});
+
+test('a required list, but the turn only answered (no file_write, file_patch, todo_write): left alone, no table', async (t) => {
+  // An orderer's "is the service still up?" — the builder looked with
+  // file_read and answered. Its list is not what was asked.
+  const { server, port } = await startBackend();
+  t.after(() => server.close());
+  script = (_msgs, n) => (n === 1 ? { tool: { name: 'file_read', args: { path: '/p/status' } } } : { text: 'It is up.' });
+  const open = mergeBuilderAcceptance([], twoReqs.items).items;
+  const { events } = await run(port, { kind: 'builder', tools: accTools, meta: { acceptanceRequired: true, acceptance: open } as Partial<SessionMeta> });
+  assert.equal(notices(/acceptance list/), 0);
+  assert.equal(requests.length, 2);
+  assert.equal(finalText(events), 'It is up.');
 });
 
 test('without the requirement and without a write this turn: no notice, no table', async (t) => {

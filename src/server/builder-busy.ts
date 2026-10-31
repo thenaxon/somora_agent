@@ -65,10 +65,13 @@ export function noteToolCall(turnId: string, tool: string): void {
   c.lastToolAt = Date.now();
 }
 
-/** The running builder turn of a session, or null. */
+/** The running builder turn of a session, or null. The newest claim:
+ *  a follow-up turn (start-turn.ts holdBuilderToOrder) claims while the
+ *  order's turn still holds its own until the order ends. */
 export function claimOfSession(agent: string, session: string): WorkdirClaim | null {
-  for (const c of claims.values()) if (c.agent === agent && c.session === session) return c;
-  return null;
+  let found: WorkdirClaim | null = null;
+  for (const c of claims.values()) if (c.agent === agent && c.session === session) found = c;
+  return found;
 }
 
 export function releaseWorkdir(turnId: string): void {

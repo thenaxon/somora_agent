@@ -51,7 +51,8 @@ export const BUILDER_SHORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
   plan_write: 'Write the plan file of this session (Markdown; replaces the file). The only write allowed in the plan phase.',
   acceptance_write:
     'Keep the acceptance list: one item per requirement of the order (id A01…, its words), status open | ' +
-    'passed | failed | not_run, evidence (command and result, file, test). passed/failed need evidence; check ' +
+    'passed | failed | not_run, evidence (command and result, file, test). passed/failed need evidence, not_run ' +
+    'the reason (refused without when the list is required); check ' +
     'the deciding counter-case. Items stay and keep their wording; the person or the orderer accepts, not you. ' +
     'Whole list each call; no items = read it.',
   spawn_subagent:

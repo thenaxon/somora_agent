@@ -47,6 +47,7 @@ import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
 import { drainSteer, frameSteerMessage, markSteerable, requeueSteer, unmarkSteerable } from './steer-inbox.ts';
 import { resolveAgentLoop } from './builder-prompt.ts';
 import { ensureBuilderState, type BuilderSessionState } from './builder-session.ts';
+import { readAcceptance } from './builder-acceptance.ts';
 import { TURN_ASKER_KEY, TURN_ATTENDED_KEY, askerOf, isAttendedOrigin, sessionToolAllows } from './ask-attended.ts';
 import { builderToolDescription } from '../tools/builder/short-descriptions.ts';
 import { workdirFromMeta } from './session-workdir.ts';
@@ -905,6 +906,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   let degradedReason: string | undefined;
   const pendingWrites = new Map<string, string>();
   const filesWritten: string[] = [];
+  const toolsUsed = new Set<string>();
   let errorMessage: string | undefined;
   // The engine's own turn id (`t-…`), learned from its turn_start. Kept
   // outside the try so the failure path can stamp its turn_error with
@@ -962,6 +964,16 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         origin ?? { kind: 'human', via: 'chat' },
         workdirFromMeta(sessionMeta as Record<string, unknown>, persona, deps.config).path,
       );
+      // An order from another agent (agent_ask, builder_dispatch, an A2A
+      // peer) carries requirements someone will check: the session keeps
+      // an acceptance list from now on (builder-turn-end.ts holds it to
+      // it). Set before the prompt is assembled, so this turn already
+      // reads "REQUIRED". The person switches it off in the panel.
+      if (origin && (origin.kind === 'agent' || origin.kind === 'peer') && (sessionMeta as Record<string, unknown>).acceptanceRequired !== true) {
+        const next = await deps.sessionMetaStore.update(agent, session, (m) => ({ ...m, acceptanceRequired: true }));
+        logger.info({ msg: 'builder.acceptance_required', agent, session, turnId, by: origin.kind === 'agent' ? origin.from.agent : origin.peer });
+        if (publishSse) await publishSse({ event: 'acceptance_updated', data: readAcceptance(next as Record<string, unknown>) });
+      }
       sessionMeta = await deps.sessionMetaStore.get(agent, session);
       // One builder per folder: this turn claims its working directory
       // (released in start-turn's finally). Dispatch and Go refuse a
@@ -1263,7 +1275,11 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       if (ev.kind === 'tool_call') {
         toolCallCount += 1;
         noteToolCall(turnId, ev.tool);
-        if (ev.tool === 'file_write' || ev.tool === 'file_patch') {
+        // The registry name: claude-cli says mcp__somora__file_write,
+        // codex-cli its own prefix.
+        const toolName = ev.tool.replace(/^.*__/, '');
+        toolsUsed.add(toolName);
+        if (toolName === 'file_write' || toolName === 'file_patch') {
           const inp = ev.input as { path?: unknown; target?: unknown } | null;
           if (inp && typeof inp.path === 'string') {
             const target = typeof inp.target === 'string' && inp.target !== 'local' ? `${inp.target}:` : '';
@@ -1565,6 +1581,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     tool_calls: toolCallCount,
     ...(turnRounds !== undefined ? { rounds: turnRounds } : {}),
     ...(filesWritten.length > 0 ? { files_written: filesWritten } : {}),
+    ...(toolsUsed.size > 0 ? { tools_used: [...toolsUsed] } : {}),
+    engine: resolvedModel.provider.engine,
+    agentKind: persona.kind,
     ...(turnMedia.length > 0 ? { media: turnMedia } : {}),
     usage: lastUsage,
     contextWindow: lastUsage?.context_window ?? resolvedModel.model.contextWindow,

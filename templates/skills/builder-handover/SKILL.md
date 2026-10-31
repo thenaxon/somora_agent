@@ -84,6 +84,11 @@ side by side, each wakes you separately with the builder's name.
   folder). Run the verification yourself where it matters (`exec` with
   `cwd` = the folder). The builder's word is a claim, your run is the
   proof the person gets.
+- The report ends with the acceptance list: one item per requirement of
+  your order, with status and evidence. Every order from you makes the
+  list required in that session, also a message sent later. Check the
+  evidence of the items that matter; `failed` and `not_run` are open
+  work, not done.
 - Tell the person in their language what was built, what you verified
   and how, what the builder decided on its own, what is open.
 - Accept, or send the next order: a new `builder_dispatch` for a new

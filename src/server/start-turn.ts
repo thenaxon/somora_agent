@@ -41,6 +41,11 @@ import { drainSteer, unmarkSteerable } from './steer-inbox.ts';
 import { releaseWorkdir } from './builder-busy.ts';
 import { dropQuestions } from './builder-questions.ts';
 import { composeTurnPrefix } from './turn-framing.ts';
+import { readAcceptance, renderAcceptanceTable } from './builder-acceptance.ts';
+import { readBuilderState } from './builder-session.ts';
+import { MAX_OPEN_TASK_NUDGES, checkBuilderTurnEnd, describeTurnEnd, followUpNotice, turnWorked } from './builder-turn-end.ts';
+import { loadPersona } from '../persona/loader.ts';
+import { isToolAllowed } from '../tools/gating.ts';
 
 export interface StartTurnDeps {
   chatTurnDeps: ChatTurnResolveDeps;
@@ -193,8 +198,24 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
         if (args.workId) finishWork(args.workId, stopped);
         return stopped;
       }
-      if (args.workId) finishWork(args.workId, result);
-      return result;
+      // A builder on a CLI engine that ended while it still owes its
+      // order something gets follow-up turns here, before the asker
+      // hears of the result (builder-turn-end.ts). They run under this
+      // turn's stop signal, so Stop — also one naming this turn id —
+      // reaches them, and between them.
+      const held = await holdBuilderToOrder({ agent, session, first: result, deps, runTurn, publishSse, signal: abort.signal }).catch((err: unknown) => {
+        // The order's turn ended well; a failure in the check after it
+        // does not make it a failed order.
+        logger.warn({ msg: 'builder.turn_end_check_failed', agent, session, turnId, err: (err as Error).message });
+        return { result, stopped: false };
+      });
+      if (held.stopped) {
+        const stopped: ChatTurnResult = { ...held.result, outcome: 'failed', error: STOPPED_BY_USER };
+        if (args.workId) finishWork(args.workId, stopped);
+        return stopped;
+      }
+      if (args.workId) finishWork(args.workId, held.result);
+      return held.result;
     } catch (err) {
       if (args.workId) failWork(args.workId, (err as Error).message);
       throw err;
@@ -231,6 +252,111 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
       );
     }
   }
+}
+
+/**
+ * The turn-end check for builders on claude-cli, codex-cli and grok-cli
+ * (builder-turn-end.ts). Those engines run their own tool loop, so a
+ * builder that ends while it still owes the order something cannot be
+ * asked inside the turn the way openai-compatible asks it. It gets a
+ * follow-up turn instead — a system message naming what is open — at
+ * most MAX_OPEN_TASK_NUDGES times, and not again after a follow-up in
+ * which it called no tool (that is its considered answer). Runs under
+ * the session lock the first turn held, so nothing queues in between,
+ * and the asker gets the last turn's answer: the notice asks for the
+ * complete report again.
+ */
+async function holdBuilderToOrder(a: {
+  agent: string;
+  session: string;
+  first: ChatTurnResult;
+  deps: ChatTurnResolveDeps;
+  runTurn: typeof runChatTurnReal;
+  publishSse: ((event: SseEvent) => Promise<void>) | undefined;
+  /** The order's turn's stop signal, registered for the whole order. */
+  signal: AbortSignal;
+}): Promise<{ result: ChatTurnResult; stopped: boolean }> {
+  const { agent, session, deps, signal } = a;
+  let result = a.first;
+  if (result.agentKind !== 'builder' || result.outcome === 'failed') return { result, stopped: false };
+  const used = new Set(result.tools_used ?? []);
+  const files = new Set(result.files_written ?? []);
+  let toolCalls = result.tool_calls;
+  const merged = (): ChatTurnResult => ({
+    ...result,
+    tool_calls: toolCalls,
+    ...(used.size > 0 ? { tools_used: [...used] } : {}),
+    ...(files.size > 0 ? { files_written: [...files] } : {}),
+  });
+  // openai-compatible asked inside its turn already; asking again here
+  // would hold the builder twice.
+  if (result.engine !== 'openai-compatible') {
+    // A builder whose agent.yaml denies acceptance_write cannot be asked
+    // to write the list.
+    const persona = await loadPersona(agent).catch(() => null);
+    const acceptanceTool = !persona || isToolAllowed('acceptance_write', 'builder', persona.toolGating);
+    for (let attempt = 1; attempt <= MAX_OPEN_TASK_NUDGES; attempt++) {
+      if (signal.aborted) return { result: merged(), stopped: true };
+      const meta = (await deps.sessionMetaStore.get(agent, session)) as Record<string, unknown>;
+      if (readBuilderState(meta)?.phase !== 'build') break;
+      const check = checkBuilderTurnEnd({
+        meta,
+        worked: turnWorked(used),
+        todoWritten: used.has('todo_write'),
+        acceptanceWritten: used.has('acceptance_write'),
+        acceptanceTool,
+      });
+      if (!check) break;
+      const text = followUpNotice(check);
+      const origin: TurnOrigin = { kind: 'wake', about: 'system', ref: `turn-end-${randomUUID()}`, cause: 'open items' };
+      const turnId = randomUUID();
+      logger.info({ msg: 'builder.turn_end_follow_up', agent, session, turnId, engine: result.engine, open: check.open.length, acceptanceOpen: check.accOpen.length, acceptanceMissing: check.accMissing, attempt, what: describeTurnEnd(check) });
+      let next: ChatTurnResult;
+      try {
+        next = await a.runTurn({
+          agent,
+          session,
+          text,
+          turnId,
+          origin,
+          ...originToLegacy(origin),
+          signal,
+          ...(a.publishSse ? { publishSse: a.publishSse } : {}),
+          deps,
+        });
+      } finally {
+        unmarkSteerable(agent, session, turnId);
+        releaseWorkdir(turnId);
+      }
+      for (const t of next.tools_used ?? []) used.add(t);
+      for (const f of next.files_written ?? []) files.add(f);
+      toolCalls += next.tool_calls;
+      if (signal.aborted) {
+        result = { ...next, finalText: next.finalText.trim() ? next.finalText : result.finalText };
+        return { result: merged(), stopped: true };
+      }
+      // A follow-up that failed (a rate limit, an engine error) does not
+      // undo the order's turn: its report and outcome stand.
+      if (next.outcome === 'failed') {
+        logger.warn({ msg: 'builder.turn_end_follow_up_failed', agent, session, turnId, err: next.error ?? null });
+        break;
+      }
+      // An empty answer keeps the report the builder already gave.
+      result = { ...next, finalText: next.finalText.trim() ? next.finalText : result.finalText };
+      if (next.tool_calls === 0) break;
+    }
+  }
+  // The answer ends with the acceptance list as the session holds it —
+  // the orderer reads the answer, not the panel — unless the turn only
+  // answered a question. openai-compatible has added it to its own
+  // answer already.
+  if (result.engine !== 'openai-compatible') {
+    const acc = readAcceptance((await deps.sessionMetaStore.get(agent, session)) as Record<string, unknown>);
+    if (acc.items.length > 0 && ((acc.required && turnWorked(used)) || used.has('acceptance_write')) && !result.finalText.includes('## Acceptance list (from the session)')) {
+      result = { ...result, finalText: `${result.finalText}\n\n## Acceptance list (from the session)\n\n${renderAcceptanceTable(acc.items)}` };
+    }
+  }
+  return { result: merged(), stopped: false };
 }
 
 function resolvePublish(

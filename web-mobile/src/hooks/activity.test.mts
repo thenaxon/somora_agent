@@ -27,7 +27,7 @@ const t = (name: string, cond: boolean, detail = ''): void => {
 };
 const roles = (rows: ChatMessage[]) => rows.map((r) => r.role).join(',');
 
-// The shape a session file really has (rudi's 2026-10-29 turn).
+// The shape a session file really has (a builder's turn, 2026-10-29).
 const call = (ts: number, id: string, tool: string, input: unknown): HistoryEvent => ({ kind: 'tool_call', ts, callId: id, tool, input });
 const result = (ts: number, id: string, error?: string): HistoryEvent => ({ kind: 'tool_result', ts, callId: id, ...(error ? { error } : {}) });
 

@@ -704,7 +704,7 @@ These features have their own pages. In short:
 | **log** | The end of the server log. Pick the day, a minimum level and a text filter. New lines follow every 2 seconds, and following pauses when you scroll up. |
 
 A builder's chat window opens wider and carries the task panel on the
-right: mode and phase switches, the **Go** button, the task list the
+right: mode, phase and acceptance-list switches, the **Go** button, the task list the
 builder keeps with `todo_write`, the acceptance list it keeps with
 `acceptance_write` (accept or reject each item there) and the questions
 it asks with `ask_user`. Below about 640 px width the panel folds to a
