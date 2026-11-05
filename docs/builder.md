@@ -237,9 +237,12 @@ that wrote nothing with the file tools, such as an answer to a
 question, gets the block only when something is open.
 
 Nothing is committed, cleaned or stopped: the block only reports. git
-runs without the repository's fsmonitor, filters and hooks and without
-somora's own environment variables, so a repository cannot make the
-server run a command. Tested
+runs without the repository's fsmonitor, filters and hooks, does not
+enter submodules (a changed submodule commit still shows), and runs
+without somora's own environment variables, so a repository cannot
+make the server run a command.
+
+A worktree without a branch is compared by its commit. Tested
 in a worktree is not merged, and merged is not running: the orderer
 reads here what the builder's own report may leave out. The log line is
 `builder.facts_added`.

@@ -134,3 +134,31 @@ test('a background job still running is listed only for the session that started
   assert.match(block, /Still running in the background: `serve mine`/);
   assert.doesNotMatch(block, /serve other/);
 });
+
+test('a filter configured inside a submodule does not run', async () => {
+  const sub = repo();
+  const dir = repo();
+  execFileSync('git', ['-C', dir, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'lib'], { stdio: 'pipe' });
+  execFileSync('git', ['-C', dir, 'commit', '-qm', 'sub'], { stdio: 'pipe' });
+  const inner = join(dir, 'lib');
+  const marker = join(dir, '..', `subfilter-ran-${Date.now()}`);
+  writeFileSync(join(inner, '.gitattributes'), '*.txt filter=evil\n');
+  execFileSync('git', ['-C', inner, 'config', 'filter.evil.clean', `sh -c 'touch ${marker}; cat'`], { stdio: 'pipe' });
+  writeFileSync(join(inner, 'a.txt'), 'two\n');
+  writeFileSync(join(dir, 'a.txt'), 'two\n');
+  const block = (await collectBuilderFacts({ agent: 'factsk', session: 's', workdir: dir, since: 0 }))!;
+  assert.match(block, /`a.txt`/);
+  assert.equal(existsSync(marker), false, 'the submodule filter did not run');
+});
+
+test('a detached worktree with its own commit is named as not in the main checkout', async () => {
+  const dir = repo();
+  const wt = `${dir}-det`;
+  execFileSync('git', ['-C', dir, 'worktree', 'add', '-q', '--detach', wt], { stdio: 'pipe' });
+  writeFileSync(join(wt, 'n.txt'), 'n\n');
+  execFileSync('git', ['-C', wt, 'add', 'n.txt'], { stdio: 'pipe' });
+  execFileSync('git', ['-C', wt, '-c', 'user.email=t@example.invalid', '-c', 'user.name=T', 'commit', '-qm', 'n'], { stdio: 'pipe' });
+  const block = (await collectBuilderFacts({ agent: 'factsl', session: 's', workdir: dir, since: 0 }))!;
+  assert.match(block, /Worktree `[^`]+-det`: 1 commit\(s\) not in the main checkout/);
+  assert.doesNotMatch(block, /is committed/);
+});

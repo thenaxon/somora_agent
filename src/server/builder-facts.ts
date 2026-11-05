@@ -81,6 +81,7 @@ async function filterOverrides(cwd: string, signal?: AbortSignal): Promise<strin
 interface Worktree {
   path: string;
   branch?: string;
+  head?: string;
 }
 
 function parseWorktrees(out: string): Worktree[] {
@@ -90,6 +91,8 @@ function parseWorktrees(out: string): Worktree[] {
     if (line.startsWith('worktree ')) {
       cur = { path: line.slice(9) };
       list.push(cur);
+    } else if (cur && line.startsWith('HEAD ')) {
+      cur.head = line.slice(5).trim();
     } else if (cur && line.startsWith('branch ')) {
       cur.branch = line.slice(7).replace(/^refs\/heads\//, '');
     }
@@ -134,9 +137,13 @@ export async function gitFacts(workdir: string, signal?: AbortSignal): Promise<G
     const main = wt.path === mainPath;
     const base = { path: wt.path, ...(wt.branch ? { branch: wt.branch } : {}), main };
     const filters = await filterOverrides(wt.path, signal);
+    // A detached worktree has no branch: its commit counts the same way.
+    const tip = wt.branch ?? wt.head;
     const [status, ahead] = await Promise.all([
-      git(wt.path, ['status', '--porcelain=v1', '--untracked-files=all'], signal, filters),
-      !main && wt.branch ? git(mainPath, ['rev-list', '--count', `HEAD..${wt.branch}`], signal) : Promise.resolve(null),
+      // Submodules are not entered: their own config (filters) would run
+      // there. A changed submodule commit still shows in the parent.
+      git(wt.path, ['status', '--porcelain=v1', '--untracked-files=all', '--ignore-submodules=dirty'], signal, filters),
+      !main && tip ? git(mainPath, ['rev-list', '--count', `HEAD..${tip}`], signal) : Promise.resolve(null),
     ]);
     if (status === null) return { ...base, unknown: true, changed: [], untracked: [] };
     const changed: string[] = [];
