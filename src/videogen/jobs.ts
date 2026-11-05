@@ -53,6 +53,8 @@ export interface VideoJob {
   references?: number;
   /** Anything the provider said it ignored or adjusted. */
   warnings?: string[];
+  /** Models skipped because they were unavailable, with why. */
+  fellBackFrom?: string[];
   /** Set when the agent has been told. Kept so a restart can't wake
    *  someone twice for the same video. */
   notifiedAt?: string;

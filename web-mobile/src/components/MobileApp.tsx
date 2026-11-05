@@ -16,7 +16,7 @@ import { useWakeLock } from '../hooks/useWakeLock';
 import { WorkBadge, WorkSheet } from './WorkSheet';
 import { useSessionWork, type WorkItemDto } from '../hooks/useSessionWork';
 import { useSessionModel } from '../hooks/useSessionModel';
-import { useToolSwitch } from '../hooks/useToolSwitch';
+import { useMemorySwitch, useToolSwitch } from '../hooks/useToolSwitch';
 import { useBuilderTurn } from '../hooks/useBuilderTurn';
 import { useBuilderPanel } from '../hooks/useBuilderPanel';
 import { BuilderButton, BuilderSheet } from './BuilderSheet';
@@ -96,6 +96,7 @@ export function MobileApp() {
   const activeKind = activeInfo?.kind;
   const activeColor = activeInfo ? resolveAgentColor(activeInfo) : undefined;
   const [showTools, toggleTools] = useToolSwitch(activeAgent, session.id, activeKind);
+  const [showMemory, toggleMemory] = useMemorySwitch(activeAgent, session.id);
   const sessionBusy = Boolean(work && (work.busy || work.active));
   const builderTurn = useBuilderTurn(activeAgent, session.id, activeKind === 'builder' && showTools, sessionBusy);
   const [builderOpen, setBuilderOpen] = useState(false);
@@ -407,6 +408,24 @@ export function MobileApp() {
             <span>tools</span>
           </button>
         )}
+        {activeAgent && (
+          <button
+            type="button"
+            onClick={toggleMemory}
+            aria-pressed={showMemory}
+            aria-label={showMemory ? 'recalled notes shown' : 'recalled notes hidden'}
+            title={showMemory ? 'recalled notes shown in the chat' : 'recalled notes hidden'}
+            className={`header-tools header-memory ${showMemory ? 'on' : ''}`}
+            style={showMemory && activeColor ? { borderColor: `${activeColor}88`, background: `${activeColor}25`, color: activeColor } : undefined}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+              <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
+              <path d="M12 5v13" />
+            </svg>
+            <span>memory</span>
+          </button>
+        )}
         {activeAgent && activeKind === 'builder' && (
           <BuilderButton
             open={builderOpen}
@@ -563,6 +582,7 @@ export function MobileApp() {
             loadingOlder={chat.loadingOlder}
             onLoadOlder={() => void chat.loadOlder()}
             showTools={showTools}
+            showMemory={showMemory}
             busy={sessionBusy}
             {...(work?.active?.startedAt !== undefined ? { liveStartedAt: work.active.startedAt } : {})}
             builder={builderTurn}

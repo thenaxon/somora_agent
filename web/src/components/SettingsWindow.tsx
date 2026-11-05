@@ -170,7 +170,7 @@ export function SettingsWindow() {
   const searchHits = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q || !data) return [];
-    return data.fields.filter((f) => f.kind !== 'object' && !f.path.includes('*') && `${f.info?.label ?? ''} ${f.info?.help ?? ''} ${f.path}`.toLowerCase().includes(q)).slice(0, 60);
+    return data.fields.filter((f) => f.kind !== 'object' && (!f.info?.retired || data.inFile.includes(f.path)) && !f.path.includes('*') && `${f.info?.label ?? ''} ${f.info?.help ?? ''} ${f.path}`.toLowerCase().includes(q)).slice(0, 60);
   }, [query, data]);
 
   if (error) return <div className="settings-empty">Could not read the settings: {error}</div>;
@@ -338,7 +338,10 @@ function SectionBoxes(p: BoxProps) {
       const parent = f.path.slice(0, f.path.lastIndexOf('.'));
       return parent === block && f.kind !== 'object';
     });
-  const visible = (f: SettingFieldInfo) => p.readOnly || p.showAdvanced || (f.info?.level ?? 'advanced') === 'basic';
+  const visible = (f: SettingFieldInfo) =>
+    // A retired setting shows only while the file still sets it — then
+    // always, advanced or not, so it can be removed.
+    f.info?.retired ? p.data.inFile.includes(f.path) : p.readOnly || p.showAdvanced || (f.info?.level ?? 'advanced') === 'basic';
   return (
     <>
       {blockPaths.map((block) => {
@@ -371,7 +374,7 @@ function SettingRow(p: BoxProps & { field: SettingFieldInfo; entryFields: Settin
   const inFile = p.data.inFile.includes(f.path);
   const shown = pend && 'value' in pend ? pend.value : pend && 'reset' in pend ? f.default : current;
   const label = f.info?.label ?? humanize(f.path.split('.').pop()!);
-  const disabled = p.readOnly;
+  const disabled = p.readOnly || !!f.info?.locked || !!f.info?.retired;
   const set = (v: unknown) => {
     if (JSON.stringify(v) === JSON.stringify(current) && inFile) p.onChange(f.path, null);
     else p.onChange(f.path, { value: v });
@@ -390,7 +393,15 @@ function SettingRow(p: BoxProps & { field: SettingFieldInfo; entryFields: Settin
           ) : (
             <Control id={`in-${f.path}`} field={f} value={shown} disabled={disabled} onChange={set} entryFields={p.entryFields} />
           )}
-          {!disabled && (pend ? (
+          {f.info?.retired && !p.readOnly && inFile ? (
+            pend ? (
+              <button type="button" className="settings-icon-btn" title="Undo this change" onClick={() => p.onChange(f.path, null)}><RotateCcw size={12} /></button>
+            ) : (
+              <button type="button" className="settings-text-btn" title="No longer read: remove it from config.yaml" onClick={() => p.onChange(f.path, { reset: true })}>Remove</button>
+            )
+          ) : f.info?.locked ? (
+            <span className="settings-default" title={f.info.locked}><Lock size={11} /></span>
+          ) : !disabled && (pend ? (
             <button type="button" className="settings-icon-btn" title="Undo this change" onClick={() => p.onChange(f.path, null)}><RotateCcw size={12} /></button>
           ) : inFile && f.default !== undefined ? (
             <button type="button" className="settings-icon-btn" title={`Back to the default (${JSON.stringify(f.default)})`} onClick={() => p.onChange(f.path, { reset: true })}>↺</button>
@@ -400,7 +411,8 @@ function SettingRow(p: BoxProps & { field: SettingFieldInfo; entryFields: Settin
         </div>
       </div>
       {f.info?.help && <p className="settings-help">{f.info.help}</p>}
-      {pend && 'reset' in pend && <p className="settings-help">Goes back to the default: the line is removed from config.yaml.</p>}
+      {f.info?.locked && <p className="settings-help settings-locked"><Lock size={10} className="icon-inline" /> {f.info.locked}</p>}
+      {pend && 'reset' in pend && <p className="settings-help">{f.info?.retired ? 'The line is removed from config.yaml.' : 'Goes back to the default: the line is removed from config.yaml.'}</p>}
       {f.info?.unit === 'bytes' && typeof shown === 'number' && <p className="settings-help">= {formatBytes(shown)}</p>}
       {err && <p className="settings-error">{err}</p>}
       {(f.info?.more || f.info?.docs) && (

@@ -18,7 +18,9 @@ import type { AttachmentRef } from '../components/AttachmentPicker';
 //   - 'status' { msg }                  — error / connection messages
 //   - 'tool' { phase, tool, callId?, details? } — folded into the turn's
 //                                          activity row (history.ts)
-//   - 'memory' { ... }                  — memory inject (ignored by default)
+//   - 'memory' { count, refs, ... }      — the notes recalled for the turn: a
+//                                          memory row, drawn when the memory
+//                                          switch is on (history.ts)
 //   - 'project' ...                     — project pin (ignored by mobile)
 //
 // User-message events are NOT broadcast over SSE — the user knows what
@@ -32,6 +34,7 @@ import type { AttachmentRef } from '../components/AttachmentPicker';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  applyLiveMemory,
   applyLiveTool,
   closeLiveActivities,
   compactionNoteText,
@@ -44,6 +47,7 @@ import {
   type ChatMessage,
   type ModelFallback,
   type HistoryEvent,
+  type LiveMemoryEvent,
   type LiveToolEvent,
   type ThinkingContent,
 } from './history';
@@ -777,6 +781,16 @@ export function useChatStream(agent: string | null, session: string = 'main'): C
       setMessages((prev) => applyLiveTool(prev, ev, Date.now(), currentTurnIdRef.current));
     };
     es.addEventListener('tool', onTool);
+    // The notes recalled for this turn: a row above its reply.
+    const onMemory = (e: MessageEvent) => {
+      bump();
+      let d: LiveMemoryEvent | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d) return;
+      const ev = d;
+      setMessages((prev) => applyLiveMemory(prev, ev, Date.now(), currentTurnIdRef.current));
+    };
+    es.addEventListener('memory', onMemory);
     const onSessionModel = () => {
       bump();
       modelListenersRef.current.forEach((fn) => fn());
@@ -809,6 +823,7 @@ export function useChatStream(agent: string | null, session: string = 'main'): C
       es.removeEventListener('turn_dequeued', onTurnDequeued);
       es.removeEventListener('engine_meta', onEngineMeta);
       es.removeEventListener('tool', onTool);
+      es.removeEventListener('memory', onMemory);
       es.removeEventListener('question_asked', onQuestion);
       es.removeEventListener('question_answered', onQuestion);
       es.close();

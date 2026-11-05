@@ -7,7 +7,7 @@
 // pairs by turnId or gets its own row.
 
 import assert from 'node:assert/strict';
-import { historyEventsToMessages, mergeHistorySnapshot, prependOlderMessages, type ChatMessage, type HistoryEvent } from './history';
+import { applyLiveMemory, historyEventsToMessages, mergeHistorySnapshot, prependOlderMessages, type ChatMessage, type HistoryEvent } from './history';
 
 let ok = 0;
 let bad = 0;
@@ -185,6 +185,25 @@ const img = (id: string) => ({ type: 'image', id, filename: `${id}.png`, mime: '
   t('note: other engine_meta rows stay hidden', !rows.some((r) => r.ts === 4));
   t('note: a row without text still reads', rows[3]?.text === 'history compacted', rows[3]?.text);
   t('note: the reply keeps its turnId', rows[2]?.turnId === 't-0');
+}
+
+// ── memory rows: placed above the reply, kept through a snapshot ─────
+{
+  const user: ChatMessage = { id: 'u', role: 'user', text: 'hi', ts: 10 };
+  const streaming: ChatMessage = { id: 'a', role: 'agent', text: 'he', ts: 12, streaming: true };
+  const ev = { count: 2, topScore: 0.71, refs: ['wiki/a', 'memory/b'], fullText: 'notes' };
+  const placed = applyLiveMemory([user, streaming], ev, 11, 't-1');
+  t('memory: row goes above a streaming reply', placed.map((m) => m.role).join(',') === 'user,memory,agent', placed.map((m) => m.role).join(','));
+  t('memory: carries refs and score', placed[1]?.memory?.refs.length === 2 && placed[1]?.memory?.topScore === 0.71);
+  const none = [user];
+  t('memory: nothing recalled adds nothing', applyLiveMemory(none, { count: 0, refs: [] }, 11, null) === none);
+  t('memory: a malformed event adds nothing', applyLiveMemory(none, { count: 'x' }, 11, null) === none);
+  const restored: ChatMessage[] = [
+    { id: 'r-u', role: 'user', text: 'hi', ts: 10 },
+    { id: 'r-a', role: 'agent', text: 'hello', ts: 14 },
+  ];
+  const merged = mergeHistorySnapshot(restored, [user, placed[1]!, { ...streaming, streaming: false, ts: 14 }]);
+  t('memory: a history snapshot keeps the live row in its place', merged.map((m) => m.id).join(',') === `r-u,${placed[1]!.id},r-a`, merged.map((m) => m.id).join(','));
 }
 
 console.log(`\nhistory: ${ok} passed, ${bad} failed`);

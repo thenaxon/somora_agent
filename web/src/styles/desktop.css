@@ -2478,6 +2478,9 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .settings-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 .settings-icon-btn { min-width: 22px; height: 22px; padding: 0 4px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--text-2); cursor: pointer; font: inherit; }
 .settings-icon-btn:hover { color: var(--text-0); border-color: var(--line-2); }
+.settings-text-btn { height: 22px; padding: 0 8px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--text-1); cursor: pointer; font: inherit; font-size: 11px; }
+.settings-text-btn:hover { color: var(--text-0); border-color: var(--line-2); }
+.settings-locked { color: var(--text-2); }
 .settings-secret { display: inline-flex; align-items: center; gap: 6px; }
 .settings-secret-state { color: var(--text-2); }
 .settings-entries { display: flex; flex-direction: column; gap: 4px; min-width: 300px; }

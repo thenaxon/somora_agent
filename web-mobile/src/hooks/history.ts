@@ -41,8 +41,14 @@ export interface ChatMessage {
    *  `note`: a line about the conversation itself — today only "context
    *  compacted" — drawn as a centered divider; `text` is its sentence.
    *  `activity`: the tool calls of one turn (`activity`), shown when the
-   *  session's tool switch is on. */
-  role: 'user' | 'agent' | 'error' | 'note' | 'activity';
+   *  session's tool switch is on.
+   *  `memory`: the notes recalled for the turn that follows (`memory`),
+   *  shown when the session's memory switch is on. Live only, like the
+   *  web client's memory line: history does not carry it. */
+  role: 'user' | 'agent' | 'error' | 'note' | 'activity' | 'memory';
+  /** memory rows: how many notes were recalled, the best score, their
+   *  references and the text the agent was given. */
+  memory?: { count: number; topScore?: number; refs: string[]; fullText?: string };
   text: string;
   ts: number;
   /** True while the agent's response is still streaming. */
@@ -376,11 +382,19 @@ export function mergeHistorySnapshot(restored: ChatMessage[], live: readonly Cha
   const newestPersistedTs = Math.max(...restored.map(lastTsOf));
   // The snapshot is the newest window only: what was scrolled in before
   // it stays, what the stream added after it stays.
-  return [
+  const merged = [
     ...live.filter((m) => m.ts < oldestPersistedTs),
     ...restored,
     ...live.filter((m) => m.ts > newestPersistedTs),
   ];
+  // Memory rows are live only — history does not carry them — so the
+  // ones inside the window go back in at their moment.
+  const inside = live.filter((m) => m.role === 'memory' && m.ts >= oldestPersistedTs && m.ts <= newestPersistedTs);
+  for (const row of inside) {
+    const at = merged.findIndex((m) => m.ts > row.ts);
+    merged.splice(at < 0 ? merged.length : at, 0, row);
+  }
+  return merged;
 }
 
 /** The newest moment a row stands for. */
@@ -468,6 +482,38 @@ export function applyLiveTool(prev: readonly ChatMessage[], d: LiveToolEvent, no
     ts: now,
     ...(turnId ? { turnId } : {}),
     activity: addCall(newActivity(now), step),
+  };
+  let at = prev.findIndex((m) => (m.role === 'agent' && m.streaming) || (m.role === 'user' && m.pending && !m.steer));
+  if (at < 0) at = prev.length;
+  return [...prev.slice(0, at), row, ...prev.slice(at)];
+}
+
+/** A live `memory` event (GET /chat/stream): the notes recalled for
+ *  the turn that starts. */
+export interface LiveMemoryEvent {
+  count?: unknown;
+  topScore?: unknown;
+  refs?: unknown;
+  fullText?: unknown;
+}
+
+/** Add the turn's memory row where its reply will stand — above its
+ *  streaming bubble and above messages still waiting to be sent, like
+ *  a new activity row. Nothing recalled adds nothing. */
+export function applyLiveMemory(prev: readonly ChatMessage[], d: LiveMemoryEvent, now: number, turnId: string | null): ChatMessage[] {
+  if (typeof d.count !== 'number' || d.count <= 0 || !Array.isArray(d.refs)) return prev as ChatMessage[];
+  const row: ChatMessage = {
+    id: newId('m'),
+    role: 'memory',
+    text: '',
+    ts: now,
+    ...(turnId ? { turnId } : {}),
+    memory: {
+      count: d.count,
+      refs: d.refs.filter((r): r is string => typeof r === 'string'),
+      ...(typeof d.topScore === 'number' ? { topScore: d.topScore } : {}),
+      ...(typeof d.fullText === 'string' && d.fullText ? { fullText: d.fullText } : {}),
+    },
   };
   let at = prev.findIndex((m) => (m.role === 'agent' && m.streaming) || (m.role === 'user' && m.pending && !m.steer));
   if (at < 0) at = prev.length;

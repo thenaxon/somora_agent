@@ -705,6 +705,11 @@ file does not set it; **↺** takes a value back to the default and
 removes its line. A group shows the settings most people change;
 **Show advanced options** shows the rest. The search finds both.
 
+A lock marks a setting that needs more than a new value, such as the
+embedding model, whose change means building the memory index anew; it
+is changed in config.yaml. A setting somora no longer reads shows only
+while the file still has it, with **Remove**.
+
 Changes collect at the bottom. **Apply** checks them against the
 schema, saves a backup and writes only the lines that changed: your
 comments, blank lines, order and indentation stay. Then the

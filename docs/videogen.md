@@ -442,7 +442,7 @@ Each entry under `models`:
 | `fps` | from the catalog | Frames per second, for keyframes given as frame numbers. |
 | `jobTimeoutMs` | `videoGen.jobTimeoutMs` | This model's own limit for one render, for a model much slower than the rest. |
 | `allow` | none | Declares what the model accepts when the provider has no catalog. Takes precedence over a catalog. |
-| `fallback` | none | Handle of another video model. Accepted by the config. The video path does not act on it yet. |
+| `fallback` | none | Handle of another video model, tried when this one is unavailable (unreachable, or failing on its side). A value the model refuses does not move on. The job then names the model used and why the first was skipped in its warnings. A fallback may name its own. |
 
 Keys under `allow`:
 
@@ -452,7 +452,7 @@ Keys under `allow`:
 | `variants` | Content variants the provider serves. Include `thumbnail` to get stills. Without it only `video` is fetched. |
 | `aspect_ratio`, `size` | The allowed values for that parameter. |
 | `maxReferences` | Most images `reference_images` may carry for this model, 0 to 4. |
-| `maxSeconds` | Accepted by the config. Not checked yet. |
+| `maxSeconds` | Longest video the model renders. A longer `seconds` is refused before anything is sent. |
 | `parameters` | Per parameter `type`, `values`, `min`, `max`, `default`, `note`, as a catalog's `supported_parameters`. See "Model parameters". |
 
 Keys of an entry under `media`:

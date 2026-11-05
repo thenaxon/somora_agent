@@ -219,15 +219,16 @@ export const VOICE: Catalog = {
     docs: 'realtime-voice.md#using-your-own-voice-service',
   },
   'realtimeVoice.provider_ref': {
-    label: 'Borrow key from provider',
-    help: 'Meant to name a configured provider whose key the call would use; the current version does not read this setting.',
-    more: 'Use the key file instead.',
+    label: 'Borrow key from provider (retired)',
+    help: 'No longer read: somora warns about it at start. The call reads its key from the key file.',
     level: 'advanced',
+    retired: true,
   },
   'realtimeVoice.transport': {
-    label: 'Audio transport',
-    help: 'How audio travels; only websocket is used, and webrtc is accepted but changes nothing.',
+    label: 'Audio transport (retired)',
+    help: 'No longer read: audio always travels browser → somora → provider. somora warns about it at start.',
     level: 'advanced',
+    retired: true,
     docs: 'realtime-voice.md#cost-and-limits',
   },
   'realtimeVoice.defaultVoice': {
@@ -261,15 +262,17 @@ export const VOICE: Catalog = {
   },
   'realtimeVoice.consult.lockPatienceMs': {
     label: 'Wait for the session (retired)',
-    help: 'No longer used: it is read, warned about and ignored; the quick answer wait replaces it.',
+    help: 'No longer read: somora warns about it at start; the quick answer wait replaces it.',
     level: 'advanced',
     unit: 'ms',
+    retired: true,
   },
   'realtimeVoice.consult.answerPatienceMs': {
     label: 'Wait for the answer (retired)',
-    help: 'No longer used: it is read, warned about and ignored; the quick answer wait replaces it.',
+    help: 'No longer read: somora warns about it at start; the quick answer wait replaces it.',
     level: 'advanced',
     unit: 'ms',
+    retired: true,
   },
   'realtimeVoice.maxCallMinutes': {
     label: 'Longest call',

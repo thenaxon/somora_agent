@@ -34,6 +34,13 @@ export interface CatalogEntry {
   /** docs page and anchor: "memory.md#automatic-recall". */
   docs?: string;
   placeholder?: string;
+  /** Shown but not changed in the window, with this reason: a change
+   *  that needs more than writing the value (the embedding model needs
+   *  the memory index built anew). */
+  locked?: string;
+  /** No longer read: hidden unless config.yaml still sets it, and then
+   *  it can only be removed. somora warns about it at start. */
+  retired?: true;
 }
 
 export type Catalog = Record<string, CatalogEntry>;

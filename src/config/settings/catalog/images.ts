@@ -631,7 +631,7 @@ export const IMAGES: Catalog = {
   'videoGen.models.*.allow.maxSeconds': {
     label: 'Longest video',
     help: 'The longest video this model can render.',
-    more: 'Accepted by the config but not checked yet.',
+    more: 'A longer request is refused before anything is sent to the provider.',
     level: 'advanced',
     unit: 's',
   },
@@ -651,7 +651,7 @@ export const IMAGES: Catalog = {
   'videoGen.models.*.fallback': {
     label: 'Fallback model',
     help: 'Short name of another video model to use when this one is unavailable.',
-    more: 'Accepted by the config, but video generation does not act on it yet.',
+    more: 'Only when this model cannot be reached or fails on its side; a value it refuses does not move on. The video\'s warnings name the model used.',
     level: 'advanced',
   },
 };

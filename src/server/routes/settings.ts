@@ -193,6 +193,15 @@ export function registerSettingsRoutes(app: Hono, deps: SettingsRoutesDeps): voi
           problems.push({ path, message: 'this setting is changed in config.yaml for now' });
           continue;
         }
+        const info = SETTINGS_CATALOG[field.path];
+        if (info?.locked) {
+          problems.push({ path, message: info.locked });
+          continue;
+        }
+        if (info?.retired && ch.reset !== true) {
+          problems.push({ path, message: 'this setting is no longer read; it can only be removed' });
+          continue;
+        }
         const parts = path.split('.');
         if (ch.reset === true) edits.push({ path: parts, remove: true });
         else if (typeof ch.secret === 'string') edits.push({ path: parts, value: ch.secret });

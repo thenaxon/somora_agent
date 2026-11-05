@@ -1592,6 +1592,16 @@ button { cursor: pointer; }
   .header-tools { padding: 4px 6px; }
   .header-builder.has-count svg { display: none; }
 }
+/* The memory switch sits right of the tools switch. */
+.header-tools.header-memory { margin-left: 6px; }
+/* The notes recalled for a turn, above its reply (memory switch on). */
+.memory-line { margin: 2px 12px 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-2); }
+.memory-line-head { all: unset; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; cursor: pointer; width: 100%; }
+.memory-line-title { color: var(--accent); font-weight: 600; }
+.memory-line-ref { color: var(--text-1); overflow-wrap: anywhere; }
+.memory-line-dim { color: var(--text-3); }
+.memory-line-toggle { margin-left: auto; }
+.memory-line-text { margin: 6px 0 0; padding: 8px; max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-2); border: 1px solid var(--line); border-radius: 6px; color: var(--text-1); font: inherit; }
 /* The builder panel's header button sits right of the tools switch. */
 .header-tools.header-builder { margin-left: 6px; position: relative; }
 .header-builder-count {

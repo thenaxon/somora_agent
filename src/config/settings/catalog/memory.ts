@@ -17,16 +17,18 @@ export const MEMORY: Catalog = {
   'memory.embedding.provider': {
     label: 'Embedding provider',
     help: 'Where the meaning-search model runs.',
-    more: 'Only "local" works today: the model runs on this machine and nothing leaves it. The other providers are listed but not wired up yet, and choosing one leaves recall on word search alone.',
+    more: 'Only "local" works today: the model runs on this machine and nothing leaves it.',
     level: 'advanced',
     docs: 'memory.md#how-recall-ranks',
+    locked: 'Only "local" works today; the other providers are not wired up.',
   },
   'memory.embedding.model': {
     label: 'Embedding model',
     help: 'The local model used for meaning search, downloaded once per machine.',
-    more: 'Notes already indexed are not embedded again when you change the model, so old and new vectors would mix. Change it only if you know why.',
+    more: 'Notes already indexed are not embedded again when the model changes: old and new vectors would mix, and a model with a different vector size stops memory from starting.',
     level: 'advanced',
     docs: 'memory.md#how-recall-ranks',
+    locked: 'Changing the model means building the memory index anew, which the window cannot do yet.',
   },
   'memory.chunking': {
     label: 'Sections',

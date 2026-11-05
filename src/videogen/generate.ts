@@ -167,12 +167,54 @@ export interface StartResult {
   note?: string;
 }
 
+/** The models to try, following each entry's `fallback:`; a handle
+ *  already in the chain ends it, so a → b → a cannot spin. */
+function fallbackChain(config: Config, first: string): string[] {
+  const chain: string[] = [];
+  const seen = new Set<string>();
+  let name: string | undefined = first;
+  while (name && !seen.has(name)) {
+    seen.add(name);
+    chain.push(name);
+    name = config.videoGen?.models.find((m) => m.name === name)?.fallback;
+  }
+  return chain;
+}
+
 /**
  * Validate, create the job, and return. Deliberately does NOT wait: the
  * render runs for minutes, and the caller gets its result through a
  * wake-up rather than by holding a turn open.
+ *
+ * A model that is unavailable (unreachable, 5xx, 503 while the GPU box
+ * has another model loaded) hands the request to its `fallback:`, as
+ * for images. Anything else — a value the model refuses, a busy slot —
+ * is the caller's and ends here, so the real message is not buried.
  */
 export async function startVideoJob(input: StartInput, config: Config): Promise<StartResult> {
+  const first = input.model ?? config.videoGen?.models[0]?.name;
+  const chain = first ? fallbackChain(config, first) : [undefined];
+  const skipped: string[] = [];
+  for (const [i, name] of chain.entries()) {
+    try {
+      const out = await startOnce({ ...input, ...(name ? { model: name } : {}) }, config);
+      if (skipped.length === 0) return out;
+      logger.warn({ msg: 'videogen.fell_back', requested: first, used: name, skipped, agent: input.agent });
+      const note = `Used the fallback model '${name}' — ${skipped.join('; ')}`;
+      const job: VideoJob = { ...out.job, fellBackFrom: skipped, warnings: [note, ...(out.job.warnings ?? [])] };
+      await writeJob(job);
+      return { ...out, job };
+    } catch (err) {
+      const unavailable = err instanceof VideoGenError && (err.kind === 'upstream' || err.kind === 'unavailable');
+      if (!unavailable || i === chain.length - 1) throw err;
+      skipped.push(`'${name}' was unavailable: ${(err as Error).message}`);
+      logger.warn({ msg: 'videogen.model_unavailable', model: name, next: chain[i + 1], err: (err as Error).message });
+    }
+  }
+  throw new VideoGenError(`No video model in the chain from '${first}' started a render.`, 'upstream');
+}
+
+async function startOnce(input: StartInput, config: Config): Promise<StartResult> {
   const prompt = input.prompt?.trim();
   if (!prompt) throw new VideoGenError('prompt must not be empty.', 'input');
 
@@ -198,6 +240,11 @@ export async function startVideoJob(input: StartInput, config: Config): Promise<
     const problems = validateSpecs(specs as never, caps, label);
     const media = checkMedia(items, entry, caps, label);
     problems.push(...media.problems);
+    const maxSeconds = entry.allow?.maxSeconds;
+    const seconds = Number(specs.seconds);
+    if (maxSeconds !== undefined && specs.seconds !== undefined && Number.isFinite(seconds) && seconds > maxSeconds) {
+      problems.push(`${label} renders at most ${maxSeconds} s; ${specs.seconds} s was asked for.`);
+    }
     if (caps.maxReferences !== undefined && references.length > caps.maxReferences) {
       problems.push(
         caps.maxReferences === 0

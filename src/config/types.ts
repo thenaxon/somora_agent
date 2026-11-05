@@ -1167,8 +1167,9 @@ export const MobileConfigSchema = z.object({
      *  Builders always start on; the person's choice per session on
      *  the phone wins. */
     tools: z.boolean().default(false),
-    /** Show `[memory · …]` inject rows in the mobile chat. Default
-     *  off; same rationale as `tools`. */
+    /** Where the phone's memory switch starts: the line naming the
+     *  notes recalled for a turn (docs/mobile.md "Recalled notes").
+     *  The person's choice per session on the phone wins. */
     memory: z.boolean().default(false),
   }).default({ tools: false, memory: false }),
 }).default({
@@ -1386,12 +1387,11 @@ export const RealtimeVoiceConfigSchema = z
         message: 'realtimeVoice.url must start with wss:// or ws://',
       })
       .optional(),
-    /** Fallback: name of an existing `providers` entry to borrow the
-     *  key from. Only for providers that use the same credential. */
+    /** Retired: accepted so an older file still loads, never read;
+     *  somora warns at start (src/server/index.ts). The key comes from
+     *  apiKeyFile; audio always goes browser → somora → provider. */
     provider_ref: z.string().min(1).optional(),
-    // Only websocket is driven (audio browser → somora → provider);
-    // the value is accepted for forward compatibility.
-    transport: z.enum(['webrtc', 'websocket']).default('websocket'),
+    transport: z.enum(['webrtc', 'websocket']).optional(),
     /** Voice used when an agent names none. Provider-specific id. */
     defaultVoice: z.string().min(1).default('alloy'),
     /** How hard the voice self is held to asking the real agent before

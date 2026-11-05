@@ -653,6 +653,8 @@ export interface SettingInfo {
   unit?: string;
   docs?: string;
   placeholder?: string;
+  locked?: string;
+  retired?: true;
 }
 export interface SettingFieldInfo {
   path: string;

@@ -69,6 +69,8 @@ interface Props {
   onLoadOlder?: () => void;
   /** The session's tool switch: activity rows are drawn only when on. */
   showTools?: boolean;
+  /** Draw the notes recalled for each turn (the header's memory switch). */
+  showMemory?: boolean;
   /** A turn runs in this session (its work queue says so), and since
    *  when. The latest activity row is then the live one. */
   busy?: boolean;
@@ -90,6 +92,7 @@ export function ChatArea({
   loadingOlder = false,
   onLoadOlder,
   showTools = false,
+  showMemory = false,
   busy = false,
   liveStartedAt,
   builder,
@@ -186,7 +189,9 @@ export function ChatArea({
             Say something to <strong>{agent}</strong>.
           </div>
         )}
-        {messages.map((m) => m.role === 'activity' ? (
+        {messages.map((m) => m.role === 'memory' ? (
+          showMemory && m.memory ? <MemoryLine key={m.id} memory={m.memory} /> : null
+        ) : m.role === 'activity' ? (
           showTools && m.activity ? (
             <ActivityBlock
               key={m.id}
@@ -709,5 +714,25 @@ function PlayAudioButton({ url }: { url: string }) {
       <span aria-hidden="true">{playing ? '⏸' : '▶'}</span>
       <span>{playing ? 'Stop' : 'Play'}</span>
     </button>
+  );
+}
+
+/** The notes recalled for a turn: how many, the best score, the first
+ *  few references; a tap shows the text the agent was given. */
+function MemoryLine({ memory }: { memory: NonNullable<ChatMessage['memory']> }) {
+  const [open, setOpen] = useState(false);
+  const shown = memory.refs.slice(0, 3);
+  const more = memory.refs.length - shown.length;
+  return (
+    <div className="memory-line">
+      <button type="button" className="memory-line-head" onClick={() => memory.fullText && setOpen((v) => !v)} aria-expanded={open}>
+        <span className="memory-line-title">memory · {memory.count} note{memory.count === 1 ? '' : 's'}</span>
+        {typeof memory.topScore === 'number' && <span className="memory-line-dim">top {memory.topScore.toFixed(2)}</span>}
+        {shown.map((r) => <span key={r} className="memory-line-ref">{r}</span>)}
+        {more > 0 && <span className="memory-line-dim">+{more} more</span>}
+        {memory.fullText && <span className="memory-line-dim memory-line-toggle">{open ? 'hide' : 'show'}</span>}
+      </button>
+      {open && memory.fullText && <pre className="memory-line-text">{memory.fullText}</pre>}
+    </div>
   );
 }

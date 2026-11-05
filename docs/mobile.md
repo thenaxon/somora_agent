@@ -221,6 +221,7 @@ is open. It is off by default and remembered per browser.
 | Three pulsing dots | The agent is thinking or running tools. The reply replaces them. With the tools switch on, the activity card stands in their place. |
 | Activity card or `▸ N tool calls · time` line | The turn's tool calls, see "Tool activity" below. Only with the tools switch on. |
 | `🧠 thinking` | The model's reasoning, when the engine provides it. While it thinks, the newest line peeks below. Tap the row to read all of it. |
+| `memory · N notes` line | The notes recalled for the turn, see "Recalled notes" below. Only with the memory switch on. |
 | `⇄ fallback · <model>` | A backup model answered. The tooltip names the models that failed and why. |
 | **⚠** block | The turn ended in an error. |
 | `◌ history compacted …` divider | The history was compacted: before a turn, by hand, or by the engine itself. When somora compacted, the line says by how much. |
@@ -264,6 +265,22 @@ card.
 The switch is kept per session on this phone. Until you touch it, it
 is on in a builder's sessions and follows `mobile.show.tools` for chat
 agents, off by default.
+
+### Recalled notes
+
+The **memory** switch in the header shows which notes somora gave the
+agent before a turn. A line stands above the reply:
+
+```text
+memory · 3 notes  top 0.71  wiki/people/anna  memory/2026-11-02  +1 more   show
+```
+
+Tap it to read the text the agent was given. A turn with nothing
+recalled has no line. The line is drawn while you watch; when you open
+a session later, earlier turns show none.
+
+The switch is kept per session on this phone. Until you touch it, it
+follows `mobile.show.memory`, off by default.
 
 ### Builder panel
 
@@ -351,10 +368,9 @@ mobile:
 | Setting | Default | Meaning |
 |---|---|---|
 | `mobile.show.tools` | `false` | Whether the tools switch starts on for a chat agent's session. Builders always start on. Your choice per session on the phone wins. |
-| `mobile.show.memory` | `false` | Reserved for showing recalled notes in the mobile chat. |
+| `mobile.show.memory` | `false` | Whether the memory switch starts on. Your choice per session on the phone wins. |
 
-Both are reported by `GET /mobile-config`. The mobile app does not draw
-memory rows yet, so `mobile.show.memory` changes nothing today.
+Both are reported by `GET /mobile-config`.
 
 Settings the phone depends on elsewhere:
 

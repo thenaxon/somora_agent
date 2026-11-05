@@ -283,8 +283,7 @@ at 24 kHz:
   the line.
 - **Web client only.** The mobile app and the TUI cannot make calls.
 - **Audio goes browser, somora, provider.** Tools therefore run in
-  exactly one place, the server. `realtimeVoice.transport` reflects
-  this and has one working value.
+  exactly one place, the server.
 
 ## Settings
 
@@ -297,7 +296,6 @@ realtimeVoice:
   model: <model-id>             # required, no default
   # apiKeyFile: ~/.somora/secrets/openai-realtime.key
   # url: ws://127.0.0.1:8787/realtime
-  transport: websocket
   defaultVoice: alloy
   consultPolicy: always
   maxCallMinutes: 20
@@ -317,7 +315,6 @@ realtimeVoice:
 | `model` | required | Model id of the realtime model. |
 | `apiKeyFile` | not set | Path to a file that holds the key. Required for OpenAI. The key never goes into `config.yaml`: it buys billed minutes, and the config is read by more eyes. |
 | `url` | not set | Where to connect. Must start with `wss://` or `ws://`. Not set means OpenAI. Required for `local`. |
-| `transport` | `websocket` | The only transport somora uses. `webrtc` is accepted and changes nothing. |
 | `defaultVoice` | `alloy` | Voice for agents that name none. |
 | `consultPolicy` | `always` | When the voice must ask the agent. See below. |
 | `maxCallMinutes` | `20` | Hard stop for one call. Range 1 to 180. |
@@ -327,8 +324,9 @@ realtimeVoice:
 | `turnDetection.prefixPaddingMs` | `200` | How much run-up counts as speech. Shorter reacts sooner. Range 0 to 2000. |
 | `turnDetection.silenceDurationMs` | `420` | The pause that ends your turn. Range 100 to 5000. |
 
-The older keys `consult.lockPatienceMs` and `consult.answerPatienceMs`
-are ignored. `quickAnswerMs` replaces both.
+The older keys `transport`, `provider_ref`, `consult.lockPatienceMs`
+and `consult.answerPatienceMs` are ignored, and somora warns about them
+at start. `quickAnswerMs` replaces the two waits.
 
 Consult policies:
 

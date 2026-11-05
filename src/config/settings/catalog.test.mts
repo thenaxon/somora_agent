@@ -40,7 +40,7 @@ test('entries are plain: a name, one sentence, English, no agent or host names',
     if (e.label.length > 48) bad.push(`${p}: label over 48 characters`);
     if (e.help.length > 200) bad.push(`${p}: help over 200 characters — move the rest to more`);
     if (/[äöüß]/i.test(`${e.label} ${e.help} ${e.more ?? ''}`)) bad.push(`${p}: not English`);
-    if (/\bnaxon\b|tailf6ec51|\b192\.168\./i.test(`${e.help} ${e.more ?? ''} ${e.placeholder ?? ''}`)) bad.push(`${p}: names a host`);
+    if (/\b192\.168\.\d+\.\d+\b(?!\/)|\b[a-z0-9-]+\.[a-z0-9-]+\.ts\.net\b/i.test(`${e.help} ${e.more ?? ''} ${e.placeholder ?? ''}`)) bad.push(`${p}: names a host`);
   }
   assert.deepEqual(bad, []);
 });

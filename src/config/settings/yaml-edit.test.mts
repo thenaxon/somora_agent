@@ -15,7 +15,7 @@ const FILE = `  # somora server config
   server:
     port: 18737   # keep in sync with the firewall
     # where the web UI is reachable
-    allowedHosts: [naxon.local, 10.0.0.5]
+    allowedHosts: [box.local, 10.0.0.5]
 
   memory:
     autoInject:
@@ -54,8 +54,8 @@ test('a number, a string that needs quotes, and false', () => {
 });
 
 test('a flow list stays a flow list', () => {
-  const out = applyYamlEdits(FILE, [{ path: ['server', 'allowedHosts'], value: ['naxon.local'] }]);
-  assert.equal(out, FILE.replace('[naxon.local, 10.0.0.5]', '[naxon.local]'));
+  const out = applyYamlEdits(FILE, [{ path: ['server', 'allowedHosts'], value: ['box.local'] }]);
+  assert.equal(out, FILE.replace('[box.local, 10.0.0.5]', '[box.local]'));
 });
 
 test('a block list is rewritten as its entry, at its indentation', () => {

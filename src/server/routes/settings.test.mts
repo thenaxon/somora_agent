@@ -109,6 +109,29 @@ test('a group that is not ready yet, and an unknown path, are refused', async ()
   assert.equal(readFileSync(FILE, 'utf8'), START);
 });
 
+test('a locked setting is refused; a retired one can only be removed', async () => {
+  const withVoice = `${START}  realtimeVoice:
+    model: rt
+    transport: websocket
+`;
+  writeFileSync(FILE, withVoice);
+  const { body: view } = await call('GET', '/settings');
+  const r = await call('POST', '/settings/apply', {
+    hash: view.hash,
+    changes: [
+      { path: 'memory.embedding.model', value: 'other-model' },
+      { path: 'realtimeVoice.transport', value: 'webrtc' },
+    ],
+  });
+  assert.equal(r.status, 400);
+  assert.match(r.body.issues[0].message, /index anew/);
+  assert.match(r.body.issues[1].message, /can only be removed/);
+  assert.equal(readFileSync(FILE, 'utf8'), withVoice);
+  const removed = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'realtimeVoice.transport', reset: true }] });
+  assert.equal(removed.status, 200);
+  assert.equal(readFileSync(FILE, 'utf8'), `${START}  realtimeVoice:\n    model: rt\n`);
+});
+
 test('a secret is replaced without ever being read back', async () => {
   writeFileSync(FILE, `${START}  web:\n    brave:\n      apiKey: "old"\n`);
   const { body: view } = await call('GET', '/settings');

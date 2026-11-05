@@ -52,9 +52,9 @@ export const INTERFACES: Catalog = {
   },
   'mobile.show.memory': {
     label: 'Show recalled notes',
-    help: 'Reserved for showing recalled notes in the phone chat; the mobile app does not draw them yet, so this changes nothing today.',
-    level: 'advanced',
-    docs: 'mobile.md#settings',
+    help: 'Where the memory switch starts on the phone: a line above each reply naming the notes the agent was given. Your choice per session on the phone wins.',
+    level: 'basic',
+    docs: 'mobile.md#recalled-notes',
   },
 
   // ── Terminal client ────────────────────────────────────────────────

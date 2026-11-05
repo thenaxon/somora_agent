@@ -1080,12 +1080,19 @@ configureStartTurn({ chatTurnDeps, publish });
 // result) is written into its session and shown (src/external/unprompted.ts).
 configureUnprompted({ publish });
 {
-  const consult = config.realtimeVoice?.consult;
-  if (consult && (consult.lockPatienceMs !== undefined || consult.answerPatienceMs !== undefined)) {
+  // Keys realtimeVoice still accepts but no longer reads.
+  const rv = config.realtimeVoice;
+  const retired = [
+    rv?.consult?.lockPatienceMs !== undefined && 'realtimeVoice.consult.lockPatienceMs',
+    rv?.consult?.answerPatienceMs !== undefined && 'realtimeVoice.consult.answerPatienceMs',
+    rv?.provider_ref !== undefined && 'realtimeVoice.provider_ref',
+    rv?.transport !== undefined && 'realtimeVoice.transport',
+  ].filter((k): k is string => typeof k === 'string');
+  if (retired.length > 0) {
     logger.warn({
       msg: 'config.retired_keys',
-      keys: ['realtimeVoice.consult.lockPatienceMs', 'realtimeVoice.consult.answerPatienceMs'],
-      hint: 'ignored since 2026-09-13 — a spoken question waits realtimeVoice.consult.quickAnswerMs, then is handed over',
+      keys: retired,
+      hint: 'ignored — remove them from config.yaml (the settings window can); a spoken question waits realtimeVoice.consult.quickAnswerMs, the key comes from apiKeyFile, audio always goes through somora',
     });
   }
 }

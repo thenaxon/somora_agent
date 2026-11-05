@@ -153,7 +153,7 @@ export function settingsJsonSchema(): unknown {
   return z.toJSONSchema(ConfigSchema, { unrepresentable: 'any', io: 'input' });
 }
 
-/** Does a concrete path (`providers.cerebro.apiKey`) belong to a field
+/** Does a concrete path (`providers.local.apiKey`) belong to a field
  *  path (`providers.*.apiKey`)? */
 export function matchesFieldPath(fieldPath: string, concrete: string): boolean {
   const a = fieldPath.split('.');
