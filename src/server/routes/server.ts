@@ -102,7 +102,7 @@ export function registerServerRoutes(app: Hono, routeDeps: ServerRoutesDeps): vo
     return r.ok ? c.json(r) : c.json(r, 400);
   });
 
-  registerSettingsRoutes(app, { reload: reloadConfigNow });
+  registerSettingsRoutes(app, { reload: reloadConfigNow, currentConfig: () => config });
 
   function systemdUnitActive(): boolean {
     if (process.platform !== 'linux') return false;

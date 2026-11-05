@@ -737,8 +737,18 @@ A setting an environment variable overrides, such as
 `SOMORA_COMPACTION_MODEL`, is locked and names the variable: the
 variable wins over the file.
 
-**Models & providers** is shown but not yet editable here: change it
-in `config.yaml`. Settings of a single agent stay in its
+A setting that names a model, a provider or a named image, video or
+decision model offers the configured names as you type. Apply refuses
+a change that would remove a model, provider or named model still in
+use: by an agent's model or fallback, or by another setting. The
+message names who uses it.
+
+In **Models & providers**, **Test** beside a model asks it one short
+question and shows the answer and how long it took. It tests the saved
+configuration, so apply first. A model on claude-cli, codex-cli or
+grok-cli is checked by a chat turn instead.
+
+Settings of a single agent stay in its
 [Agent window](#the-agent-window). The phone app has no settings window.
 
 ## Other windows

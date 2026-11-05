@@ -136,11 +136,19 @@ function walk(n: Node, path: string, section: string, required: boolean, out: Se
         else if (ap.anyOf || ap.oneOf) {
           // A map of variants (providers by engine): every field of every
           // variant, once.
+          // A key that is a constant per variant (`engine`) is a choice
+          // of those constants.
+          const variants = ap.anyOf ?? ap.oneOf ?? [];
           const seen = new Set<string>();
-          for (const b of ap.anyOf ?? ap.oneOf ?? []) {
+          for (const b of variants) {
             for (const [k, v] of Object.entries(b.properties ?? {})) {
               if (seen.has(k)) continue;
               seen.add(k);
+              const consts = variants.map((x) => (x.properties?.[k] as Node & { const?: unknown } | undefined)?.const).filter((c): c is string => typeof c === 'string');
+              if (consts.length === variants.length) {
+                out.push({ path: `${path}.*.${k}`, section, kind: 'enum', enum: consts, required: true });
+                continue;
+              }
               walk(v, `${path}.*.${k}`, section, false, out);
             }
           }

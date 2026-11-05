@@ -18,7 +18,8 @@ import type { ModelReasoningConfig, ThinkingLevel } from '../config/types.ts';
 
 interface ModelLike {
   capabilities: readonly string[];
-  /** Optional per-model vocabulary + wire shape (openai-compatible only). */
+  /** Optional per-model vocabulary (`levels`: openai-compatible, codex-cli,
+   *  grok-cli) and wire shape (`param`: openai-compatible only). */
   reasoning?: ModelReasoningConfig;
 }
 

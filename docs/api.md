@@ -477,16 +477,24 @@ passwords never leave the server: in `values` they are
 
 #### `GET /settings`
 
-`{path, hash, valid, issues?, groups, restartSections, fields, values, inFile, envSet}`.
+`{path, hash, valid, issues?, groups, restartSections, fields, values, inFile, envSet, refOptions}`.
 
 | Field | Content |
 |---|---|
 | `hash` | The file's state; `POST /settings/apply` needs it back. |
 | `groups` | `{id, title, icon, sections, ready}`. A group that is not `ready` is read only. |
-| `fields` | One per setting: `{path, kind, section, default?, enum?, min?, max?, minExclusive?, nullable?, required?, info?}`. `kind` is `boolean`, `integer`, `number`, `string`, `enum`, `strings`, `one-or-many`, `object`, `map` or `list`. `*` in `path` stands for an entry name. `info` is `{label, help, more?, level, sensitive?, unit?, docs?, placeholder?, locked?, retired?}`: `locked` gives the reason a setting is not changed here, `retired` marks one somora no longer reads. |
+| `fields` | One per setting: `{path, kind, section, default?, enum?, min?, max?, minExclusive?, nullable?, required?, info?}`. `kind` is `boolean`, `integer`, `number`, `string`, `enum`, `strings`, `one-or-many`, `object`, `map` or `list`. `*` in `path` stands for an entry name. `info` is `{label, help, more?, level, sensitive?, unit?, docs?, placeholder?, locked?, retired?, ref?}`: `locked` gives the reason a setting is not changed here, `retired` marks one somora no longer reads. |
 | `values` | The configuration in force, defaults filled in; `null` when the file does not validate. |
-| `inFile` | Dotted paths the file itself sets. |
+| `inFile` | Dotted paths the file itself sets, entries of lists by index. |
 | `envSet` | Settings an environment variable overrides, as `{path: variable}`. They cannot be changed here. |
+| `refOptions` | The names a reference can take, by kind: `model` (aliases and `provider/id`), `provider`, `image-model`, `video-model`, `decision-model`. A field's `info.ref` names its kind. |
+
+#### `POST /settings/test-model`
+
+Body `{provider, model}` (the model's id). Asks an openai-compatible
+model of the saved configuration one short question:
+`{ok, ms, reply?, error?}`. For a model on another engine `{ok: false,
+note}`; it is not asked.
 
 #### `GET /settings/yaml`
 
@@ -503,9 +511,11 @@ A path may name an entry of a map or list
 value or remove it with `reset`, or a field inside one
 (`mcp.servers.<name>.headers.Authorization`). List indexes mean the
 entries as the file has them; a name with a dot of its own is
-written with `%2E` (`toolCatalog.models.gpt-5%2E5`). A value carrying
-`{secret: true, set}`
-is refused.
+written with `%2E` (`toolCatalog.models.gpt-5%2E5`).
+
+A value carrying `{secret: true, set}` is refused, and so is a change that removes a model, provider or
+named model still in use (an agent's model or fallback, or a setting
+that names it); `issues` says who uses it.
 
 Only the changed lines are written; comments and layout
 stay. Before writing, the file is saved to `~/.somora/config-backups/`

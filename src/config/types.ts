@@ -106,8 +106,9 @@ export const ModelSchema = z.object({
    * injected memory block).
    */
   maxTokens: z.number().int().positive().optional(),
-  /** Reasoning default for every engine; vocabulary + wire shape
-   *  (`levels`, `param`) apply to openai-compatible, codex-cli, grok-cli. */
+  /** Reasoning default for every engine. `levels` (the vocabulary) is
+   *  read by openai-compatible, codex-cli and grok-cli; `param` (the wire
+   *  shape) by openai-compatible only (engine/thinking-params.ts). */
   reasoning: ModelReasoningSchema.optional(),
   /** Vendor-recommended sampling defaults for this model (openai-compatible
    *  only). agent.yaml `sampling:` and the session override win per key. */

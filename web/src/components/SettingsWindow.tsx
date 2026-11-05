@@ -11,7 +11,7 @@
 // schema. A group whose texts are not written yet shows its values read
 // only.
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AlarmClock, Bot, Brain, ChevronDown, ChevronRight, Code2, Cpu, History, Image, LayoutGrid, Lock, Mic, Monitor, RotateCcw, Search, Settings, Sparkles, Wrench, type LucideIcon } from 'lucide-react';
 import { api, type SettingChange, type SettingFieldInfo, type SettingsView } from '../lib/api';
 
@@ -157,7 +157,7 @@ export function SettingsWindow() {
       !r.reload?.ok
         ? { tone: 'warn', text: `Saved, but the reload failed: ${r.reload?.error ?? 'unknown error'}` }
         : restart.length > 0
-          ? { tone: 'warn', text: `Saved. ${restart.join(', ')} ${restart.length === 1 ? 'applies' : 'apply'} after a restart — use Restart server in the gear menu.` }
+          ? { tone: 'warn', text: `Saved. Takes effect after a restart: ${restart.join(', ')} — use Restart server in the gear menu.` }
           : { tone: 'ok', text: 'Saved and applied.' },
     );
     await load();
@@ -182,6 +182,7 @@ export function SettingsWindow() {
   const changedFromDefault = (sections: string[]) => data.inFile.filter((p) => sections.includes(p.split('.')[0]!) && p.includes('.')).length;
 
   return (
+    <RefOptions.Provider value={data.refOptions ?? {}}>
     <div className="settings-window">
       <nav className="settings-side">
         <label className="settings-search">
@@ -290,6 +291,7 @@ export function SettingsWindow() {
         </footer>
       </main>
     </div>
+    </RefOptions.Provider>
   );
 }
 
@@ -406,7 +408,7 @@ function SettingRow(p: BoxProps & { field: SettingFieldInfo }) {
           <span className="settings-label">{label}{f.info?.level === 'advanced' && <span className="settings-adv">advanced</span>}</span>
         </div>
         {f.info?.help && <p className="settings-help">{f.info.help}</p>}
-        <EntriesControl tpl={f.path} at={f.path} value={current} ctx={{ fields: p.data.fields, pending: p.pending, disabled, change: p.onChange }} />
+        <EntriesControl tpl={f.path} at={f.path} value={current} ctx={{ fields: p.data.fields, inFile: new Set(p.data.inFile), pending: p.pending, disabled, change: p.onChange }} />
         {entryErrors.map(([k, m]) => <p key={k} className="settings-error"><code>{k}</code>: {m}</p>)}
         {(f.info?.more || f.info?.docs) && (
           <button type="button" className="settings-more" onClick={() => setMore((m) => !m)}>
@@ -496,7 +498,14 @@ function SecretControl({ id, set, pending, disabled, onSecret }: { id: string; s
   );
 }
 
+/** The names a reference can take (GET /settings refOptions): offered
+ *  as suggestions in the text field of a setting that names a model,
+ *  a provider or a named model. */
+const RefOptions = createContext<Partial<Record<string, string[]>>>({});
+
 function Control({ id, field: f, value, disabled, onChange }: { id: string; field: SettingFieldInfo; value: unknown; disabled: boolean; onChange: (v: unknown) => void }) {
+  const refs = useContext(RefOptions);
+  const options = f.info?.ref ? refs[f.info.ref] : undefined;
   switch (f.kind) {
     case 'boolean':
       return (
@@ -524,20 +533,26 @@ function Control({ id, field: f, value, disabled, onChange }: { id: string; fiel
     case 'number':
       return <NumberControl id={id} field={f} value={value} disabled={disabled} onChange={onChange} />;
     case 'strings':
-      return <StringsControl id={id} value={Array.isArray(value) ? (value as unknown[]).map(String) : []} disabled={disabled} onChange={onChange} />;
+      return <StringsControl id={id} value={Array.isArray(value) ? (value as unknown[]).map(String) : []} disabled={disabled} onChange={onChange} options={options} />;
     case 'one-or-many': {
       const list = Array.isArray(value) ? (value as unknown[]).map(String) : typeof value === 'string' ? [value] : [];
-      return <StringsControl id={id} value={list} disabled={disabled} onChange={(v) => onChange((v as string[]).length === 1 ? (v as string[])[0] : v)} />;
+      return <StringsControl id={id} value={list} disabled={disabled} onChange={(v) => onChange((v as string[]).length === 1 ? (v as string[])[0] : v)} options={options} />;
     }
     default:
-      return <TextControl id={id} value={typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)} placeholder={f.info?.placeholder} disabled={disabled} onChange={(t) => onChange(t === '' && f.nullable ? null : t)} />;
+      return <TextControl id={id} value={typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)} placeholder={f.info?.placeholder} disabled={disabled} onChange={(t) => onChange(t === '' && f.nullable ? null : t)} options={options} />;
   }
 }
 
-function TextControl({ id, value, placeholder, disabled, onChange }: { id: string; value: string; placeholder?: string; disabled: boolean; onChange: (t: string) => void }) {
+function TextControl({ id, value, placeholder, disabled, onChange, options }: { id: string; value: string; placeholder?: string; disabled: boolean; onChange: (t: string) => void; options?: string[] }) {
   const [text, setText] = useState(value);
   useEffect(() => setText(value), [value]);
-  return <input id={id} className="settings-input wide" value={text} placeholder={placeholder} disabled={disabled} onChange={(e) => setText(e.target.value)} onBlur={() => { if (text !== value) onChange(text); }} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />;
+  const unknown = !!options && text !== '' && !options.includes(text);
+  return (
+    <>
+      <input id={id} className={`settings-input wide ${unknown ? 'unknown-ref' : ''}`} value={text} placeholder={placeholder ?? (options ? 'choose or type…' : undefined)} disabled={disabled} list={options ? `${id}-options` : undefined} title={unknown ? 'Not a name configured here' : undefined} onChange={(e) => setText(e.target.value)} onBlur={() => { if (text !== value) onChange(text); }} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
+      {options && <datalist id={`${id}-options`}>{options.map((o) => <option key={o} value={o} />)}</datalist>}
+    </>
+  );
 }
 
 function NumberControl({ id, field: f, value, disabled, onChange }: { id: string; field: SettingFieldInfo; value: unknown; disabled: boolean; onChange: (v: unknown) => void }) {
@@ -572,7 +587,7 @@ function NumberControl({ id, field: f, value, disabled, onChange }: { id: string
   );
 }
 
-function StringsControl({ id, value, disabled, onChange }: { id: string; value: string[]; disabled: boolean; onChange: (v: unknown) => void }) {
+function StringsControl({ id, value, disabled, onChange, options }: { id: string; value: string[]; disabled: boolean; onChange: (v: unknown) => void; options?: string[] }) {
   const [text, setText] = useState('');
   const add = () => {
     const t = text.trim();
@@ -588,7 +603,8 @@ function StringsControl({ id, value, disabled, onChange }: { id: string; value: 
           {!disabled && <button type="button" aria-label={`Remove ${v}`} onClick={() => onChange(value.filter((x) => x !== v))}>×</button>}
         </span>
       ))}
-      {!disabled && <input id={id} className="settings-input chip" value={text} placeholder="add…" onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} onBlur={add} />}
+      {!disabled && <input id={id} className="settings-input chip" value={text} placeholder="add…" list={options ? `${id}-options` : undefined} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} onBlur={add} />}
+      {options && <datalist id={`${id}-options`}>{options.filter((o) => !value.includes(o)).map((o) => <option key={o} value={o} />)}</datalist>}
     </span>
   );
 }
@@ -600,6 +616,8 @@ function StringsControl({ id, value, disabled, onChange }: { id: string; value: 
  *  removed — so the file keeps everything else, comments included. */
 interface EntryCtx {
   fields: SettingFieldInfo[];
+  /** Paths the file itself sets (GET /settings inFile). */
+  inFile: Set<string>;
   pending: Pending;
   disabled: boolean;
   change: (path: string, c: { value: unknown } | { reset: true } | { secret: string } | null) => void;
@@ -697,6 +715,9 @@ function EntriesControl({ tpl, at, value, ctx }: { tpl: string; at: string; valu
                 {origin === 'new' && <span className="settings-entry-sub">new</span>}
                 {isRemoved && <span className="settings-entry-sub">removed on Apply</span>}
               </button>
+              {tpl === 'providers.*.models' && origin === 'file' && !isRemoved && (
+                <ModelTest provider={keyName(at.split('.')[1] ?? '')} model={String((e as { id?: unknown })?.id ?? '')} dirty={[...ctx.pending.keys()].some((p) => p.startsWith(`${at.split('.').slice(0, 2).join('.')}.`))} />
+              )}
               {!ctx.disabled && <EntryRemove origin={origin} removed={isRemoved} onToggle={() => toggle(k, origin, isRemoved)} />}
             </div>
             {open === k && !isRemoved && (
@@ -713,6 +734,36 @@ function EntriesControl({ tpl, at, value, ctx }: { tpl: string; at: string; valu
       })}
       {!ctx.disabled && <button type="button" className="settings-btn" onClick={add}>+ Add</button>}
     </div>
+  );
+}
+
+/** "Test" beside a model: one short question to it, as the saved
+ *  configuration has it. With changes to its provider still pending,
+ *  the test says to apply first. */
+function ModelTest({ provider, model, dirty }: { provider: string; model: string; dirty: boolean }) {
+  const [state, setState] = useState<{ busy?: boolean; text?: string; tone?: 'ok' | 'error' | 'warn' }>({});
+  const run = async () => {
+    setState({ busy: true });
+    try {
+      const r = await api.testModel(provider, model);
+      setState(
+        r.ok
+          ? { tone: 'ok', text: `answered in ${((r.ms ?? 0) / 1000).toFixed(1)} s${r.reply ? `: “${r.reply}”` : ''}` }
+          : r.note
+            ? { tone: 'warn', text: r.note }
+            : { tone: 'error', text: r.error ?? 'no answer' },
+      );
+    } catch (err) {
+      setState({ tone: 'error', text: (err as Error).message });
+    }
+  };
+  return (
+    <>
+      <button type="button" className="settings-text-btn" disabled={state.busy || !model} title={dirty ? 'Tests the saved configuration — apply your changes first' : 'Ask this model one short question'} onClick={() => void run()}>
+        {state.busy ? 'Testing…' : 'Test'}
+      </button>
+      {state.text && <span className={`settings-test ${state.tone ?? ''}`} title={state.text}>{state.tone === 'ok' ? '✓ ' : state.tone === 'error' ? '✗ ' : ''}{state.text}</span>}
+    </>
   );
 }
 
@@ -777,7 +828,7 @@ function EntryFields({ tpl, at, value, ctx }: { tpl: string; at: string; value: 
                 cannot say "not set", e.g. transport local → resource). */}
             {!ctx.disabled && (pend ? (
               <button type="button" className="settings-icon-btn" title="Undo this change" onClick={() => ctx.change(path, null)}><RotateCcw size={12} /></button>
-            ) : current !== undefined && !df.required ? (
+            ) : current !== undefined && !df.required && ctx.inFile.has(path) ? (
               <button type="button" className="settings-icon-btn" title="Remove this setting from the entry" onClick={() => ctx.change(path, { reset: true })}>↺</button>
             ) : null)}
           </div>

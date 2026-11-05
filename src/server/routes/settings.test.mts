@@ -6,7 +6,7 @@
 import { OWN_HOME as ISOLATED_HOME } from '../../testing/own-home.mts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Hono } from 'hono';
 
@@ -30,7 +30,7 @@ const START = `  # my settings
 
 let reloads = 0;
 const app = new Hono();
-registerSettingsRoutes(app, { reload: async () => { reloads++; return { ok: true, changed: ['memory'], restartRequired: ['memory'] }; } });
+registerSettingsRoutes(app, { reload: async () => { reloads++; return { ok: true, changed: ['memory'], restartRequired: ['memory'] }; }, currentConfig: () => { throw new Error('not used'); } });
 const call = async (method: string, path: string, body?: unknown) => {
   const r = await app.request(path, { method, headers: { 'Content-Type': 'application/json' }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
   return { status: r.status, body: (await r.json()) as Record<string, any> };
@@ -100,12 +100,12 @@ test('an invalid value is refused and nothing is written', async () => {
   assert.equal(readFileSync(FILE, 'utf8'), START);
 });
 
-test('a group that is not ready yet, and an unknown path, are refused', async () => {
+test('an unknown path is refused', async () => {
   writeFileSync(FILE, START);
   const { body: view } = await call('GET', '/settings');
-  const r = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'thinkingContent.capture', value: false }, { path: 'memory.nope', value: 1 }] });
+  const r = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'memory.nope', value: 1 }] });
   assert.equal(r.status, 400);
-  assert.deepEqual(r.body.issues.map((i: { message: string }) => i.message), ['this setting is changed in config.yaml for now', 'no such setting']);
+  assert.deepEqual(r.body.issues.map((i: { message: string }) => i.message), ['no such setting']);
   assert.equal(readFileSync(FILE, 'utf8'), START);
 });
 
@@ -208,6 +208,33 @@ test('a map entry named with digits is a name, not a list position', async () =>
   const r = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'lsp.servers.123', value: { command: 'ls-123' } }] });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.match(readFileSync(FILE, 'utf8'), /lsp:\n {4}servers:\n {6}"?123"?:\n {8}command: ls-123\n$/);
+});
+
+test('a model still in use by an agent or a setting is not removed', async () => {
+  const two = START.replace('          contextWindow: 8000\n', '          contextWindow: 8000\n        - id: nid\n          alias: n\n          contextWindow: 8000\n');
+  writeFileSync(FILE, `${two}  rem:\n    model: n\n`);
+  const agentDir = join(ISOLATED_HOME, 'agents', 'ada');
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(join(agentDir, 'AGENTS.md'), '---\ndescription: test\n---\nhi\n');
+  writeFileSync(join(agentDir, 'agent.yaml'), 'model: m\n');
+  const boDir = join(ISOLATED_HOME, 'agents', 'bo');
+  mkdirSync(boDir, { recursive: true });
+  writeFileSync(join(boDir, 'AGENTS.md'), '---\ndescription: test\n---\nhi\n');
+  writeFileSync(join(boDir, 'agent.yaml'), 'model: local/m\nrem:\n  model: n\n');
+  try {
+    const { body: view } = await call('GET', '/settings');
+    assert.ok(view.refOptions.model.includes('m') && view.refOptions.model.includes('local/nid'));
+    const before = readFileSync(FILE, 'utf8');
+    const r = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'providers.local.models.0', reset: true }, { path: 'providers.local.models.1.alias', value: 'n2' }] });
+    assert.equal(r.status, 400);
+    const messages = r.body.issues.map((i: { message: string }) => i.message).join('\n');
+    assert.match(messages, /rem\.model still names 'n'/);
+    assert.match(messages, /agent ada uses model 'm'/);
+    assert.match(messages, /agent bo uses model 'n'/);
+    assert.equal(readFileSync(FILE, 'utf8'), before);
+  } finally {
+    rmSync(join(ISOLATED_HOME, 'agents'), { recursive: true, force: true });
+  }
 });
 
 test('a blanked key sent back inside an entry is refused', async () => {

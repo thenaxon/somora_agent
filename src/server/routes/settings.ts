@@ -10,16 +10,65 @@ import { basename, dirname, join } from 'node:path';
 import type { Hono } from 'hono';
 import { isPair, isScalar, parseDocument, visit } from 'yaml';
 import { configPath, envOverriddenSettings, validateConfigText } from '../../config/loader.ts';
+import type { Config } from '../../config/types.ts';
 import { RESTART_REQUIRED_SECTIONS } from '../../config/reload.ts';
 import { SETTINGS_CATALOG, SETTINGS_GROUPS, groupOfSection } from '../../config/settings/catalog/index.ts';
 import { matchesFieldPath, settingFields, type SettingField } from '../../config/settings/fields.ts';
+import { brokenRefs, refOptions, type AgentModels } from '../../config/settings/refs.ts';
 import { YamlEditError, applyYamlEdits, type YamlEdit } from '../../config/settings/yaml-edit.ts';
+import { listAgents, loadPersona } from '../../persona/loader.ts';
 import { parseYaml } from '../../config/yaml.ts';
 import { logger } from '../logger.ts';
 
 export interface SettingsRoutesDeps {
   /** The same reload as POST /config/reload. */
   reload: () => Promise<{ ok: true; changed: string[]; restartRequired: string[] } | { ok: false; error: string }>;
+  /** The configuration in force, for testing a model as it is saved. */
+  currentConfig: () => Config;
+}
+
+/** Ask a model for one word: does it answer, how fast, with what? Only
+ *  openai-compatible providers can be asked directly; a model on
+ *  claude-cli, codex-cli or grok-cli is checked by a chat turn. */
+export async function testModel(config: Config, providerName: string, modelId: string, timeoutMs = 30_000): Promise<{ ok: boolean; ms?: number; reply?: string; error?: string; note?: string }> {
+  const provider = config.providers[providerName];
+  if (!provider) return { ok: false, error: `no provider '${providerName}' in the saved configuration — apply first` };
+  const model = provider.models.find((m) => m.id === modelId);
+  if (!model) return { ok: false, error: `no model '${modelId}' under '${providerName}' in the saved configuration — apply first` };
+  if (provider.engine !== 'openai-compatible') {
+    return { ok: false, note: `${provider.engine} models are not asked directly; start a chat with an agent on this model to check it` };
+  }
+  const started = Date.now();
+  try {
+    const res = await fetch(`${provider.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {}) },
+      // The limit as a chat turn sends it: only when the model sets one
+      // (some reasoning models refuse `max_tokens`).
+      body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'Reply with the single word OK.' }], ...(model.maxTokens ? { max_tokens: model.maxTokens } : {}) }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const text = await res.text();
+    const ms = Date.now() - started;
+    if (!res.ok) return { ok: false, ms, error: `HTTP ${res.status}: ${text.slice(0, 300)}` };
+    let j: { choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown } }>; error?: unknown };
+    try {
+      j = JSON.parse(text) as typeof j;
+    } catch {
+      return { ok: false, ms, error: `the answer was not JSON: ${text.slice(0, 200)}` };
+    }
+    // A completion: a choice with a message. A reasoning model may spend
+    // the few tokens on thinking and leave the text empty — still an answer.
+    const msg = j.choices?.[0]?.message;
+    if (!msg || j.error) return { ok: false, ms, error: `no completion in the answer: ${text.slice(0, 200)}` };
+    const content = typeof msg.content === 'string' ? msg.content.trim() : '';
+    const thought = typeof msg.reasoning_content === 'string' || typeof msg.reasoning === 'string';
+    if (!content && !thought) return { ok: false, ms, error: 'the model answered with an empty message' };
+    return { ok: true, ms, reply: content ? content.slice(0, 200) : '(thinking only, no text)' };
+  } catch (err) {
+    const e = err as Error;
+    return { ok: false, ms: Date.now() - started, error: e.name === 'TimeoutError' ? `no answer within ${Math.round(timeoutMs / 1000)} s` : e.message };
+  }
 }
 
 /** Backups kept; older ones are deleted. */
@@ -124,12 +173,15 @@ function redactLines(text: string): string {
 
 /** Dotted paths the file itself sets (everything else is a default). */
 function pathsInFile(raw: unknown, prefix: string[] = [], out: string[] = []): string[] {
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    for (const [k, v] of Object.entries(raw)) {
-      const p = [...prefix, k];
-      out.push(p.join('.'));
-      pathsInFile(v, p, out);
-    }
+  // Entries of a list by index, names with a dot as %2E — the paths the
+  // window builds.
+  const entries = Array.isArray(raw)
+    ? raw.filter((v) => v && typeof v === 'object').length > 0 ? raw.map((v, i) => [String(i), v] as const) : []
+    : raw && typeof raw === 'object' ? Object.entries(raw).map(([k, v]) => [k.replace(/%/g, '%25').replace(/\./g, '%2E'), v] as const) : [];
+  for (const [k, v] of entries) {
+    const p = [...prefix, k];
+    out.push(p.join('.'));
+    pathsInFile(v, p, out);
   }
   return out;
 }
@@ -149,6 +201,21 @@ async function backup(text: string): Promise<string> {
   const all = (await readdir(dir)).filter((f) => f.startsWith('config.yaml.')).sort();
   for (const old of all.slice(0, Math.max(0, all.length - KEEP_BACKUPS))) await unlink(join(dir, old)).catch(() => undefined);
   return name;
+}
+
+/** Every agent's model and fallback chain (agent.yaml). */
+async function agentModels(): Promise<AgentModels[]> {
+  const out: AgentModels[] = [];
+  for (const a of await listAgents().catch(() => [])) {
+    const p = await loadPersona(a.name).catch(() => null);
+    if (!p) continue;
+    // Its chat model and fallback chain, and its own REM worker models.
+    const rem = p.rem as { model?: string; fallback?: string | string[] } | undefined;
+    const remModels = [rem?.model, ...(Array.isArray(rem?.fallback) ? rem.fallback : [rem?.fallback])].filter((x): x is string => typeof x === 'string' && x !== '');
+    const fallback = [...(p.fallback ?? []), ...remModels];
+    out.push({ agent: a.name, ...(p.model ? { model: p.model } : {}), ...(fallback.length > 0 ? { fallback } : {}) });
+  }
+  return out;
 }
 
 type Change = { path: string; value?: unknown; reset?: boolean; secret?: string };
@@ -183,7 +250,16 @@ export function registerSettingsRoutes(app: Hono, deps: SettingsRoutesDeps): voi
       values: checked.ok ? redactSecrets(checked.config) : null,
       inFile: pathsInFile(raw),
       envSet: envOverriddenSettings(),
+      ...(checked.ok ? { refOptions: refOptions(checked.config) } : {}),
     });
+  });
+
+  app.post('/settings/test-model', async (c) => {
+    const body = (await c.req.json().catch(() => null)) as { provider?: unknown; model?: unknown } | null;
+    if (typeof body?.provider !== 'string' || typeof body?.model !== 'string') return c.json({ error: 'body must be { provider, model }' }, 400);
+    const r = await testModel(deps.currentConfig(), body.provider, body.model);
+    logger.info({ msg: 'settings.model_tested', provider: body.provider, model: body.model, ok: r.ok, ms: r.ms });
+    return c.json(r);
   });
 
   app.get('/settings/yaml', async (c) => {
@@ -262,6 +338,12 @@ export function registerSettingsRoutes(app: Hono, deps: SettingsRoutesDeps): voi
       if (next === text) return c.json({ ok: true, hash: hashOf(text), unchanged: true });
       const checked = validateConfigText(next);
       if (!checked.ok) return c.json({ error: 'the changes would make config.yaml invalid; nothing was written', issues: checked.issues }, 400);
+      // A model, provider or named model still in use must not vanish.
+      const was = validateConfigText(text);
+      if (was.ok) {
+        const broken = brokenRefs(was.config, checked.config, await agentModels());
+        if (broken.length > 0) return c.json({ error: 'the changes would remove something still in use; nothing was written', issues: broken }, 400);
+      }
       const saved = await backup(text);
       await writeAtomic(file, next);
       const paths = edits.map((e) => e.path.join('.'));

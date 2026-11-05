@@ -655,6 +655,7 @@ export interface SettingInfo {
   placeholder?: string;
   locked?: string;
   retired?: true;
+  ref?: 'model' | 'provider' | 'image-model' | 'video-model' | 'decision-model';
 }
 export interface SettingFieldInfo {
   path: string;
@@ -689,6 +690,8 @@ export interface SettingsView {
   inFile: string[];
   /** Settings an environment variable overrides: path → variable name. */
   envSet?: Record<string, string>;
+  /** Names a reference can take, by kind (model, provider, image-model, video-model, decision-model). */
+  refOptions?: Record<string, string[]>;
 }
 export type SettingChange = { path: string; value: unknown } | { path: string; reset: true } | { path: string; secret: string };
 export interface SettingsApplyResult {
@@ -913,6 +916,11 @@ export const api = {
     const res = await fetch('/settings/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hash, changes }) });
     const body = (await res.json().catch(() => ({}))) as SettingsApplyResult;
     return { ...body, ok: res.ok && body.ok !== false, ...(res.status === 409 ? { conflict: true } : {}) };
+  },
+  testModel: async (provider: string, model: string): Promise<{ ok: boolean; ms?: number; reply?: string; error?: string; note?: string }> => {
+    const res = await fetch('/settings/test-model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, model }) });
+    const body = (await res.json().catch(() => ({}))) as { ok?: boolean; ms?: number; reply?: string; error?: string; note?: string };
+    return { ...body, ok: res.ok && body.ok === true, ...(!res.ok && !body.error ? { error: `HTTP ${res.status}` } : {}) };
   },
   settingsBackups: async (): Promise<{ backups: Array<{ name: string; at: number; bytes: number }>; keep: number }> => {
     const res = await fetch('/settings/backups');
