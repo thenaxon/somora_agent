@@ -152,6 +152,31 @@ Background jobs are detached: they survive a somora restart and are
 tracked on disk. `poll` checks the real process, never a remembered
 state.
 
+#### When a command times out
+
+A command that waits for its result runs with no input: a prompt, a
+confirmation or a REPL gets end-of-input at once instead of waiting for
+the time limit. With `pty: true` it has a terminal, and a prompt waits.
+
+At the limit (`timeout_ms`, 60 seconds unless the call sets it) the
+command and every process it started are stopped. The result has
+`timed_out: true`, and the end of `stderr` says how long the command had
+printed nothing and that files, ports or processes it started may
+remain. It also says what to do next: a larger `timeout_ms` or
+`background: true` for slow work, the cause for a hang.
+
+The same command timing out again on `target: local` in the same
+session and folder is counted, also with other calls and edits in
+between. From the second
+time the result has `timeouts_in_session` and a `hint` that starts with
+"This exact command has now timed out N times in this session". It asks
+the agent to find what keeps the command from finishing instead of
+starting it again unchanged. Nothing is refused.
+
+The count lives in `~/.somora/agents/<agent>/exec-timeouts.json` and is
+forgotten after a day. Spaces do not make another command; a changed
+argument does.
+
 The tmux guide explains `wait_mode`, `multiline_safe` and
 `include_ansi`.
 
@@ -173,11 +198,12 @@ Toolset `agents`.
 | `session_list` | Lists chat sessions: the agent's own, another agent's with `agent`, everyone's with `"*"`. |
 | `session_model` | Switches the model of an existing session, or clears the override with `clear:true`. |
 | `builder_dispatch` | Hands a build order to a builder agent and returns a `call_id`. |
+| `builder_review` | Accepts or rejects items of a builder's acceptance list, as the agent that gave the order; rejected items go back to the builder. |
 | `ask_user` | Asks you a question with options, shown as a card with a button per option. |
 
 A sub-agent session does not get the tools in `subagents.tools.deny`,
-by default `agent_ask`, `agent_ask_result` and `agent_ask_cancel`: its
-answer reaches the parent on its own. The agents guide explains the
+by default `agent_ask`, `agent_ask_result`, `agent_ask_cancel` and
+`builder_review`: its answer reaches the parent on its own. The agents guide explains the
 setting.
 
 What an agent should know about waiting:
@@ -639,6 +665,11 @@ is inside a wiki review. It ends the loop with
 
 **"is not available in this context".** The tool's configuration is
 missing, or the call came from outside the situation the tool needs.
+
+**A command hangs again and again.** Each timeout logs `exec.timeout`;
+the second and later timeout of the same command in a session log
+`exec.timeout_repeat` with `count`, `total_ms` and `quiet_ms` (how
+long it printed nothing before it was stopped).
 
 Log lines to look for: `tool.invoked` (with `result_truncated` when a
 result was shortened), `tool.input_invalid`, `tool.invoke_failed`,

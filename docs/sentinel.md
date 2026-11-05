@@ -662,7 +662,9 @@ An `at` trigger gets the status `completed` once it has fired, a
 `once` check once it has woken its agent. `list`
 hides these, `purge_completed` deletes them all, and somora deletes each
 one with its history `sentinel.completedRetentionDays` days after its
-last fire. The sweep runs at server start and at least once a day.
+last fire. The sweep runs at server start and then every 6 hours,
+whatever else is due; each run logs `sentinel.scheduler.completed_sweep`
+with the number removed.
 
 Recurring triggers never become `completed`. Paused and errored
 triggers are never cleaned up automatically: you decide when to delete

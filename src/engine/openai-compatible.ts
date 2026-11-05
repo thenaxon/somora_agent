@@ -28,7 +28,7 @@ import {
 } from '../compaction/index.ts';
 import { inputBudget } from '../compaction/policy.ts';
 import { readAcceptance, renderAcceptanceTable } from '../server/builder-acceptance.ts';
-import { MAX_OPEN_TASK_NUDGES, checkBuilderTurnEnd, describeTurnEnd, turnEndNoticeParts, turnWorked } from '../server/builder-turn-end.ts';
+import { MAX_OPEN_TASK_NUDGES, checkBuilderTurnEnd, describeTurnEnd, rejectionsToldPatch, turnEndNoticeParts, turnWorked } from '../server/builder-turn-end.ts';
 import { logger } from '../server/logger.ts';
 import { compactTurnMidway, type LoopMessage } from '../compaction/midturn.ts';
 import {
@@ -2064,6 +2064,7 @@ export const openAiCompatibleEngine: AgentEngine = {
             if (check) {
               openTaskNudges++;
               lastOpenTaskNudgeRound = round;
+              await metaStore.update(agent, session, (m) => ({ ...m, ...(rejectionsToldPatch(check, m as Record<string, unknown>) ?? {}) }));
               logger.info({ msg: 'engine.builder_open_tasks', engine: ENGINE, agent, session, round, open: check.open.length, acceptanceOpen: check.accOpen.length, acceptanceMissing: check.accMissing, attempt: openTaskNudges });
               yield {
                 kind: 'engine_meta',

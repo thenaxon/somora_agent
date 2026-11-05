@@ -264,7 +264,8 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
           : 'The builder works in its own session; you will be woken with its report ([agent answer]). ' +
             'Read it with agent_ask_result(call_id). Corrections go as a new message into that session. ' +
             'The report ends with the acceptance list (requirement, status, evidence); a reply that arrived is not ' +
-            'an accepted build — review the items yourself (POST …/acceptance/review) or leave it to the person.',
+            'an accepted build — check the evidence of the items that matter yourself and record your verdict with builder_review ' +
+            '(rejected items go back to the builder), or leave the review to the person.',
     };
   },
 };

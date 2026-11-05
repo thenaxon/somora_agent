@@ -54,7 +54,13 @@ export function checkBuilderTurnEnd(f: TurnEndFacts): TurnEndCheck | null {
   // requires one and this turn worked on the order.
   const acc = readAcceptance(f.meta);
   const accCounts = f.acceptanceWritten || (acc.required && f.worked);
-  const accOpen = accCounts ? openAcceptance(acc.items) : [];
+  // A rejection is named at a turn end once per review: an item the
+  // builder kept unchanged after being told (it disagreed, with reasons)
+  // does not hold every later turn.
+  const told = (f.meta.acceptanceRejectionsTold ?? {}) as Record<string, number>;
+  const accOpen = accCounts
+    ? openAcceptance(acc.items).filter((i) => !(i.status !== 'open' && i.review?.verdict === 'rejected' && told[i.id] === i.review.at))
+    : [];
   const accMissing = accCounts && acc.required && acc.items.length === 0 && f.acceptanceTool;
   if (open.length === 0 && accOpen.length === 0 && !accMissing) return null;
   return { open, accOpen, accMissing };
@@ -81,11 +87,23 @@ export function turnEndNoticeParts(c: TurnEndCheck): string[] {
         'If an item is in fact done and verified, mark it completed with todo_write. Otherwise continue with it.',
     );
   }
-  if (c.accOpen.length > 0) {
-    const ids = c.accOpen.slice(0, 8).map((i) => i.id).join(', ');
+  const stillOpen = c.accOpen.filter((i) => i.review?.verdict !== 'rejected');
+  const rejected = c.accOpen.filter((i) => i.review?.verdict === 'rejected');
+  if (stillOpen.length > 0) {
+    const ids = stillOpen.slice(0, 8).map((i) => i.id).join(', ');
     parts.push(
-      `Your acceptance list still has ${c.accOpen.length} open item(s): ${ids}${c.accOpen.length > 8 ? ', …' : ''}. ` +
+      `Your acceptance list still has ${stillOpen.length} open item(s): ${ids}${stillOpen.length > 8 ? ', …' : ''}. ` +
         'Check each against the order itself and set passed or failed with the evidence, or not_run with the reason.',
+    );
+  }
+  if (rejected.length > 0) {
+    const named = rejected
+      .slice(0, 5)
+      .map((i) => `${i.id} (${i.review!.by}${i.review!.note ? `: ${i.review!.note.slice(0, 160)}` : ''})`)
+      .join('; ');
+    parts.push(
+      `The reviewer rejected ${rejected.length} item(s): ${named}${rejected.length > 5 ? '; …' : ''}. ` +
+        'Fix what the note names and send the item again with acceptance_write and the new evidence; that clears the rejection.',
     );
   }
   if (c.accMissing) {
@@ -103,4 +121,14 @@ export function followUpNotice(c: TurnEndCheck): string {
     'Do not shrink the task to what is done. If something truly blocks you, name the blocker and what you tried. ' +
     'Then end with your complete report again — whoever gave the order reads only this last answer.'
   );
+}
+
+/** Session-meta patch recording that the rejections in `c` were named
+ *  to the builder (checkBuilderTurnEnd names each review once). */
+export function rejectionsToldPatch(c: TurnEndCheck, meta: Record<string, unknown>): Record<string, unknown> | null {
+  const rejected = c.accOpen.filter((i) => i.review?.verdict === 'rejected');
+  if (rejected.length === 0) return null;
+  const told = { ...((meta.acceptanceRejectionsTold ?? {}) as Record<string, number>) };
+  for (const i of rejected) told[i.id] = i.review!.at;
+  return { acceptanceRejectionsTold: told };
 }

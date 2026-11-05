@@ -43,9 +43,11 @@ import { dropQuestions } from './builder-questions.ts';
 import { composeTurnPrefix } from './turn-framing.ts';
 import { readAcceptance, renderAcceptanceTable } from './builder-acceptance.ts';
 import { readBuilderState } from './builder-session.ts';
-import { MAX_OPEN_TASK_NUDGES, checkBuilderTurnEnd, describeTurnEnd, followUpNotice, turnWorked } from './builder-turn-end.ts';
+import { MAX_OPEN_TASK_NUDGES, checkBuilderTurnEnd, describeTurnEnd, followUpNotice, rejectionsToldPatch, turnWorked } from './builder-turn-end.ts';
 import { loadPersona } from '../persona/loader.ts';
 import { isToolAllowed } from '../tools/gating.ts';
+import { collectBuilderFacts } from './builder-facts.ts';
+import { workdirFromMeta } from './session-workdir.ts';
 
 export interface StartTurnDeps {
   chatTurnDeps: ChatTurnResolveDeps;
@@ -163,6 +165,7 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
     // turn per session, so the registry's "abort a still-registered
     // prior controller" defence never fires on a live turn.
     const abort = registerChatAbort(agent, session, turnId);
+    const startedAt = Date.now();
     try {
       const result = await runTurn({
         agent,
@@ -203,7 +206,7 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
       // hears of the result (builder-turn-end.ts). They run under this
       // turn's stop signal, so Stop — also one naming this turn id —
       // reaches them, and between them.
-      const held = await holdBuilderToOrder({ agent, session, first: result, deps, runTurn, publishSse, signal: abort.signal }).catch((err: unknown) => {
+      const held = await holdBuilderToOrder({ agent, session, first: result, deps, runTurn, publishSse, signal: abort.signal, startedAt }).catch((err: unknown) => {
         // The order's turn ended well; a failure in the check after it
         // does not make it a failed order.
         logger.warn({ msg: 'builder.turn_end_check_failed', agent, session, turnId, err: (err as Error).message });
@@ -275,11 +278,14 @@ async function holdBuilderToOrder(a: {
   publishSse: ((event: SseEvent) => Promise<void>) | undefined;
   /** The order's turn's stop signal, registered for the whole order. */
   signal: AbortSignal;
+  /** When the order's turn started (the facts block counts from here). */
+  startedAt: number;
 }): Promise<{ result: ChatTurnResult; stopped: boolean }> {
   const { agent, session, deps, signal } = a;
   let result = a.first;
-  if (result.agentKind !== 'builder' || result.outcome === 'failed') return { result, stopped: false };
+  if (result.agentKind !== 'builder') return { result, stopped: false };
   const used = new Set(result.tools_used ?? []);
+  if (result.outcome === 'failed') return { result: await withBuilderFacts(result, used, a), stopped: false };
   const files = new Set(result.files_written ?? []);
   let toolCalls = result.tool_calls;
   const merged = (): ChatTurnResult => ({
@@ -307,6 +313,8 @@ async function holdBuilderToOrder(a: {
         acceptanceTool,
       });
       if (!check) break;
+      const told = rejectionsToldPatch(check, meta);
+      if (told) await deps.sessionMetaStore.update(agent, session, (m) => ({ ...m, ...told }));
       const text = followUpNotice(check);
       const origin: TurnOrigin = { kind: 'wake', about: 'system', ref: `turn-end-${randomUUID()}`, cause: 'open items' };
       const turnId = randomUUID();
@@ -356,7 +364,41 @@ async function holdBuilderToOrder(a: {
       result = { ...result, finalText: `${result.finalText}\n\n## Acceptance list (from the session)\n\n${renderAcceptanceTable(acc.items)}` };
     }
   }
+  // Then what somora itself sees in the folder (builder-facts.ts): not
+  // committed, not in the main checkout, timed out, still running — for
+  // a turn that used tools. A turn that wrote nothing through the file
+  // tools (an answer, or edits made with exec) gets the block only when
+  // something is open.
+  result = await withBuilderFacts(result, used, a);
   return { result: merged(), stopped: false };
+}
+
+/** Appends the facts block (builder-facts.ts). Once per order, after
+ *  everything else; also under a failed order's error, where work left
+ *  uncommitted or a job still running matters most. Never trusts a
+ *  heading the builder wrote itself. */
+async function withBuilderFacts(
+  result: ChatTurnResult,
+  used: ReadonlySet<string>,
+  a: { agent: string; session: string; deps: ChatTurnResolveDeps; startedAt: number; signal: AbortSignal },
+): Promise<ChatTurnResult> {
+  const { agent, session, deps } = a;
+  if (used.size > 0 && !a.signal.aborted) {
+    const meta = (await deps.sessionMetaStore.get(agent, session)) as Record<string, unknown>;
+    const persona = await loadPersona(agent).catch(() => null);
+    if (persona) {
+      const workdir = workdirFromMeta(meta, persona, deps.config).path;
+      const facts = await collectBuilderFacts({ agent, session, workdir, since: a.startedAt, quietWhenClean: !turnWorked(used), signal: a.signal }).catch((err: unknown) => {
+        logger.warn({ msg: 'builder.facts_failed', agent, session, err: (err as Error).message });
+        return null;
+      });
+      if (facts) {
+        logger.info({ msg: 'builder.facts_added', agent, session, outcome: result.outcome, lines: facts.split('\n').length - 2 });
+        return { ...result, finalText: `${result.finalText}\n\n${facts}` };
+      }
+    }
+  }
+  return result;
 }
 
 function resolvePublish(

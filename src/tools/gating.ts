@@ -188,7 +188,7 @@ export function isToolAllowed(
  *  parent on its own, and an extra agent_ask to the parent comes back
  *  as an echo of the parent's own reply (agent report, 2026-10-13;
  *  468 sub sessions used it 5 times, every time to report to the parent). */
-export const DEFAULT_SUBAGENT_TOOL_DENY: readonly string[] = ['agent_ask', 'agent_ask_result', 'agent_ask_cancel'];
+export const DEFAULT_SUBAGENT_TOOL_DENY: readonly string[] = ['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'builder_review'];
 
 /** A session spawn_subagent started (meta `spawn.kind` sub or self-sub) —
  *  for good, also for later turns in it. */
@@ -237,7 +237,7 @@ export function sessionToolDeny(
  *  orders, no switching another session's model, no Sentinel triggers
  *  (they wake agents, and an outside system should not leave schedules
  *  behind). Found missing in the live tests of 2026.1016.8 and .9. */
-export const DEFAULT_A2A_INBOUND_TOOL_DENY: readonly string[] = ['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'spawn_subagent', 'spawn_subagents', 'builder_dispatch', 'session_model', 'sentinel'];
+export const DEFAULT_A2A_INBOUND_TOOL_DENY: readonly string[] = ['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'spawn_subagent', 'spawn_subagents', 'builder_dispatch', 'builder_review', 'session_model', 'sentinel'];
 
 /** The agent's gating with a session's own rules on top. */
 export function withSessionDeny(gating: ToolGating | undefined, deny: readonly string[]): ToolGating | undefined {

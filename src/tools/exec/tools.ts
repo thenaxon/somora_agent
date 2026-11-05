@@ -35,6 +35,7 @@ import { skillEnvScopeForCommand, skillEnvStripHint } from '../../skills/env-sco
 import { SOMORA_INTERNAL_ENV_SUMMARY } from './internal-env.ts';
 import { killLocalJob, localExecBackground, localExecSync } from './local.ts';
 import { fitExecOutput } from './fit-output.ts';
+import { recordExecTimeout, repeatTimeoutNotice } from './timeout-repeats.ts';
 import { saveToolOutput } from '../tool-output.ts';
 import { pinnedWorkdir } from '../../server/session-workdir.ts';
 
@@ -91,6 +92,7 @@ const EXEC_FIELD = {
     'use process tool to poll/kill/read. Only supported on target="local" in v1.',
   timeout_ms:
     'Sync only. Kill after this. Default 60s, max 1h. Ignored when background:true. ' +
+    'stdin is closed, so a command waiting for input ends at once. ' +
     'When you intentionally run a long-blocking command, set this above the expected ' +
     'duration — e.g. for `sleep N` use `timeout_ms: (N+5)*1000`. The 60s default exists ' +
     'so a runaway command can\'t lock a tool slot for an hour.',
@@ -177,6 +179,11 @@ interface ExecSyncResult {
   truncated: boolean;
   ms: number;
   hint?: string;
+  /** Killed by its timeout_ms. */
+  timed_out?: boolean;
+  /** From the second timeout of the same command in this session and
+   *  folder: how often it has timed out (timeout-repeats.ts). */
+  timeouts_in_session?: number;
 }
 
 interface ExecBackgroundResult {
@@ -425,6 +432,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
           const bgSkillScope = await skillEnvScopeForCommand(input.command, ctx.config);
           const result = await localExecBackground({
             agent: ctx.agent,
+            ...(ctx.session ? { session: ctx.session } : {}),
             command: input.command,
             ...(input.cwd ? { cwd: input.cwd } : {}),
             env: { ...callerIdentityEnv(ctx), ...(input.env ?? {}) },
@@ -521,9 +529,25 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
           vars: skillScope?.stripVars.filter((v) => !(v in (skillScope?.injectEnv ?? {}))),
         });
       }
+      let repeat: { count: number; totalMs: number } | null = null;
+      if (r.timed_out) {
+        repeat = await recordExecTimeout({ agent: ctx.agent, session: ctx.session, cwd: localCwd, command: input.command, ms: r.ms });
+        logger[repeat.count >= 2 ? 'warn' : 'info']({
+          msg: repeat.count >= 2 ? 'exec.timeout_repeat' : 'exec.timeout',
+          agent: ctx.agent,
+          session: ctx.session,
+          cwd: localCwd,
+          command: input.command.slice(0, 200),
+          timeout_ms: input.timeout_ms ?? 60_000,
+          quiet_ms: r.quiet_ms,
+          count: repeat.count,
+          total_ms: repeat.totalMs,
+        });
+      }
+      const repeatNotice = repeat && repeat.count >= 2 ? repeatTimeoutNotice(repeat.count, repeat.totalMs) : '';
       const fitted = fitExecOutput(r.stdout, r.stderr);
       const saved = await saveShortenedStreams(ctx.agent, r, fitted.shortened);
-      const hint = [stripHint, fitted.hint, saved.hint].filter(Boolean).join(' ');
+      const hint = [repeatNotice, stripHint, fitted.hint, saved.hint].filter(Boolean).join(' ');
       return {
         ok: r.exit_code === 0,
         background: false,
@@ -535,6 +559,8 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
         // capture cap AND the result budget (fit-output.ts).
         truncated: r.truncated || fitted.shortened,
         ms: r.ms,
+        ...(r.timed_out ? { timed_out: true } : {}),
+        ...(repeat && repeat.count >= 2 ? { timeouts_in_session: repeat.count } : {}),
         ...saved.files,
         ...(hint ? { hint } : {}),
       };

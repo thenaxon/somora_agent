@@ -326,8 +326,15 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
       }
     }
     let found = true;
+    let personsWord = false;
     const next = await sessionMetaStore.update(r.agent, r.session, (current) => {
       const { items } = readAcceptance(current as Record<string, unknown>);
+      // The person has the last word: an agent does not replace a
+      // person's verdict. New evidence clears it, and then it may.
+      if (byAgent && items.find((i) => i.id === body.id)?.review?.by === 'person') {
+        personsWord = true;
+        return current;
+      }
       const reviewed = applyReview(items, {
         id: body.id as string,
         verdict: body.verdict as 'accepted' | 'rejected',
@@ -340,6 +347,7 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
       }
       return { ...current, acceptance: reviewed };
     });
+    if (personsWord) return c.json({ error: `${body.id} was reviewed by the person; their verdict stands until the builder sends new evidence` }, 409);
     if (!found) return c.json({ error: `no item '${body.id}' in the acceptance list` }, 404);
     const acc = readAcceptance(next as Record<string, unknown>);
     logger.info({ msg: 'builder.acceptance_reviewed', agent: r.agent, session: r.session, id: body.id, verdict: body.verdict, by: byAgent ?? 'person' });

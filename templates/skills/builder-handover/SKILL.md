@@ -89,6 +89,23 @@ side by side, each wakes you separately with the builder's name.
   list required in that session, also a message sent later. Check the
   evidence of the items that matter; `failed` and `not_run` are open
   work, not done.
+- Under it somora adds the state of the folder ("State of the working
+  copy"): changes not committed, files git does not track, worktree
+  commits not in the main checkout, commands that timed out, jobs still
+  running. That block is somora's record, not the builder's word. Work
+  tested in a worktree but not merged, or a fix merged while the old
+  process still runs, is not delivered.
+- Check the evidence, not the claim: re-run two or three of the
+  builder's own evidence commands. A suite result is context, not proof
+  of a requirement it does not exercise. Look at what a test asserts: a
+  value that also appears in a default passes without the feature; a
+  test that writes the database row itself proves nothing about the form
+  that should write it.
+- Record your verdict with `builder_review` (builder, session, one
+  verdict per item). `accepted` needs a note with the command you ran
+  and what you saw; `rejected` needs the reason. Rejected items go back
+  to the builder as one message and count as open for it; you are woken
+  with its next report. The person can override any verdict.
 - Tell the person in their language what was built, what you verified
   and how, what the builder decided on its own, what is open.
 - Accept, or send the next order: a new `builder_dispatch` for a new

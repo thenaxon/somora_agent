@@ -46,7 +46,7 @@ import { runTurnWithFallback } from './run-turn-fallback.ts';
 import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
 import { drainSteer, frameSteerMessage, markSteerable, requeueSteer, unmarkSteerable } from './steer-inbox.ts';
 import { resolveAgentLoop } from './builder-prompt.ts';
-import { ensureBuilderState, type BuilderSessionState } from './builder-session.ts';
+import { ensureBuilderState, patchBuilderState, readBuilderState, type BuilderSessionState } from './builder-session.ts';
 import { readAcceptance } from './builder-acceptance.ts';
 import { TURN_ASKER_KEY, TURN_ATTENDED_KEY, askerOf, isAttendedOrigin, sessionToolAllows } from './ask-attended.ts';
 import { builderToolDescription } from '../tools/builder/short-descriptions.ts';
@@ -969,6 +969,20 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       // an acceptance list from now on (builder-turn-end.ts holds it to
       // it). Set before the prompt is assembled, so this turn already
       // reads "REQUIRED". The person switches it off in the panel.
+      // The agent that gave the order reviews the list (builder_review)
+      // and is woken by Go. builder_dispatch names it; otherwise the first
+      // agent that writes into the session is it. A later message from
+      // another agent (a quick question, a colleague's follow-up, a steer)
+      // does not take it over, and a known session is never dropped.
+      if (origin?.kind === 'agent') {
+        const prev = readBuilderState(sessionMeta as Record<string, unknown>)?.orderer;
+        if (!prev || (prev.agent === origin.from.agent && !prev.session && origin.from.session)) {
+          await patchBuilderState(deps.sessionMetaStore, agent, session, {
+            orderer: { agent: origin.from.agent, ...(origin.from.session ? { session: origin.from.session } : {}) },
+          });
+          logger.info({ msg: 'builder.orderer_set', agent, session, turnId, orderer: origin.from.agent });
+        }
+      }
       if (origin && (origin.kind === 'agent' || origin.kind === 'peer') && (sessionMeta as Record<string, unknown>).acceptanceRequired !== true) {
         const next = await deps.sessionMetaStore.update(agent, session, (m) => ({ ...m, acceptanceRequired: true }));
         logger.info({ msg: 'builder.acceptance_required', agent, session, turnId, by: origin.kind === 'agent' ? origin.from.agent : origin.peer });

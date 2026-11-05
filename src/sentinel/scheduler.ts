@@ -105,11 +105,11 @@ void ({} as PublishFn); // type kept for clarity; resolved per-fire below
  * than `completedRetentionDays`. Setting that config to 0 disables GC
  * entirely (user/agent must delete manually).
  *
- * Runs once at boot and then daily — most installations have a small
- * trigger count so a daily sweep is fine. We don't keep a separate
- * timer; we re-use the scheduler's daily re-arm tick as the natural
- * cadence anchor (more frequent than necessary is harmless because
- * the operation is cheap).
+ * Runs once at boot and then every 6 hours on a timer of its own
+ * (armCompletedSweep). It used to ride on the scheduler's idle wake,
+ * which never comes on an installation whose recurring checks are due
+ * every few minutes — completed triggers then stayed until the next
+ * restart (report 2026-11-05: 7 of 11 past their retention).
  */
 async function gcStaleTriggers(): Promise<number> {
   if (completedRetentionDays <= 0) return 0;
@@ -177,6 +177,26 @@ let nextTimer: NodeJS.Timeout | null = null;
 let nextFireAt: number | null = null;
 let storeWatcher: ReturnType<typeof chokidar.watch> | null = null;
 let watcherReloadTimer: NodeJS.Timeout | null = null;
+let completedSweepTimer: NodeJS.Timeout | null = null;
+
+/** How often completed triggers past their retention are deleted. */
+export const COMPLETED_SWEEP_EVERY_MS = 6 * 60 * 60 * 1000;
+
+/** The cleanup timer: runs `sweep` every `everyMs`, whatever else is
+ *  due, and never keeps the process alive. Exported for the test. */
+export function armCompletedSweep(
+  everyMs: number = COMPLETED_SWEEP_EVERY_MS,
+  sweep: () => Promise<number> = gcStaleTriggers,
+): NodeJS.Timeout {
+  const timer = setInterval(() => {
+    sweep().then(
+      (removed) => logger.info({ msg: 'sentinel.scheduler.completed_sweep', removed, retentionDays: completedRetentionDays }),
+      (err: unknown) => logger.warn({ msg: 'sentinel.scheduler.completed_sweep_failed', err: (err as Error).message }),
+    );
+  }, everyMs);
+  timer.unref();
+  return timer;
+}
 
 // Triggers currently in fire-and-forget dispatch. pickNextDue skips
 // these so a re-entry (via watcher self-trigger after saveTrigger, or
@@ -294,15 +314,11 @@ async function onTimer(): Promise<void> {
   // was due when we armed).
   const pick = pickNextDue();
   if (!pick) {
-    // Idle wake — opportunistic GC sweep so retention runs at least
-    // daily without a separate timer.
-    void gcStaleTriggers();
     reschedule();
     return;
   }
   if (pick.fireAt > Date.now() + 1000) {
-    // We woke up early (probably re-arm cap). Re-schedule + GC.
-    void gcStaleTriggers();
+    // We woke up early (probably re-arm cap).
     reschedule();
     return;
   }
@@ -792,6 +808,7 @@ export async function startSentinel(): Promise<void> {
   }
   started = true;
   installStoreWatcher();
+  completedSweepTimer ??= armCompletedSweep();
   reschedule();
 }
 

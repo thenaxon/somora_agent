@@ -171,9 +171,11 @@ export function applyReview(
   return next;
 }
 
-/** Items the builder still owes something on. */
+/** Items the builder still owes something on: still open, or rejected
+ *  by the reviewer (until the builder sends the item again with new
+ *  evidence, which clears the rejection). */
 export function openAcceptance(items: AcceptanceItem[]): AcceptanceItem[] {
-  return items.filter((i) => i.status === 'open');
+  return items.filter((i) => i.status === 'open' || i.review?.verdict === 'rejected');
 }
 
 /** The list as a Markdown table, for the report and the compaction block. */

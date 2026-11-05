@@ -85,6 +85,8 @@ export function buildBuilderHarnessPrompt(visible: ReadonlySet<string> | null = 
   if (has('exec')) {
     lines.push(
       '- Verify after every change: run the build, the type check and the tests the repository already uses (look for scripts in package.json, a Makefile, pyproject, CI config). Never assume a test framework — check what the codebase uses. If a check fails, read the error, fix the code, re-run. Do not weaken a test to make it pass.',
+      '- A test proves a behaviour only if it fails without it. Use a value that appears nowhere else (not in a default, a fixture or a built-in prompt) and see it fail when the behaviour is missing; a new test that passes at once tests what was already there — fix the test. Never delete or loosen an existing test to get green, and do not mock the thing under test.',
+      '- Evidence names the way it was checked: user interface, HTTP API, command line, a direct function call, or the database. A check that goes around a layer proves nothing about that layer — a test that writes the row itself says nothing about the admin form that should write it.',
     );
   }
   lines.push(
@@ -117,7 +119,7 @@ export function buildBuilderHarnessPrompt(visible: ReadonlySet<string> | null = 
       '',
       '# Acceptance list',
       '',
-      'When an order names requirements (and always when "Mode and phase" says the list is required), keep them with acceptance_write: one item per requirement in the words of the order, status open until you have checked it, then passed or failed with the evidence — the command and its result, the file, the test, the revision — or not_run with the reason. A green test suite is not evidence for a requirement it does not exercise; check the deciding counter-case. Items stay and keep their wording; a changed milestone is a new item, not a rewritten one. You never accept your own work: the person or the orderer reviews.',
+      'When an order names requirements (and always when "Mode and phase" says the list is required), keep them with acceptance_write: one item per requirement in the words of the order, status open until you have checked it, then passed or failed with the evidence — the command and its result, the file, the test, the revision — or not_run with the reason. One item per single capability: text input, URL input and file upload are three items, not one "job form". A green test suite is not evidence for a requirement it does not exercise; check the deciding counter-case. A check you did not run is not_run, never passed; "should work" is not evidence. Items stay and keep their wording; a changed milestone is a new item, not a rewritten one. You never accept your own work: the person or the orderer reviews.',
     );
   }
   lines.push('', '# Decisions and questions', '');
@@ -153,7 +155,10 @@ export function buildBuilderHarnessPrompt(visible: ReadonlySet<string> | null = 
       (has('exec')
         ? 'Read the output of a test or build, not only its exit code. Before the report, look at your changes as a whole (`git diff` in a git repository). '
         : '') +
-      'Work that is still running (a build, a server, a background job) is not done. Never present a partial result as the whole, and never invent output, test results or files you did not produce.',
+      'Work that is still running (a build, a server, a background job) is not done. Never present a partial result as the whole, and never invent output, test results or files you did not produce.' +
+      (has('exec')
+        ? ' Keep apart what you tested in a worktree, what is committed, what is merged into the main branch, and what is running: call it integrated only when it is in the main branch, live only when the running process was restarted with it and you checked it there. somora adds the git state of the folder and its worktrees under your report — commit what belongs to the order or say why it stays open.'
+        : ''),
     '',
     'Finish with a short report: what was built (files, behaviour), what was verified and how (commands, results), what was left open and why, decisions you took on your own. When the task names a report file, write the report there' +
       (has('file_write') ? ' with file_write' : '') +

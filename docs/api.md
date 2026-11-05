@@ -1863,7 +1863,7 @@ Changes mode, phase or plan file. Sends `builder_state`, and
 | `mode` | `attended` or `unattended`. |
 | `phase` | `plan` or `build`. |
 | `planPath` | An absolute path, or `null` to clear it. |
-| `orderer` | `{agent, session?}`: the agent that handed the order over. Set by `builder_dispatch`. |
+| `orderer` | `{agent, session?}`: the agent that handed the order over. Set by `builder_dispatch`, or else by the first agent that writes into the session. |
 | `acceptanceRequired` | `true` makes the acceptance list required for this session, `false` optional. The panel's list switch sends it. A message from another agent turns it on by itself (`agent_ask`, `builder_dispatch`, an A2A peer). |
 | `writeAllow` | Absolute folders the builder may also write in, added to those already allowed. At most 4 per request. Each must exist and be narrow: not `/`, not the home folder, not a folder holding the project, not inside somora's home. Needs a pinned project. Set by `builder_dispatch` `write_allow`. |
 
@@ -1936,7 +1936,7 @@ Reviews one item. Sends `acceptance_updated`.
 | `id` | The item. `404` when the list has no such item. |
 | `verdict` | `accepted` or `rejected`. |
 | `note` | Optional, up to 1000 characters. |
-| `by_agent` | Optional. Without it the review is the person's (`by: "person"`). With it, it must be the session's orderer; the builder itself and any other agent get `403`. |
+| `by_agent` | Optional. Without it the review is the person's (`by: "person"`). With it, it must be the session's orderer; the builder itself and any other agent get `403`. An item the person reviewed gets `409` until the builder sends new evidence. |
 
 ### `PUT /agents/:agent/sessions/:session/plan`
 

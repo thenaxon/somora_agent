@@ -123,6 +123,29 @@ export interface LocalSyncResult {
   stderr: string;
   truncated: boolean;
   ms: number;
+  /** Killed by its own timeout (not by a stop). */
+  timed_out?: boolean;
+  /** On a timeout: how long the command had printed nothing before it
+   *  was killed (the whole run when it printed nothing) — a hang shows
+   *  as a long silence, slow work does not. */
+  quiet_ms?: number;
+}
+
+/** The note a timed-out command's stderr ends with. Says what was
+ *  killed, how long it was silent, that side effects may remain, and
+ *  what to do instead of starting it again unchanged. */
+export function timeoutNote(timeoutMs: number, quietMs: number | undefined, printed: boolean): string {
+  const quiet = !printed
+    ? '; it printed nothing at all'
+    : quietMs !== undefined && quietMs >= 1000
+      ? `; no output for the last ${Math.round(quietMs / 1000)}s`
+      : '';
+  return (
+    `[somora] killed: timeout after ${timeoutMs}ms${quiet}. ` +
+    'The command and its child processes were killed; files, ports or processes it started may remain — check the state before running it again. ' +
+    'If it is slow but working, raise timeout_ms or run it with background:true and poll it with process. ' +
+    'If it hangs, do not rerun it unchanged: find what keeps it from exiting (a server, thread or watcher left open, a prompt waiting for input) or run a smaller part.'
+  );
 }
 
 export interface LocalSyncOptions {
@@ -205,13 +228,18 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
     // promise stalls until the grandchild exits naturally. Audit
     // 2026-05-16: `sh -c 'trap "" TERM; sleep 30'` with timeout=2s
     // sat for the full 30s pre-fix.
+    // stdin is /dev/null: a command that unexpectedly asks for input
+    // (a confirmation, a password, a REPL) gets EOF at once instead of
+    // waiting for the timeout. Nothing writes to a sync command's stdin.
     const child = spawn(opts.command, {
       shell: true,
       cwd: opts.cwd,
       env,
       detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
+    let lastOutputAt = start;
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let truncated = false;
@@ -219,6 +247,7 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
     const stderrChunks: Buffer[] = [];
 
     child.stdout?.on('data', (chunk: Buffer) => {
+      lastOutputAt = Date.now();
       const remaining = DEFAULT_OUTPUT_CAP_BYTES - stdoutBytes;
       if (remaining <= 0) {
         truncated = true;
@@ -230,6 +259,7 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
       if (chunk.length > remaining) truncated = true;
     });
     child.stderr?.on('data', (chunk: Buffer) => {
+      lastOutputAt = Date.now();
       const remaining = DEFAULT_OUTPUT_CAP_BYTES - stderrBytes;
       if (remaining <= 0) {
         truncated = true;
@@ -242,6 +272,7 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
     });
 
     let timedOut = false;
+    let quietMs: number | undefined;
     let aborted = false;
     const killGroup = (signal: NodeJS.Signals) => {
       // Negative pid → process group (set up by `detached: true`).
@@ -258,6 +289,7 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
     };
     const timer = setTimeout(() => {
       timedOut = true;
+      quietMs = Date.now() - lastOutputAt;
       killGroup('SIGTERM');
       // Give it 2s to clean up, then SIGKILL. `child.killed` flips true
       // as soon as the signal is *sent*, not when the process actually
@@ -292,7 +324,7 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
       const stdout = Buffer.concat(stdoutChunks).toString('utf8');
       const stderr = Buffer.concat(stderrChunks).toString('utf8');
       const finalStderr = timedOut
-        ? stderr + `\n[somora] killed: timeout after ${timeoutMs}ms`
+        ? stderr + `\n${timeoutNote(timeoutMs, quietMs, lastOutputAt !== start)}`
         : aborted
           ? stderr + '\n[somora] killed: the turn was stopped'
           : stderr;
@@ -302,6 +334,7 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
         stderr: finalStderr,
         truncated,
         ms: Date.now() - start,
+        ...(timedOut ? { timed_out: true, ...(quietMs !== undefined ? { quiet_ms: quietMs } : {}) } : {}),
       });
       logger.info({
         msg: 'exec.local.sync_done',
@@ -374,9 +407,11 @@ async function localExecSyncPty(opts: LocalSyncOptions): Promise<LocalSyncResult
 
     let outBytes = 0;
     let truncated = false;
+    let lastOutputAt = start;
     const outChunks: Buffer[] = [];
 
     term.onData((data: string) => {
+      lastOutputAt = Date.now();
       const buf = Buffer.from(data, 'utf8');
       const remaining = DEFAULT_OUTPUT_CAP_BYTES - outBytes;
       if (remaining <= 0) {
@@ -390,6 +425,7 @@ async function localExecSyncPty(opts: LocalSyncOptions): Promise<LocalSyncResult
     });
 
     let timedOut = false;
+    let quietMs: number | undefined;
     let aborted = false;
     const killTerm = () => {
       try {
@@ -408,6 +444,7 @@ async function localExecSyncPty(opts: LocalSyncOptions): Promise<LocalSyncResult
     };
     const timer = setTimeout(() => {
       timedOut = true;
+      quietMs = Date.now() - lastOutputAt;
       killTerm();
     }, timeoutMs);
     // Stop kills the pty command like the pipe path's process group.
@@ -425,13 +462,14 @@ async function localExecSyncPty(opts: LocalSyncOptions): Promise<LocalSyncResult
       opts.signal?.removeEventListener('abort', onAbort);
       runningForeground.delete(onAbort as (signal: NodeJS.Signals) => void);
       const out = Buffer.concat(outChunks).toString('utf8');
-      const stderrTail = timedOut ? `[somora] killed: timeout after ${timeoutMs}ms` : aborted ? '[somora] killed: the turn was stopped' : '';
+      const stderrTail = timedOut ? timeoutNote(timeoutMs, quietMs, lastOutputAt !== start) : aborted ? '[somora] killed: the turn was stopped' : '';
       resolve({
         exit_code: exitCode,
         stdout: out,
         stderr: stderrTail,
         truncated,
         ms: Date.now() - start,
+        ...(timedOut ? { timed_out: true, ...(quietMs !== undefined ? { quiet_ms: quietMs } : {}) } : {}),
       });
       logger.info({
         msg: 'exec.local.sync_pty_done',
@@ -447,6 +485,8 @@ async function localExecSyncPty(opts: LocalSyncOptions): Promise<LocalSyncResult
 
 export interface LocalBackgroundOptions {
   agent: string;
+  /** Recorded on the job, so a report lists only its own session's jobs. */
+  session?: string;
   command: string;
   cwd?: string;
   env?: Record<string, string>;
@@ -487,6 +527,7 @@ export async function localExecBackground(
   const meta: JobMeta = {
     job_id,
     agent: opts.agent,
+    ...(opts.session ? { session: opts.session } : {}),
     target: 'local',
     command: opts.command,
     ...(opts.cwd ? { cwd: opts.cwd } : {}),

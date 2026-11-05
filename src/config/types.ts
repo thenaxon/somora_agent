@@ -1003,7 +1003,7 @@ export type ExternalSystemConfig = z.infer<typeof ExternalSystemSchema>;
 // `a2a: true` in agent.yaml get an A2A address on somora's own server;
 // only the peers listed here, each with its own token, may send them
 // tasks. No peers → nothing is reachable.
-export const DEFAULT_A2A_INBOUND_TOOL_DENY: readonly string[] = ['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'spawn_subagent', 'spawn_subagents', 'builder_dispatch', 'session_model', 'sentinel'];
+export const DEFAULT_A2A_INBOUND_TOOL_DENY: readonly string[] = ['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'spawn_subagent', 'spawn_subagents', 'builder_dispatch', 'builder_review', 'session_model', 'sentinel'];
 
 export const A2AInboundConfigSchema = z
   .object({
@@ -2765,10 +2765,10 @@ export const ConfigSchema = z.object({
   subagents: z
     .object({
       tools: z
-        .object({ deny: z.array(z.string().min(1)).default(['agent_ask', 'agent_ask_result', 'agent_ask_cancel']) })
-        .default({ deny: ['agent_ask', 'agent_ask_result', 'agent_ask_cancel'] }),
+        .object({ deny: z.array(z.string().min(1)).default(['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'builder_review']) })
+        .default({ deny: ['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'builder_review'] }),
     })
-    .default({ tools: { deny: ['agent_ask', 'agent_ask_result', 'agent_ask_cancel'] } }),
+    .default({ tools: { deny: ['agent_ask', 'agent_ask_result', 'agent_ask_cancel', 'builder_review'] } }),
   promptBudgets: PromptBudgetsSchema,
   engineWatchdog: EngineWatchdogConfigSchema,
   sse: SseConfigSchema,

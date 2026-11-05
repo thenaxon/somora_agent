@@ -332,3 +332,20 @@ test('a chat agent is never held to a list, and its answer is never extended', a
   assert.equal(requests.length, 1);
   assert.equal(finalText(events), 'plain answer');
 });
+
+test('a rejected item is named with its note once; kept unchanged with reasons, it does not hold the next turn', async (t) => {
+  const { server, port } = await startBackend();
+  t.after(() => server.close());
+  const items = [
+    { id: 'A01', requirement: 'export works', status: 'passed', evidence: 'ran export: 3 rows', review: { verdict: 'rejected', by: 'orderer', note: 'the file has no header row', at: 5 } },
+  ];
+  script = (msgs, n) => (n === 1 ? { tool: { name: 'file_write', args: { path: '/p/x.ts', content: 'x' } } } : { text: `answer ${n}: the header row is not part of the order` });
+  const first = await run(port, { kind: 'builder', tools: accTools, meta: { acceptanceRequired: true, acceptance: items } as Partial<SessionMeta> });
+  assert.equal(notices(/The reviewer rejected 1 item\(s\): A01 \(orderer: the file has no header row\)/), 1);
+  const told = (await first.store.get('a', 's')) as Record<string, unknown>;
+  assert.deepEqual(told.acceptanceRejectionsTold, { A01: 5 });
+  // The next working turn, same review: no notice.
+  requests = [];
+  await run(port, { kind: 'builder', tools: accTools, meta: told as Partial<SessionMeta> });
+  assert.equal(notices(/The reviewer rejected/), 0);
+});

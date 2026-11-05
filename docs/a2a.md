@@ -407,7 +407,7 @@ curl https://<host>.<tailnet>.ts.net:18737/a2a/agents/<agent>/.well-known/agent-
 | `a2a.replyTimeoutSeconds` | `300` | How long a waiting request waits for the answer before it returns the task as still working. |
 | `a2a.maxMessageChars` | `64000` | Longest task text. |
 | `a2a.archiveAfterDays` | `7` | A conversation with a peer is archived after this many days without activity. `0` keeps them. |
-| `a2a.tools.deny` | `agent_ask`, `agent_ask_result`, `agent_ask_cancel`, `spawn_subagent`, `spawn_subagents`, `builder_dispatch`, `session_model`, `sentinel` | Tools a task from outside may not use, as in `subagents.tools.deny`. |
+| `a2a.tools.deny` | `agent_ask`, `agent_ask_result`, `agent_ask_cancel`, `spawn_subagent`, `spawn_subagents`, `builder_dispatch`, `builder_review`, `session_model`, `sentinel` | Tools a task from outside may not use, as in `subagents.tools.deny`. |
 
 The address of an agent is `<publicUrl>/a2a/agents/<agent>`. somora
 needs no extra port: the A2A endpoint is part of its server, reachable

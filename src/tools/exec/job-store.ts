@@ -30,6 +30,8 @@ export type JobState = 'running' | 'done' | 'failed' | 'killed';
 export interface JobMeta {
   job_id: string;
   agent: string;
+  /** The session that started it (absent on jobs from before 2026-11). */
+  session?: string;
   /** 'local' or a configured resource name. */
   target: string;
   command: string;

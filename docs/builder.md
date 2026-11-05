@@ -159,22 +159,90 @@ green test suite are not an accepted build.
   and a requirement keeps its first wording. A changed milestone is a
   new item, not a rewritten one.
 - **The builder cannot accept.** `accepted` and `rejected` are reviews,
-  set by you in the panel or by the orderer through the API. A new
-  status or new evidence clears an earlier review, because that review
-  was of the old evidence.
+  set by you in the panel or by the orderer with `builder_review`
+  ([Reviewing the list](#reviewing-the-list)). A new status or new
+  evidence clears an earlier review, because that review was of the old
+  evidence.
+- **A rejected item is open again.** Until the builder sends it with new
+  evidence, it counts as open for the end check below, whatever its
+  status says.
 - **The end is checked.** A builder that wants to end its turn with an
   item still `open`, or with no list although the session requires one,
   is sent back. See [When the builder wants to stop](#when-the-builder-wants-to-stop).
 - **The report ends with the list.** The final answer gets the list as
   the session holds it, as a table under "Acceptance list (from the
   session)", on every engine. The orderer reads it there. An answer to a
-  question, from a turn that changed nothing, gets no table.
+  question, from a turn that changed nothing, gets no table. Below it
+  comes the [state of the working copy](#what-somora-adds-to-the-report).
 - **It survives compaction.** The work-state block of a mid-turn
   compaction carries the list word for word. After a compaction before
   a turn, the builder reads it with `acceptance_write` and no items.
 
 At most 60 items. A requirement is cut at 500 characters, evidence and
 review notes at 1000.
+
+### Reviewing the list
+
+You review in the task panel: **accept**, or **reject** with a note. The
+agent that gave the order reviews with `builder_review`:
+
+```
+builder_review({
+  builder: "<builder>",
+  session: "<session from builder_dispatch or the agent_ask result>",
+  items: [
+    { id: "A01", verdict: "accepted", note: "ran pytest tests/test_export.py → 4 passed; opened the CSV, 3 rows" },
+    { id: "A02", verdict: "rejected", note: "the test checks a word that is in the default prompt too; use a marker" }
+  ]
+})
+```
+
+- **Only the orderer.** That is the agent `builder_dispatch` named, or
+  else the first agent that wrote into the session. A later message from
+  another agent, such as a quick question, does not make it the orderer.
+  Another agent is refused, and so is the builder itself.
+- **A note on every verdict.** `accepted` names what the reviewer ran
+  and saw; `rejected` names what is wrong or missing.
+- **Rejected work goes back.** The rejected items are sent into the
+  builder's session as one message (`send_back: false` only records
+  them). The builder fixes them and reports again, and the orderer is
+  woken with that report.
+- **You have the last word.** A verdict from you in the panel replaces
+  the orderer's, and the orderer cannot replace yours (`409`) until the
+  builder sends the item with new evidence. The panel shows who
+  reviewed: "accepted by <agent>".
+- **Told once.** A rejected item counts as open at the end of the
+  builder's next working turn, which names it with the note. If the
+  builder keeps the item unchanged, with its reasons in the report, it
+  is not held to it again for that review.
+
+## What somora adds to the report
+
+Under the acceptance list somora adds what it sees itself, under "State
+of the working copy (from somora, not from the builder)":
+
+- changes not committed and files git does not track, in the working
+  copy and in each worktree of the repository (up to six, eight paths
+  each; the folder's own checkout always, the others named as not
+  looked at),
+- commits on a worktree's branch that the main checkout does not have,
+- commands that timed out in this order ([When a command times
+  out](tools.md#when-a-command-times-out)),
+- background jobs this session started in this order that still run.
+
+When everything is committed, one line says so. A worktree whose `git
+status` gives no answer within the time limit is listed as "state
+unknown", never as clean. A failed order gets the block too. A turn
+that wrote nothing with the file tools, such as an answer to a
+question, gets the block only when something is open.
+
+Nothing is committed, cleaned or stopped: the block only reports. git
+runs without the repository's fsmonitor, filters and hooks and without
+somora's own environment variables, so a repository cannot make the
+server run a command. Tested
+in a worktree is not merged, and merged is not running: the orderer
+reads here what the builder's own report may leave out. The log line is
+`builder.facts_added`.
 
 ## When the builder wants to stop
 
@@ -610,6 +678,9 @@ for other clients.
 | The project cannot be unpinned or switched | A builder turn is running. Stop the turn first. |
 | "No builder state yet" in the panel | Mode and phase appear with the first message. |
 | `builder_dispatch: several builders exist` | Name one in `builder`. The error lists them. |
+| `builder_review: only the person or the agent that gave the order (…) reviews this list` | Another agent gave the latest order in that session. The message names it. |
+| The builder works again after a review | The orderer rejected items with `builder_review`; they went back as one message starting with `[review]`. |
+| "This exact command has now timed out N times" | The same command hung again in this session. The builder should find the cause instead of starting it again ([When a command times out](tools.md#when-a-command-times-out)). |
 | The builder kept going after it said it was done | It ended with open tasks or open acceptance items and was sent back ([When the builder wants to stop](#when-the-builder-wants-to-stop)). The chat shows an `open tasks` row or a `system · open items` message. |
 | `refused — passed without evidence` | The acceptance list is required, so every status but `open` needs its evidence or reason. The builder sends the item again with it. |
 | A turn ended early | Look at `turn_end.forced_final` and the "loop noticed" and "loop stopped" rows. In the log: `engine.doom_loop_stop`, `engine.reasoning_only_round`. |
