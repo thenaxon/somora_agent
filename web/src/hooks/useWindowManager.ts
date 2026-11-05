@@ -433,6 +433,29 @@ export function useWindowManager() {
     setFocusedId(id);
   }, [windows, zCounter, focus]);
 
+  /** Open or focus the settings window (singleton): config.yaml in a
+   *  form, from the gear menu (docs/web.md "Settings window"). */
+  const openSettings = useCallback(() => {
+    const existing = windows.find((w) => w.kind === 'settings');
+    if (existing) {
+      focus(existing.id);
+      return;
+    }
+    const pos = randomPos(980, 660, zCounter + 1);
+    const id = `settings-${Date.now()}`;
+    const next: WindowState = {
+      id,
+      kind: 'settings',
+      title: 'settings',
+      icon: '⚙️',
+      ...pos,
+      minimized: false,
+    };
+    setWindows((ws) => [...ws, next]);
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+  }, [windows, zCounter, focus]);
+
   /** Open or focus the browser list (singleton), stage 2 of the shared
    *  browser (docs/browser.md). */
   const openBrowserList = useCallback(() => {
@@ -762,6 +785,7 @@ export function useWindowManager() {
     openTmuxTerm,
     openBrowserList,
     openLogs,
+    openSettings,
     openVoice,
     openBrowser,
     openShellTerm,

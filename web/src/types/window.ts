@@ -20,6 +20,7 @@ export type WindowKind =
   | 'browser-list'
   | 'browser'
   | 'logs'
+  | 'settings'
   | 'voice';
 
 /** A snapshot of an agent message that the user pinned for working-

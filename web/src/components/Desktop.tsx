@@ -19,6 +19,7 @@ import { TmuxListWindow } from './TmuxListWindow';
 import { TmuxTerminalWindow } from './TmuxTerminalWindow';
 import { BrowserListWindow } from './BrowserListWindow';
 import { LogsWindow } from './LogsWindow';
+import { SettingsWindow } from './SettingsWindow';
 import { BrowserWindow } from './BrowserWindow';
 import { ShellTerminalWindow } from './ShellTerminalWindow';
 import { SessionsWindow } from './SessionsWindow';
@@ -452,6 +453,23 @@ export function Desktop() {
               </Window>
             );
           }
+          if (win.kind === 'settings') {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onToggleMaximize={wm.toggleMaximize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <SettingsWindow />
+              </Window>
+            );
+          }
           if (win.kind === 'logs') {
             return (
               <Window
@@ -697,6 +715,7 @@ export function Desktop() {
         onAutoArrange={wm.autoArrange}
         onSaveLayout={wm.saveLayout}
         onRestoreLayout={wm.restoreLayout}
+        onOpenSettings={wm.openSettings}
       />
     </div>
     </FileViewProvider>

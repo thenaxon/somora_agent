@@ -643,6 +643,62 @@ export interface VoiceInstructionsResponse {
   consultPolicy: string;
 }
 
+/** One setting of config.yaml for the settings window (GET /settings). */
+export interface SettingInfo {
+  label: string;
+  help: string;
+  more?: string;
+  level: 'basic' | 'advanced';
+  sensitive?: boolean;
+  unit?: string;
+  docs?: string;
+  placeholder?: string;
+}
+export interface SettingFieldInfo {
+  path: string;
+  kind: 'boolean' | 'integer' | 'number' | 'string' | 'enum' | 'strings' | 'one-or-many' | 'object' | 'map' | 'list';
+  section: string;
+  default?: unknown;
+  enum?: string[];
+  min?: number;
+  max?: number;
+  minExclusive?: boolean;
+  nullable?: boolean;
+  required?: boolean;
+  info?: SettingInfo;
+}
+export interface SettingsGroupInfo {
+  id: string;
+  title: string;
+  icon: string;
+  sections: string[];
+  ready: boolean;
+}
+export interface SettingsView {
+  path: string;
+  hash: string;
+  valid: boolean;
+  issues?: Array<{ path: string; message: string }>;
+  groups: SettingsGroupInfo[];
+  restartSections: string[];
+  fields: SettingFieldInfo[];
+  values: Record<string, unknown> | null;
+  inFile: string[];
+}
+export type SettingChange = { path: string; value: unknown } | { path: string; reset: true } | { path: string; secret: string };
+export interface SettingsApplyResult {
+  ok: boolean;
+  hash?: string;
+  backup?: string;
+  reload?: { ok: boolean; changed?: string[]; restartRequired?: string[]; error?: string };
+  error?: string;
+  issues?: Array<{ path: string; message: string }>;
+  /** 409: the file changed since the window read it. */
+  conflict?: boolean;
+  /** The file already had these values: nothing written. */
+  unchanged?: boolean;
+}
+
 export interface PromptPreviewResponse {
   agent: string;
   session: string;
@@ -838,6 +894,31 @@ export const api = {
       /** Set while config.yaml does not validate; the last valid version runs. */
       invalid?: { since: string; message: string } | null;
     }>('/config/status'),
+  settings: async (): Promise<SettingsView> => {
+    const res = await fetch('/settings');
+    if (!res.ok) throw new Error(`settings ${res.status}`);
+    return (await res.json()) as SettingsView;
+  },
+  settingsYaml: async (): Promise<{ path: string; hash: string; text: string }> => {
+    const res = await fetch('/settings/yaml');
+    if (!res.ok) throw new Error(`settings/yaml ${res.status}`);
+    return (await res.json()) as { path: string; hash: string; text: string };
+  },
+  applySettings: async (hash: string, changes: SettingChange[]): Promise<SettingsApplyResult> => {
+    const res = await fetch('/settings/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hash, changes }) });
+    const body = (await res.json().catch(() => ({}))) as SettingsApplyResult;
+    return { ...body, ok: res.ok && body.ok !== false, ...(res.status === 409 ? { conflict: true } : {}) };
+  },
+  settingsBackups: async (): Promise<{ backups: Array<{ name: string; at: number; bytes: number }>; keep: number }> => {
+    const res = await fetch('/settings/backups');
+    if (!res.ok) throw new Error(`settings/backups ${res.status}`);
+    return (await res.json()) as { backups: Array<{ name: string; at: number; bytes: number }>; keep: number };
+  },
+  restoreSettings: async (name: string, hash: string): Promise<SettingsApplyResult> => {
+    const res = await fetch('/settings/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, hash }) });
+    const body = (await res.json().catch(() => ({}))) as SettingsApplyResult;
+    return { ...body, ok: res.ok && body.ok !== false, ...(res.status === 409 ? { conflict: true } : {}) };
+  },
   reloadConfig: async (): Promise<{ ok: boolean; changed: string[]; restartRequired: string[]; error?: string }> => {
     const res = await fetch('/config/reload', { method: 'POST' });
     const body = (await res.json().catch(() => ({}))) as {

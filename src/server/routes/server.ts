@@ -19,6 +19,7 @@ import { logger } from '../logger.ts';
 import { writeRestartIntent } from '../restart-intent.ts';
 import { config, configLoadedAt, configLoadedMtimeMs, setConfig, setConfigLoadedAt, setConfigMtime } from '../server-state.ts';
 import { listAllSessionLockStates } from '../session-queue.ts';
+import { registerSettingsRoutes } from './settings.ts';
 import { execSync, spawn as spawnChild, spawnSync as spawnSyncChild } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { cpus as osCpus, freemem as osFreemem, loadavg as osLoadavg, totalmem as osTotalmem } from 'node:os';
@@ -66,13 +67,15 @@ export function registerServerRoutes(app: Hono, routeDeps: ServerRoutesDeps): vo
     });
   });
 
-  app.post('/config/reload', async (c) => {
+  /** Re-read config.yaml and swap it in; shared by POST /config/reload
+   *  and the settings window (routes/settings.ts). */
+  async function reloadConfigNow(): Promise<{ ok: true; changed: string[]; restartRequired: string[]; loadedAt: string } | { ok: false; error: string }> {
     let next: Config;
     try {
       next = await loadConfig();
     } catch (err) {
       logger.warn({ msg: 'config.reload_rejected', err: (err as Error).message });
-      return c.json({ ok: false, error: (err as Error).message }, 400);
+      return { ok: false, error: (err as Error).message };
     }
     const changed = diffConfigSections(config, next);
     const restartRequired = restartRequiredFor(changed, config, next);
@@ -91,8 +94,15 @@ export function registerServerRoutes(app: Hono, routeDeps: ServerRoutesDeps): vo
     await refreshSubagentDenyCheck();
     // The central rem.model may have changed: REM follows at once.
     await syncDreamers();
-    return c.json({ ok: true, changed, restartRequired, loadedAt: configLoadedAt });
+    return { ok: true, changed, restartRequired, loadedAt: configLoadedAt };
+  }
+
+  app.post('/config/reload', async (c) => {
+    const r = await reloadConfigNow();
+    return r.ok ? c.json(r) : c.json(r, 400);
   });
+
+  registerSettingsRoutes(app, { reload: reloadConfigNow });
 
   function systemdUnitActive(): boolean {
     if (process.platform !== 'linux') return false;

@@ -1,0 +1,206 @@
+import type { Catalog } from './index.ts';
+
+export const GENERAL: Catalog = {
+  // --- server ---------------------------------------------------------
+  server: {
+    label: 'Server',
+    help: 'Where somora listens, who may connect and how it behaves after a restart.',
+    level: 'basic',
+    docs: 'security.md#who-can-reach-the-server',
+  },
+  'server.host': {
+    label: 'Listen address',
+    help: 'Which network address the server accepts connections on: 127.0.0.1 is this machine only, 0.0.0.0 lets other devices connect.',
+    more: 'Use 0.0.0.0 only on a network you trust end to end, such as Tailscale, and never expose the port to the internet. The SOMORA_HOST environment variable overrides this.',
+    level: 'basic',
+    placeholder: '127.0.0.1',
+    docs: 'security.md#who-can-reach-the-server',
+  },
+  'server.port': {
+    label: 'Port',
+    help: 'The port number the server listens on; it is part of the address you open in the browser.',
+    more: 'Changing it needs the address in your bookmarks and on your other devices changed too. The SOMORA_PORT environment variable overrides this.',
+    level: 'basic',
+  },
+  'server.tls': {
+    label: 'HTTPS',
+    help: 'A certificate and key that switch the server from plain HTTP to HTTPS, which other devices, the microphone and the phone app need.',
+    more: 'Leave it empty for plain HTTP, which is fine for one window on this machine. Tailscale is the supported way to get a trusted certificate.',
+    level: 'advanced',
+    docs: 'setup.md#https-via-tailscale',
+  },
+  'server.tls.cert': {
+    label: 'Certificate file',
+    help: 'Path to the certificate file in PEM format; together with the key file it turns HTTPS on.',
+    more: '~ stands for your home folder.',
+    level: 'advanced',
+    placeholder: '~/.somora/certs/<your-host>.<your-tailnet>.ts.net.crt',
+    docs: 'setup.md#https-via-tailscale',
+  },
+  'server.tls.key': {
+    label: 'Private key file',
+    help: 'Path to the private key file in PEM format that belongs to the certificate.',
+    more: 'This is the path to the file, not the key itself. ~ stands for your home folder.',
+    level: 'advanced',
+    placeholder: '~/.somora/certs/<your-host>.<your-tailnet>.ts.net.key',
+    docs: 'setup.md#https-via-tailscale',
+  },
+  'server.tls.publicHost': {
+    label: 'Public host name',
+    help: 'The host name clients use to reach the server over HTTPS; it must match the name in the certificate.',
+    more: "somora's own internal calls also go through this name and check the certificate against it.",
+    level: 'advanced',
+    placeholder: '<your-host>.<your-tailnet>.ts.net',
+    docs: 'setup.md#https-via-tailscale',
+  },
+  'server.tls.renew': {
+    label: 'Renew certificate automatically',
+    help: 'With tailscale, somora asks Tailscale for a fresh certificate before the current one runs out and loads it without a restart.',
+    more: 'Needs your user allowed to fetch certificates: sudo tailscale set --operator=$USER. Left empty, somora only watches the two files and picks up a renewed pair by itself.',
+    level: 'advanced',
+    docs: 'setup.md#certificate-renewal',
+  },
+  'server.resumeAfterRestart': {
+    label: 'Wake sessions after a restart',
+    help: 'Which conversations are woken after a restart to check the result and carry on: the one that asked for it, all that were cut off, or none.',
+    more: 'requested: the session that asked for the restart or caused it. all: also every other turn the restart cut. off: nobody; cut turns are only marked.',
+    level: 'advanced',
+    docs: 'setup.md#a-restart-asked-for-by-an-agent',
+  },
+  'server.allowedHosts': {
+    label: 'Extra browser addresses',
+    help: 'More names a browser may use to reach somora, such as a DNS name of your own; requests from browsers under other names are refused.',
+    more: 'IP addresses, localhost, the machine name, <host>.local, *.ts.net names and the public host name always work. Programs that are not browsers are never checked.',
+    level: 'advanced',
+    placeholder: 'somora.example.lan',
+    docs: 'security.md#websites-in-your-browser',
+  },
+  'server.auth': {
+    label: 'Require sign-in key',
+    help: 'When on, every browser, phone and script needs somora\'s key to get in; when off, anyone who can reach the port can use somora.',
+    more: 'Turn it off only when the listen address alone keeps strangers out. Get the key or a sign-in link with somora key and somora key link.',
+    level: 'basic',
+    docs: 'security.md#the-key',
+  },
+
+  // --- updateCheck ----------------------------------------------------
+  updateCheck: {
+    label: 'Update check',
+    help: 'A daily question to somora.ai whether a newer version exists.',
+    level: 'basic',
+    docs: 'setup.md#the-daily-update-check',
+  },
+  'updateCheck.enabled': {
+    label: 'Check for updates daily',
+    help: 'Once a day somora asks somora.ai whether a newer version exists and shows the answer in the inbox; the request carries no identifier.',
+    more: 'It is the only request somora makes on its own. DO_NOT_TRACK=1 or a CI variable in the environment also turns it off.',
+    level: 'basic',
+    docs: 'setup.md#the-daily-update-check',
+  },
+  'updateCheck.endpoint': {
+    label: 'Update check address',
+    help: 'The web address the daily update check asks.',
+    more: 'Change it only to point the check at a mirror of your own.',
+    level: 'advanced',
+    docs: 'setup.md#the-daily-update-check',
+  },
+
+  // --- workspace ------------------------------------------------------
+  workspace: {
+    label: 'Workspace',
+    help: 'The folder agents start in when they work with files.',
+    level: 'basic',
+    docs: 'files.md#how-paths-resolve',
+  },
+  'workspace.default': {
+    label: 'Default workspace folder',
+    help: 'The folder relative file paths start from for agents without a workspace of their own; new terminals open here too.',
+    more: 'It is a starting point, not a fence: agents can still reach other paths. An agent can have its own folder in agent.yaml. The folder is created when the server starts; ~ stands for your home folder.',
+    level: 'basic',
+    placeholder: '~/somoraworkspace',
+    docs: 'files.md#how-paths-resolve',
+  },
+
+  // --- attachments ----------------------------------------------------
+  attachments: {
+    label: 'Attachments',
+    help: 'Size and count limits for files attached to messages and for images sent to a model.',
+    level: 'advanced',
+    docs: 'files.md#attaching-files-to-a-message',
+  },
+  'attachments.maxImageBytes': {
+    label: 'Largest image',
+    help: 'The largest image that is sent to a model; with image scaling on it applies to the scaled image.',
+    more: 'The default suits the strictest supported provider. Without scaling it is also the limit for uploads and for reading image files.',
+    level: 'advanced',
+    unit: 'bytes',
+    docs: 'files.md#images-are-scaled-before-they-reach-the-model',
+  },
+  'attachments.maxPdfBytes': {
+    label: 'Largest PDF',
+    help: 'The largest PDF you can attach to a message or an agent can hand to a model for reading.',
+    more: 'The default suits the strictest supported provider; raise it only if all your models accept bigger files.',
+    level: 'advanced',
+    unit: 'bytes',
+    docs: 'files.md#attaching-files-to-a-message',
+  },
+  'attachments.maxTextBytes': {
+    label: 'Largest text file',
+    help: 'The largest text file you can attach to a message.',
+    level: 'advanced',
+    unit: 'bytes',
+    docs: 'files.md#attaching-files-to-a-message',
+  },
+  'attachments.maxPerTurn': {
+    label: 'Attachments per message',
+    help: 'How many files one message may carry; a message with more is refused.',
+    level: 'advanced',
+    unit: 'files',
+    docs: 'files.md#attaching-files-to-a-message',
+  },
+  'attachments.maxImageEdge': {
+    label: 'Scale images down to',
+    help: 'Images whose longer side is bigger are scaled down before a model sees them; the file itself stays unchanged.',
+    more: 'Set 0 to send images as they are, or raise it when a model needs finer detail. Large providers scale big images down anyway, so bigger images mostly cost more.',
+    level: 'advanced',
+    unit: 'px',
+    docs: 'files.md#images-are-scaled-before-they-reach-the-model',
+  },
+
+  // --- projects -------------------------------------------------------
+  projects: {
+    label: 'Projects',
+    help: 'Projects point agents at the folders, notes and links that belong to one piece of work; a session can pin one.',
+    level: 'basic',
+    docs: 'projects.md#set-it-up',
+  },
+  'projects.enabled': {
+    label: 'Turn on projects',
+    help: 'Shows the project tools, commands and the project chip in the chat; while off, the feature is hidden everywhere.',
+    more: 'Add at least one entity as well, otherwise no project can be created.',
+    level: 'basic',
+    docs: 'projects.md#set-it-up',
+  },
+  'projects.entities': {
+    label: 'Entities',
+    help: 'The fixed list of areas a project can belong to, such as private or a company; agents cannot add new ones.',
+    more: 'The fixed list stops misheard dictation from inventing new areas: an agent must pick one of these.',
+    level: 'basic',
+    docs: 'projects.md#entities',
+  },
+  'projects.entities.*.slug': {
+    label: 'Short name',
+    help: 'The identifier stored in each project of this entity: lowercase letters, digits, - and _ only.',
+    more: 'Each project file stores this short name; renaming it here does not change projects that already exist.',
+    level: 'basic',
+    placeholder: 'acme',
+    docs: 'projects.md#entities',
+  },
+  'projects.entities.*.label': {
+    label: 'Display name',
+    help: 'The name of the entity as it is shown to you.',
+    level: 'basic',
+    placeholder: 'Acme Inc.',
+    docs: 'projects.md#entities',
+  },
+};

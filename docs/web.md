@@ -174,6 +174,7 @@ order, so arranging twice changes nothing.
 
 | Gear entry | What it does |
 |---|---|
+| **Settings…** | Opens the [settings window](#the-settings-window): `config.yaml` as a form with an explanation for every setting. |
 | **Reload config** | Reads `config.yaml` again and applies it without a restart. A message lists the changed sections and says which of them need a restart. A file with an error is rejected and the running config stays. |
 | **Restart somora** | Restarts the service after a confirmation. All streams drop for a few seconds. The page waits for the server and reloads itself. |
 | **Sign out** | Forgets the key in this browser. The key page appears again. The key itself stays valid. |
@@ -688,6 +689,42 @@ version is kept as a backup. `AGENTS.md` must keep a frontmatter whose
 For a builder the window shows only `AGENTS.md`, and **Full prompt**
 shows the builder's own prompt.
 
+## The settings window
+
+**Settings…** in the gear menu shows `config.yaml` as a form, sorted
+like a system settings app. On the left are a search, an overview and
+ten groups: General, Models & providers, Agents & turns, Engines &
+coding, Memory & wiki, Voice, Images & video, Tools & connections,
+Automation and Interfaces. On the right each section of the file is a
+box, marked **live** or **needs restart**.
+
+Each setting has a name, a control and one sentence on what it does.
+**more** opens a longer explanation, the setting's path in the file
+and a link to its page on docs.somora.ai. A grey **default** means the
+file does not set it; **↺** takes a value back to the default and
+removes its line. A group shows the settings most people change;
+**Show advanced options** shows the rest. The search finds both.
+
+Changes collect at the bottom. **Apply** checks them against the
+schema, saves a backup and writes only the lines that changed: your
+comments, blank lines, order and indentation stay. Then the
+configuration is reloaded, and a message says which sections apply
+after a restart (**Restart server** in the gear menu).
+
+- **Keys stay on the server.** A key or password shows as set or not
+  set and can only be replaced.
+- **No silent overwrite.** If the file changed since the window read
+  it, Apply refuses and asks you to reload first.
+- **Earlier versions.** Every change keeps a backup in
+  `~/.somora/config-backups/`; the last 20 stay and can be restored
+  from the window.
+- **View as YAML** shows the file as it is, read only, with keys
+  blanked.
+
+Groups marked **read only** are shown but not yet editable here:
+change them in `config.yaml`. Settings of a single agent stay in its
+[Agent window](#the-agent-window). The phone app has no settings window.
+
 ## Other windows
 
 These features have their own pages. In short:
@@ -764,6 +801,7 @@ the server.
 | `somora.voice.autoPlay.<agent>::<session>` | The **voice** toggle. |
 | `somora.web.builderPanel.collapsed.<agent>` | Whether the builder panel is folded. |
 | `somora.web.theme` | Dark, Light or Auto. |
+| `somora.web.settings.advanced` | Per group of the settings window: advanced options shown. |
 | `somora.web.theme.custom` | The theme of your own in use, with its colours, so it is there before the page has loaded. Not set for somora. |
 | `somora.chat.externalImages` | **Always show** for pictures from other websites. Shared with the mobile app. |
 

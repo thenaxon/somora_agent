@@ -5,7 +5,7 @@ import { useBrowsers } from './BrowserProvider';
 // tinted per agent) + live host CPU/mem from `/host-stats` + clock.
 
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Grid3x3, LogOut, Maximize, Minimize, Monitor, Pin, Power, RefreshCw, Settings, Sparkles } from 'lucide-react';
+import { Check, ChevronDown, Grid3x3, LogOut, Maximize, Minimize, Monitor, Pin, Power, RefreshCw, Settings, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { Koala } from './Koala';
 import type { WindowState } from '../types/window';
 import { api, type AgentInfo } from '../lib/api';
@@ -24,6 +24,8 @@ interface Props {
   onAutoArrange: () => void;
   onSaveLayout: () => void;
   onRestoreLayout: () => void;
+  /** The settings window (config.yaml as a form). */
+  onOpenSettings?: () => void;
 }
 
 export function Taskbar({
@@ -35,6 +37,7 @@ export function Taskbar({
   onAutoArrange,
   onSaveLayout,
   onRestoreLayout,
+  onOpenSettings,
 }: Props) {
   const browserState = useBrowsers();
   const waiting = browserState.browsers.filter((b) => b.handoff);
@@ -335,6 +338,21 @@ export function Taskbar({
                   </span>
                   <pre>{configStatus.invalid.message.replace(/^config\.yaml is invalid \([^)]*\):\n/, '')}</pre>
                 </div>
+              )}
+              {onOpenSettings && (
+                <button
+                  className="taskbar-menu-item"
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setGearOpen(false);
+                    onOpenSettings();
+                  }}
+                  title="Change config.yaml in a window, with an explanation for every setting"
+                >
+                  <SlidersHorizontal size={13} />
+                  <span>Settings…</span>
+                </button>
               )}
               <button
                 className="taskbar-menu-item"

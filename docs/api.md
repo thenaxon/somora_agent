@@ -469,6 +469,54 @@ A reload also forgets every "model unavailable" mark, like
 `POST /models/availability/reset`, and every cached provider catalog
 of image and video models: the next request reads them fresh.
 
+### Settings
+
+The settings window's routes (web.md "The settings window"). Keys and
+passwords never leave the server: in `values` they are
+`{secret: true, set}`, in the YAML text `•••• (set)`.
+
+#### `GET /settings`
+
+`{path, hash, valid, issues?, groups, restartSections, fields, values, inFile}`.
+
+| Field | Content |
+|---|---|
+| `hash` | The file's state; `POST /settings/apply` needs it back. |
+| `groups` | `{id, title, icon, sections, ready}`. A group that is not `ready` is read only. |
+| `fields` | One per setting: `{path, kind, section, default?, enum?, min?, max?, minExclusive?, nullable?, required?, info?}`. `kind` is `boolean`, `integer`, `number`, `string`, `enum`, `strings`, `one-or-many`, `object`, `map` or `list`. `*` in `path` stands for an entry name. `info` is `{label, help, more?, level, sensitive?, unit?, docs?, placeholder?}`. |
+| `values` | The configuration in force, defaults filled in; `null` when the file does not validate. |
+| `inFile` | Dotted paths the file itself sets. |
+
+#### `GET /settings/yaml`
+
+`{path, hash, text}`: the file as it is on disk, keys blanked.
+
+#### `POST /settings/apply`
+
+Body `{hash, changes: [...]}`, each change `{path, value}`, `{path,
+reset: true}` (back to the default: the line is removed) or `{path,
+secret}`. Only the changed lines are written; comments and layout
+stay. Before writing, the file is saved to `~/.somora/config-backups/`
+(the last 20 stay); after it, the configuration is reloaded as by
+`POST /config/reload`.
+
+| Status | Body |
+|---|---|
+| `200` | `{ok: true, hash, backup, reload}`. `reload` is the answer of the reload. Changes that leave the file as it was give `{ok: true, hash, unchanged: true}`: nothing written, no backup. |
+| `400` | `{error, issues: [{path, message}]}`: an unknown setting, one of a group that is not ready, or a value the schema refuses. Nothing was written. |
+| `409` | `{error, hash}`: the file changed since `hash`. Nothing was written. |
+
+#### `GET /settings/backups`
+
+`{backups: [{name, at, bytes}], keep}`, newest first.
+
+#### `POST /settings/restore`
+
+Body `{name, hash}`. Writes that backup back after checking it, keeps
+the current file as a backup too, and reloads. `400` for a name that
+is not a backup or a version that does not validate, `404` for a backup
+that is not there, `409` as above.
+
 ### `POST /server/restart`
 
 Restarts the server through its service manager: the systemd user unit
