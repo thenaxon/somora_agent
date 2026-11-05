@@ -574,9 +574,10 @@ in `full_output_file`, so the agent can read parts of it with
 
 **Time.** A tool call may take 30 seconds
 (`agentLoop.toolCallTimeoutMs`). Tools that are known to run long set
-their own limit, or take it from the call: `exec`, `agent_ask` and
+their own limit, or take it from the call: `agent_ask` and
 `subagent_result` wait as long as the caller asked, up to
-`agentLoop.longTaskMaxTimeoutMs`.
+`agentLoop.longTaskMaxTimeoutMs`. `exec` takes `timeout_ms`, up to one
+hour.
 
 **Wrong input.** Input is checked against the tool's schema, and the
 error names the field. A nested object sent as a JSON string is read

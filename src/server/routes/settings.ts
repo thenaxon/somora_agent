@@ -8,8 +8,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { Hono } from 'hono';
-import { isScalar, parseDocument, visit } from 'yaml';
-import { configPath, validateConfigText } from '../../config/loader.ts';
+import { isPair, isScalar, parseDocument, visit } from 'yaml';
+import { configPath, envOverriddenSettings, validateConfigText } from '../../config/loader.ts';
 import { RESTART_REQUIRED_SECTIONS } from '../../config/reload.ts';
 import { SETTINGS_CATALOG, SETTINGS_GROUPS, groupOfSection } from '../../config/settings/catalog/index.ts';
 import { matchesFieldPath, settingFields, type SettingField } from '../../config/settings/fields.ts';
@@ -32,9 +32,28 @@ function backupDir(): string {
 
 const hashOf = (text: string): string => createHash('sha256').update(text).digest('hex').slice(0, 16);
 
+/** The setting a concrete path belongs to. A path one step below a
+ *  map or list (`mcp.servers.<name>`, `imageGen.models.3`,
+ *  `mcp.servers.<name>.headers.<header>`) is an entry of it. */
 function fieldFor(path: string): SettingField | undefined {
   const fields = settingFields();
-  return fields.find((f) => f.path === path) ?? fields.find((f) => matchesFieldPath(f.path, path));
+  const own = fields.find((f) => f.path === path) ?? fields.find((f) => matchesFieldPath(f.path, path));
+  if (own) return own;
+  const parent = path.split('.').slice(0, -1).join('.');
+  const holder = parent ? fields.find((f) => f.path === parent) ?? fields.find((f) => matchesFieldPath(f.path, parent)) : undefined;
+  return holder && (holder.kind === 'map' || holder.kind === 'list') ? holder : undefined;
+}
+
+/** A value the window got blanked (`{ secret: true, set }`) must never
+ *  be written back as if it were the value. */
+function carriesBlankedSecret(v: unknown): boolean {
+  if (Array.isArray(v)) return v.some(carriesBlankedSecret);
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    if (o.secret === true && 'set' in o) return true;
+    return Object.values(o).some(carriesBlankedSecret);
+  }
+  return false;
 }
 
 function isSecretPath(path: string): boolean {
@@ -50,7 +69,7 @@ export function redactSecrets(value: unknown, path: string[] = []): unknown {
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {
-      const p = [...path, k];
+      const p = [...path, k.replace(/%/g, '%25').replace(/\./g, '%2E')];
       out[k] = typeof v === 'string' && isSecretPath(p.join('.')) ? { secret: true, set: v.length > 0 } : redactSecrets(v, p);
     }
     return out;
@@ -69,10 +88,12 @@ export function redactYamlText(text: string): string {
     const doc = parseDocument(text);
     if (doc.errors.length === 0) {
       visit(doc, {
-        Pair(_k, pair) {
+        Pair(_k, pair, path) {
           const key = pair.key && isScalar(pair.key) ? String(pair.key.value) : '';
           const v = pair.value as { range?: [number, number, number] } | null;
-          if (SECRET_KEY.test(key) && v?.range) spans.push([v.range[0], v.range[1]]);
+          // Every header of an MCP server: names like X-Api-Key carry keys too.
+          const underHeaders = path.some((n) => isPair(n) && isScalar(n.key) && String(n.key.value) === 'headers');
+          if ((SECRET_KEY.test(key) || (underHeaders && isScalar(pair.value))) && v?.range) spans.push([v.range[0], v.range[1]]);
         },
       });
     } else throw new Error('unparsed');
@@ -161,6 +182,7 @@ export function registerSettingsRoutes(app: Hono, deps: SettingsRoutesDeps): voi
       fields: settingFields().map((f) => ({ ...f, ...(SETTINGS_CATALOG[f.path] ? { info: SETTINGS_CATALOG[f.path] } : {}) })),
       values: checked.ok ? redactSecrets(checked.config) : null,
       inFile: pathsInFile(raw),
+      envSet: envOverriddenSettings(),
     });
   });
 
@@ -193,6 +215,11 @@ export function registerSettingsRoutes(app: Hono, deps: SettingsRoutesDeps): voi
           problems.push({ path, message: 'this setting is changed in config.yaml for now' });
           continue;
         }
+        const env = envOverriddenSettings()[path];
+        if (env) {
+          problems.push({ path, message: `set by the environment variable ${env}, which wins over config.yaml` });
+          continue;
+        }
         const info = SETTINGS_CATALOG[field.path];
         if (info?.locked) {
           problems.push({ path, message: info.locked });
@@ -202,10 +229,25 @@ export function registerSettingsRoutes(app: Hono, deps: SettingsRoutesDeps): voi
           problems.push({ path, message: 'this setting is no longer read; it can only be removed' });
           continue;
         }
-        const parts = path.split('.');
-        if (ch.reset === true) edits.push({ path: parts, remove: true });
-        else if (typeof ch.secret === 'string') edits.push({ path: parts, value: ch.secret });
-        else if ('value' in ch) edits.push({ path: parts, value: ch.value });
+        // A segment with a dot of its own comes as %2E (docs/api.md).
+        let parts: string[];
+        try {
+          parts = path.split('.').map((x) => decodeURIComponent(x));
+        } catch {
+          problems.push({ path, message: 'a name in this path is not encoded right' });
+          continue;
+        }
+        // Which segments index a list, from the schema: a map entry named
+        // 123 is a name, an entry of a list at 0 an index.
+        const segs = path.split('.');
+        const lists = segs.map((_, i) => {
+          const prefix = segs.slice(0, i).join('.');
+          return i > 0 && settingFields().find((f) => matchesFieldPath(f.path, prefix))?.kind === 'list';
+        });
+        if (ch.reset === true) edits.push({ path: parts, remove: true, lists });
+        else if (typeof ch.secret === 'string') edits.push({ path: parts, value: ch.secret, lists });
+        else if ('value' in ch && carriesBlankedSecret(ch.value)) problems.push({ path, message: 'a key or password cannot be sent back blanked; replace it on its own' });
+        else if ('value' in ch) edits.push({ path: parts, value: ch.value, lists });
         else problems.push({ path, message: 'give value, reset or secret' });
       }
       if (problems.length > 0) return c.json({ error: 'some changes were refused', issues: problems }, 400);

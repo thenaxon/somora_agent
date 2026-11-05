@@ -668,6 +668,7 @@ export interface SettingFieldInfo {
   nullable?: boolean;
   required?: boolean;
   info?: SettingInfo;
+  valueKind?: 'string' | 'number' | 'integer' | 'boolean';
 }
 export interface SettingsGroupInfo {
   id: string;
@@ -686,6 +687,8 @@ export interface SettingsView {
   fields: SettingFieldInfo[];
   values: Record<string, unknown> | null;
   inFile: string[];
+  /** Settings an environment variable overrides: path → variable name. */
+  envSet?: Record<string, string>;
 }
 export type SettingChange = { path: string; value: unknown } | { path: string; reset: true } | { path: string; secret: string };
 export interface SettingsApplyResult {

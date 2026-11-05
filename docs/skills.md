@@ -411,7 +411,7 @@ skills:
 |---|---|---|
 | `skills.maxSkillsInPrompt` | `150` | Above this many skills the list in the prompt uses the one-line form. |
 | `skills.maxPromptChars` | `18000` | Size limit of the list in characters. Over it: one-line form, then cut. |
-| `skills.maxSkillFileBytes` | `256000` | Size check for a `SKILL.md` when it is loaded. A larger file is logged as `skill.restat_failed`. The body is still returned. |
+| `skills.maxSkillFileBytes` | `256000` | Largest `SKILL.md` an agent can load. A larger one is refused with its size and the limit. |
 | `skills.envScoping` | `true` | Declared variables reach only commands that call the skill's programs. `false` gives every command the full environment. |
 
 Per agent, in `agent.yaml`: the `skills` section described under

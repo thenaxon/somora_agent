@@ -103,7 +103,7 @@ test('an invalid value is refused and nothing is written', async () => {
 test('a group that is not ready yet, and an unknown path, are refused', async () => {
   writeFileSync(FILE, START);
   const { body: view } = await call('GET', '/settings');
-  const r = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'agentLoop.maxRounds', value: 10 }, { path: 'memory.nope', value: 1 }] });
+  const r = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'thinkingContent.capture', value: false }, { path: 'memory.nope', value: 1 }] });
   assert.equal(r.status, 400);
   assert.deepEqual(r.body.issues.map((i: { message: string }) => i.message), ['this setting is changed in config.yaml for now', 'no such setting']);
   assert.equal(readFileSync(FILE, 'utf8'), START);
@@ -130,6 +130,93 @@ test('a locked setting is refused; a retired one can only be removed', async () 
   const removed = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'realtimeVoice.transport', reset: true }] });
   assert.equal(removed.status, 200);
   assert.equal(readFileSync(FILE, 'utf8'), `${START}  realtimeVoice:\n    model: rt\n`);
+});
+
+test('entries: one field, a header key, a new entry and a removed one — each its own path', async () => {
+  const withMcp = `${START}  mcp:
+    servers:
+      # the docs search
+      docs:
+        url: https://docs.example/mcp
+        headers:
+          X-Api-Key: "hdr-secret-1"   # rotated monthly
+      old:
+        url: https://old.example/mcp
+`;
+  writeFileSync(FILE, withMcp);
+  const { body: view } = await call('GET', '/settings');
+  assert.deepEqual(view.values.mcp.servers.docs.headers['X-Api-Key'], { secret: true, set: true });
+  const yaml = await call('GET', '/settings/yaml');
+  assert.ok(!yaml.body.text.includes('hdr-secret-1'), 'a header value is blanked in the YAML view');
+  const r = await call('POST', '/settings/apply', {
+    hash: view.hash,
+    changes: [
+      { path: 'mcp.servers.docs.timeoutMs', value: 5000 },
+      { path: 'mcp.servers.docs.headers.X-Api-Key', secret: 'hdr-secret-2' },
+      { path: 'mcp.servers.fresh', value: { url: 'https://fresh.example/mcp' } },
+      { path: 'mcp.servers.old', reset: true },
+    ],
+  });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(readFileSync(FILE, 'utf8'), `${START}  mcp:
+    servers:
+      # the docs search
+      docs:
+        url: https://docs.example/mcp
+        headers:
+          X-Api-Key: "hdr-secret-2"   # rotated monthly
+        timeoutMs: 5000
+      fresh:
+        url: https://fresh.example/mcp
+`);
+});
+
+test('a new entry arrives whole: its key and a required list inside it', async () => {
+  writeFileSync(FILE, START);
+  const { body: view } = await call('GET', '/settings');
+  const r = await call('POST', '/settings/apply', {
+    hash: view.hash,
+    changes: [
+      { path: 'a2a.peers.partner', value: { token: 'peer-token-0123456789abcdef', agents: ['helper'] } },
+      { path: 'projects.entities.0', value: { slug: 'site', label: 'Site' } },
+    ],
+  });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const after = readFileSync(FILE, 'utf8');
+  assert.ok(after.startsWith(START));
+  assert.match(after, /partner:\n {8}token: peer-token-0123456789abcdef\n {8}agents:\n {10}- helper/);
+  assert.match(after, /entities:\n {6}- slug: site\n {8}label: Site/);
+});
+
+test('an entry whose name has a dot is reached with %2E', async () => {
+  const dotted = `${START}  toolCatalog:
+    models:
+      gpt-5.5:
+        mode: catalog
+`;
+  writeFileSync(FILE, dotted);
+  const { body: view } = await call('GET', '/settings');
+  assert.equal(view.valid, true, JSON.stringify(view.issues));
+  const r = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'toolCatalog.models.gpt-5%2E5.add', value: ['exec'] }] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(readFileSync(FILE, 'utf8'), dotted + '        add:\n          - exec\n');
+});
+
+test('a map entry named with digits is a name, not a list position', async () => {
+  writeFileSync(FILE, START);
+  const { body: view } = await call('GET', '/settings');
+  const r = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'lsp.servers.123', value: { command: 'ls-123' } }] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.match(readFileSync(FILE, 'utf8'), /lsp:\n {4}servers:\n {6}"?123"?:\n {8}command: ls-123\n$/);
+});
+
+test('a blanked key sent back inside an entry is refused', async () => {
+  writeFileSync(FILE, START);
+  const { body: view } = await call('GET', '/settings');
+  const r = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'mcp.servers.x', value: { url: 'https://x.example/mcp', headers: { Authorization: { secret: true, set: true } } } }] });
+  assert.equal(r.status, 400);
+  assert.match(r.body.issues[0].message, /blanked/);
+  assert.equal(readFileSync(FILE, 'utf8'), START);
 });
 
 test('a secret is replaced without ever being read back', async () => {

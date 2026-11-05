@@ -7,6 +7,38 @@ import { assertUniqueAliases, type Config, ConfigSchema } from './types.ts';
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const CONFIG_PATH = join(SOMORA_HOME, 'config.yaml');
 
+/** Settings an environment variable overrides, by path. The variables
+ *  are read once, before somora copies claudeCli/codexCli values into
+ *  its own environment (applyClaudeCliSdkEnv calls captureEnvOverrides
+ *  first) and after ~/.somora/somora.env is loaded, so the settings
+ *  window can tell which values are not the file's. */
+export const ENV_OVERRIDES: Readonly<Record<string, string>> = {
+  'claudeCli.mcpToolTimeoutMs': 'MCP_TOOL_TIMEOUT',
+  'claudeCli.mcpConnectTimeoutMs': 'MCP_TIMEOUT',
+  'codexCli.toolTimeoutSec': 'SOMORA_CODEX_TOOL_TIMEOUT_SEC',
+  'codexCli.shellEnvironmentPolicy': 'SOMORA_CODEX_SHELL_ENV_POLICY',
+  'compaction.triggerRatio': 'SOMORA_COMPACTION_TRIGGER_RATIO',
+  'compaction.safetyCushionPairs': 'SOMORA_COMPACTION_SAFETY_PAIRS',
+  'compaction.modelOverride': 'SOMORA_COMPACTION_MODEL',
+  'compaction.workers': 'SOMORA_COMPACTION_WORKERS',
+};
+let envAtStart: Readonly<Record<string, string>> | null = null;
+
+/** Take the snapshot of the override variables; later calls keep the first. */
+export function captureEnvOverrides(): void {
+  envAtStart ??= Object.fromEntries(
+    Object.values(ENV_OVERRIDES)
+      .map((name) => [name, process.env[name]?.trim() ?? ''] as const)
+      .filter(([, v]) => v !== ''),
+  );
+}
+
+/** The settings an environment variable set at start overrides: path → variable. */
+export function envOverriddenSettings(): Record<string, string> {
+  captureEnvOverrides();
+  return Object.fromEntries(Object.entries(ENV_OVERRIDES).filter(([, name]) => name in envAtStart!));
+}
+
 const DEFAULT_CONFIG = `# somora server config — lives at ~/.somora/config.yaml
 # \`somora setup\` is the guided way to fill it (models, agents, memory, HTTPS).
 # API keys are stored here as plain text. This file is *not* committed
@@ -299,6 +331,7 @@ export function configPath(): string {
  * Call once at server boot, before the first claude-cli engine call.
  */
 export function applyClaudeCliSdkEnv(config: Config): void {
+  captureEnvOverrides();
   const c = config.claudeCli;
   if (process.env.MCP_TOOL_TIMEOUT === undefined || process.env.MCP_TOOL_TIMEOUT === '') {
     process.env.MCP_TOOL_TIMEOUT = String(c.mcpToolTimeoutMs);
@@ -316,6 +349,7 @@ export function applyClaudeCliSdkEnv(config: Config): void {
  * invocation. Mirrors applyClaudeCliSdkEnv()'s policy: explicit env wins.
  */
 export function applyCodexCliEnv(config: Config): void {
+  captureEnvOverrides();
   const c = config.codexCli;
   if (
     process.env.SOMORA_CODEX_TOOL_TIMEOUT_SEC === undefined ||

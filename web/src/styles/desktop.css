@@ -2483,12 +2483,21 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .settings-locked { color: var(--text-2); }
 .settings-secret { display: inline-flex; align-items: center; gap: 6px; }
 .settings-secret-state { color: var(--text-2); }
-.settings-entries { display: flex; flex-direction: column; gap: 4px; min-width: 300px; }
-.settings-entry { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+.settings-entries { display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 0; margin-top: 6px; }
+.settings-entries > .settings-btn { align-self: flex-start; }
+.settings-entry { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+.settings-entry.plain { flex-direction: row; align-items: center; gap: 8px; }
+.settings-entry.added { border-color: var(--accent); }
+.settings-entry.removed { opacity: 0.55; border-style: dashed; }
+.settings-entry-row { display: flex; align-items: center; gap: 4px; }
+.settings-entry-name { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--text-0); }
+.settings-entry-group { display: flex; flex-direction: column; gap: 4px; }
+.settings-entry-nested { display: flex; flex-direction: column; gap: 5px; padding-left: 12px; border-left: 2px solid var(--line); }
 .settings-entry-head { flex: 1; display: flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--text-0); font: inherit; text-align: left; cursor: pointer; }
 .settings-entry-sub { color: var(--text-2); font-size: 11px; }
 .settings-entry-body { flex-basis: 100%; display: flex; flex-direction: column; gap: 5px; padding: 6px 2px 4px 16px; }
-.settings-entry-field { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.settings-entry-field { display: flex; align-items: center; gap: 8px; }
+.settings-entry-field > .settings-entry-label { flex: 1; min-width: 0; }
 .settings-entry-label { color: var(--text-1); }
 .settings-advanced { margin: 4px 0 0; padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
 .settings-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }

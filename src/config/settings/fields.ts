@@ -35,6 +35,8 @@ export interface SettingField {
   nullable?: boolean;
   /** Required inside its parent block. */
   required?: boolean;
+  /** A map of plain values: what each value is (a header is text). */
+  valueKind?: 'string' | 'number' | 'integer' | 'boolean';
 }
 
 type Node = {
@@ -78,6 +80,21 @@ function walk(n: Node, path: string, section: string, required: boolean, out: Se
       return;
     }
     const types = nonNull.map((b) => b.type);
+    // One of several blocks (`transport: {local: true}` or
+    // `{resource: <name>}`): a block with every field of every variant;
+    // the file is checked against the schema when it is applied.
+    if (nonNull.every((b) => b.type === 'object' && b.properties)) {
+      out.push({ ...base, kind: 'object', ...(nullable ? { nullable: true } : {}) });
+      const seen = new Set<string>();
+      for (const b of nonNull) {
+        for (const [k, v] of Object.entries(b.properties ?? {})) {
+          if (seen.has(k)) continue;
+          seen.add(k);
+          walk(v, `${path}.${k}`, section, false, out);
+        }
+      }
+      return;
+    }
     if (types.includes('string') && types.includes('array')) {
       out.push({ ...base, kind: 'one-or-many' });
       return;
@@ -113,7 +130,8 @@ function walk(n: Node, path: string, section: string, required: boolean, out: Se
     case 'object': {
       const ap = n.additionalProperties;
       if (!n.properties && ap && typeof ap === 'object') {
-        out.push({ ...base, kind: 'map' });
+        const vt = typeof ap.type === 'string' && ['string', 'number', 'integer', 'boolean'].includes(ap.type) ? (ap.type as SettingField['valueKind']) : undefined;
+        out.push({ ...base, kind: 'map', ...(vt ? { valueKind: vt } : {}) });
         if (ap.properties) for (const [k, v] of Object.entries(ap.properties)) walk(v, `${path}.*.${k}`, section, (ap.required ?? []).includes(k), out);
         else if (ap.anyOf || ap.oneOf) {
           // A map of variants (providers by engine): every field of every

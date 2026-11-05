@@ -132,23 +132,23 @@ export const skill: ToolDefinition<z.infer<typeof SkillInput>, SkillOutput> = {
     // already read by loadAvailableSkills, but we want a fresh enforcement
     // point in case the file grew between scan and activation.
     const skillMdPath = join(SKILLS_DIR, skill.name, 'SKILL.md');
+    let size: number | undefined;
     try {
-      const s = await stat(skillMdPath);
-      if (s.size > ctx.config.skills.maxSkillFileBytes) {
-        throw new Error(
-          `skill '${skill.name}' SKILL.md is ${s.size} bytes, exceeds limit of ` +
-            `${ctx.config.skills.maxSkillFileBytes} (config.skills.maxSkillFileBytes).`,
-        );
-      }
+      size = (await stat(skillMdPath)).size;
     } catch (err) {
       // Re-stat failure is unusual (we just listed it). Fall through to
-      // returning the previously-read body — the cap-check is best-
-      // effort, not a security gate.
+      // returning the previously-read body.
       logger.warn({
         msg: 'skill.restat_failed',
         name: skill.name,
         err: (err as Error).message,
       });
+    }
+    if (size !== undefined && size > ctx.config.skills.maxSkillFileBytes) {
+      throw new Error(
+        `skill '${skill.name}' SKILL.md is ${size} bytes, exceeds limit of ` +
+          `${ctx.config.skills.maxSkillFileBytes} (config.skills.maxSkillFileBytes).`,
+      );
     }
 
     // Re-read the body fresh so a SKILL.md edited mid-session takes

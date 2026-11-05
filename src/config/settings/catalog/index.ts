@@ -11,11 +11,15 @@
 // limits and "needs a restart" are not written here — they come from
 // the schema and from RESTART_REQUIRED_SECTIONS, so they cannot drift.
 
+import { AGENTS } from './agents.ts';
 import { AUTOMATION } from './automation.ts';
+import { ENGINES } from './engines.ts';
 import { GENERAL } from './general.ts';
 import { IMAGES } from './images.ts';
 import { INTERFACES } from './interfaces.ts';
 import { MEMORY } from './memory.ts';
+import { TOOLS_A } from './tools-a.ts';
+import { TOOLS_B } from './tools-b.ts';
 import { VOICE } from './voice.ts';
 
 export interface CatalogEntry {
@@ -60,12 +64,12 @@ export interface SettingsGroup {
 export const SETTINGS_GROUPS: SettingsGroup[] = [
   { id: 'general', title: 'General', icon: 'Settings', sections: ['server', 'updateCheck', 'workspace', 'attachments', 'projects'], ready: true },
   { id: 'models', title: 'Models & providers', icon: 'Sparkles', sections: ['providers', 'fallback', 'thinkingContent', 'decisions'], ready: false },
-  { id: 'agents', title: 'Agents & turns', icon: 'Bot', sections: ['agentLoop', 'subagents', 'compaction', 'promptBudgets', 'engineWatchdog', 'toolCatalog'], ready: false },
-  { id: 'engines', title: 'Engines & coding', icon: 'Cpu', sections: ['claudeCli', 'codexCli', 'tmux', 'lsp'], ready: false },
+  { id: 'agents', title: 'Agents & turns', icon: 'Bot', sections: ['agentLoop', 'subagents', 'compaction', 'promptBudgets', 'engineWatchdog', 'toolCatalog'], ready: true },
+  { id: 'engines', title: 'Engines & coding', icon: 'Cpu', sections: ['claudeCli', 'codexCli', 'tmux', 'lsp'], ready: true },
   { id: 'memory', title: 'Memory & wiki', icon: 'Brain', sections: ['memory', 'rem', 'wiki', 'obsidian'], ready: true },
   { id: 'voice', title: 'Voice', icon: 'Mic', sections: ['stt', 'tts', 'realtimeVoice'], ready: true },
   { id: 'images', title: 'Images & video', icon: 'Image', sections: ['vision', 'imageGen', 'videoGen'], ready: true },
-  { id: 'tools', title: 'Tools & connections', icon: 'Wrench', sections: ['browser', 'mcp', 'skills', 'resources', 'external', 'a2a'], ready: false },
+  { id: 'tools', title: 'Tools & connections', icon: 'Wrench', sections: ['browser', 'mcp', 'skills', 'resources', 'external', 'a2a'], ready: true },
   { id: 'automation', title: 'Automation', icon: 'AlarmClock', sections: ['sentinel'], ready: true },
   { id: 'interfaces', title: 'Interfaces', icon: 'Monitor', sections: ['web', 'mobile', 'tui', 'sse'], ready: true },
 ];
@@ -77,6 +81,10 @@ export const SETTINGS_CATALOG: Catalog = {
   ...IMAGES,
   ...AUTOMATION,
   ...INTERFACES,
+  ...AGENTS,
+  ...ENGINES,
+  ...TOOLS_A,
+  ...TOOLS_B,
 };
 
 /** The group a top-level section belongs to. */

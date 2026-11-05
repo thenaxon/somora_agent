@@ -125,3 +125,106 @@ test('a flow map: removing or adding one setting keeps its neighbours', () => {
   const inPlace = applyYamlEdits(f, [{ path: ['server', 'port'], value: 18800 }]);
   assert.equal(inPlace, f.replace('18737', '18800'), 'a plain value is still replaced in place');
 });
+
+// Lists of entries (imageGen.models): one field of one entry, an entry
+// added at the end, entries removed — the rest of the list as it was.
+const LIST = `  imageGen:
+    enabled: true
+    models:
+      # the fast one
+      - name: quick   # default
+        provider: local
+        model: q1
+      - name: fine
+        provider: local
+        model: f1
+        label: Fine
+      # kept for comparison
+      - name: old
+        provider: local
+        model: o1
+`;
+
+test('a field of one list entry changes in place', () => {
+  const out = applyYamlEdits(LIST, [{ path: ['imageGen', 'models', '1', 'model'], value: 'f2' }]);
+  assert.equal(out, LIST.replace('model: f1', 'model: f2'));
+  const added = applyYamlEdits(LIST, [{ path: ['imageGen', 'models', '0', 'label'], value: 'Quick' }]);
+  assert.equal(added, LIST.replace('        model: q1\n', '        model: q1\n        label: Quick\n'));
+  const gone = applyYamlEdits(LIST, [{ path: ['imageGen', 'models', '1', 'label'], remove: true }]);
+  assert.equal(gone, LIST.replace('        label: Fine\n', ''));
+});
+
+test('an entry is added at the end of its list, with the list\'s indentation', () => {
+  const out = applyYamlEdits(LIST, [{ path: ['imageGen', 'models', '3'], value: { name: 'new', provider: 'local', model: 'n1' } }]);
+  assert.equal(out, `${LIST}      - name: new\n        provider: local\n        model: n1\n`);
+});
+
+test('entries are removed with their own comment; edits in the same apply mean the file as it was', () => {
+  const out = applyYamlEdits(LIST, [
+    { path: ['imageGen', 'models', '0'], remove: true },
+    { path: ['imageGen', 'models', '2', 'model'], value: 'o2' },
+    { path: ['imageGen', 'models', '2'], remove: true },
+    { path: ['imageGen', 'models', '1', 'label'], value: 'Fine 2' },
+  ]);
+  assert.equal(out, `  imageGen:
+    enabled: true
+    models:
+      - name: fine
+        provider: local
+        model: f1
+        label: Fine 2
+`);
+});
+
+test('an index past the end, or into a missing list, is refused', () => {
+  assert.throws(() => applyYamlEdits(LIST, [{ path: ['imageGen', 'models', '7', 'model'], value: 'x' }]), YamlEditError);
+  assert.throws(() => applyYamlEdits(LIST, [{ path: ['videoGen', 'models', '0', 'model'], value: 'x' }]), YamlEditError);
+});
+
+test('the first entry of a list that is empty or not there, and the last one removed', () => {
+  const empty = `  projects:\n    entities: []   # none yet\n  sentinel:\n    completedRetentionDays: 7\n`;
+  const first = applyYamlEdits(empty, [{ path: ['projects', 'entities', '0'], value: { slug: 'a', label: 'A' } }]);
+  assert.deepEqual((parse(first) as { projects: { entities: unknown } }).projects.entities, [{ slug: 'a', label: 'A' }]);
+  assert.ok(first.endsWith('  sentinel:\n    completedRetentionDays: 7\n'));
+  const missing = applyYamlEdits(FILE, [{ path: ['projects', 'entities', '0'], value: { slug: 'a', label: 'A' } }]);
+  assert.deepEqual((parse(missing) as { projects: { entities: unknown } }).projects.entities, [{ slug: 'a', label: 'A' }]);
+  const gone = applyYamlEdits(first, [{ path: ['projects', 'entities', '0'], remove: true }]);
+  assert.deepEqual((parse(gone) as { projects: { entities: unknown } }).projects.entities, []);
+  const both = applyYamlEdits(LIST, [0, 1, 2].map((i) => ({ path: ['imageGen', 'models', String(i)], remove: true as const })));
+  assert.deepEqual((parse(both) as { imageGen: { models: unknown } }).imageGen.models, []);
+});
+
+test('removing the first setting of a list entry keeps its dash', () => {
+  const out = applyYamlEdits(LIST, [{ path: ['imageGen', 'models', '1', 'name'], remove: true }]);
+  assert.equal(out, LIST.replace('      - name: fine\n        provider: local\n', '      - provider: local\n'));
+  const one = `  projects:\n    entities:\n      - slug: a\n      - slug: b\n        label: B\n`;
+  assert.deepEqual((parse(applyYamlEdits(one, [{ path: ['projects', 'entities', '0', 'slug'], remove: true }])) as { projects: { entities: unknown } }).projects.entities, [{}, { slug: 'b', label: 'B' }]);
+});
+
+test('a change that damages anything else is refused', () => {
+  // Removing a server and editing it in the same apply: the result is
+  // the removal, which reads back as expected.
+  const out = applyYamlEdits(LIST, [{ path: ['imageGen', 'models', '0', 'model'], value: 'q2' }, { path: ['imageGen', 'enabled'], remove: true }]);
+  assert.deepEqual(Object.keys((parse(out) as { imageGen: object }).imageGen), ['models']);
+});
+
+test('a one-line list of entries is changed on its line, the other entries kept', () => {
+  const flow = `  imageGen:\n    models: [{name: quick, provider: local, model: q1}, {name: fine, provider: local, model: f1}]   # two\n`;
+  const out = applyYamlEdits(flow, [{ path: ['imageGen', 'models', '0', 'model'], value: 'q2' }]);
+  assert.equal(out, `  imageGen:\n    models: [ { name: quick, provider: local, model: q2 }, { name: fine, provider: local, model: f1 } ]   # two\n`);
+  const gone = applyYamlEdits(flow, [{ path: ['imageGen', 'models', '0'], remove: true }]);
+  assert.deepEqual((parse(gone) as { imageGen: { models: unknown } }).imageGen.models, [{ name: 'fine', provider: 'local', model: 'f1' }]);
+});
+
+test('a path through __proto__ is refused and changes nothing', () => {
+  assert.throws(() => applyYamlEdits(LIST, [{ path: ['imageGen', '__proto__', 'polluted'], value: 'x' }]), YamlEditError);
+  assert.equal(({} as Record<string, unknown>).polluted, undefined);
+});
+
+test('replacing the first setting of a list entry as a block keeps its dash', () => {
+  const lit = `  projects:\n    entities:\n      - label: |\n          Site\n        slug: site\n`;
+  const out = applyYamlEdits(lit, [{ path: ['projects', 'entities', '0', 'label'], value: 'Site\nand more\n' }]);
+  assert.deepEqual((parse(out) as { projects: { entities: unknown } }).projects.entities, [{ label: 'Site\nand more\n', slug: 'site' }]);
+  const block = applyYamlEdits(LIST.replace('      - name: quick   # default\n', '      - name: [a, b]\n'), [{ path: ['imageGen', 'models', '0', 'name'], value: { first: 'x' } }]);
+  assert.match(block, / {6}- name:\n {10}first: x\n/);
+});

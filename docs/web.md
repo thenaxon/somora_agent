@@ -726,8 +726,19 @@ after a restart (**Restart server** in the gear menu).
 - **View as YAML** shows the file as it is, read only, with keys
   blanked.
 
-Groups marked **read only** are shown but not yet editable here:
-change them in `config.yaml`. Settings of a single agent stay in its
+Lists of entries, such as MCP servers, resources or external agents,
+show one line per entry. A click opens its fields, **+ Add** adds one
+and **−** removes one on Apply. Each change is written on its own, so
+the rest of the entry and its comments stay. A key inside an entry,
+such as an MCP server's `Authorization` header, shows as set and can
+only be replaced.
+
+A setting an environment variable overrides, such as
+`SOMORA_COMPACTION_MODEL`, is locked and names the variable: the
+variable wins over the file.
+
+**Models & providers** is shown but not yet editable here: change it
+in `config.yaml`. Settings of a single agent stay in its
 [Agent window](#the-agent-window). The phone app has no settings window.
 
 ## Other windows

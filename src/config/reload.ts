@@ -15,6 +15,7 @@ export const RESTART_REQUIRED_SECTIONS: readonly string[] = [
   'obsidian', // vault source resolved at boot for the wiki workers
   'wiki', // Deep / Lucid schedulers read enabled + intervals at start()
   'mcp', // hub children are spawned at boot
+  'browser', // the browser service keeps the config it was started with
   'claudeCli', // applied as process env at boot
   'codexCli', // applied as process env at boot
   'stt', // voice backends are wired at boot

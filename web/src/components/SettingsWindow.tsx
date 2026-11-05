@@ -108,6 +108,8 @@ export function SettingsWindow() {
       const next = new Map(p);
       if (c === null) next.delete(path);
       else next.set(path, c);
+      // An entry removed takes its pending field changes along.
+      if (c && 'reset' in c) for (const k of [...next.keys()]) if (k.startsWith(`${path}.`)) next.delete(k);
       return next;
     });
     setFieldErrors((e) => {
@@ -338,6 +340,20 @@ function SectionBoxes(p: BoxProps) {
       const parent = f.path.slice(0, f.path.lastIndexOf('.'));
       return parent === block && f.kind !== 'object';
     });
+  // A section that is itself a list of entries (`resources`): one box
+  // with its entries editor.
+  const own = p.fields.find((f) => f.path === p.section);
+  if (own && (own.kind === 'map' || own.kind === 'list')) {
+    return (
+      <section className="settings-box">
+        <header className="settings-box-head">
+          <span>{own.info?.label ?? humanize(p.section)}</span>
+          <span className={`settings-badge ${restart ? 'restart' : 'live'}`}>{restart ? 'needs restart' : 'live'}</span>
+        </header>
+        <SettingRow field={own} {...p} />
+      </section>
+    );
+  }
   const visible = (f: SettingFieldInfo) =>
     // A retired setting shows only while the file still sets it — then
     // always, advanced or not, so it can be removed.
@@ -357,7 +373,7 @@ function SectionBoxes(p: BoxProps) {
             </header>
             {head?.info?.help && <p className="settings-box-help">{head.info.help}</p>}
             {kids.map((f) => (
-              <SettingRow key={f.path} field={f} {...p} entryFields={p.fields.filter((x) => x.path.startsWith(`${f.path}.*.`))} />
+              <SettingRow key={f.path} field={f} {...p} />
             ))}
           </section>
         );
@@ -366,7 +382,7 @@ function SectionBoxes(p: BoxProps) {
   );
 }
 
-function SettingRow(p: BoxProps & { field: SettingFieldInfo; entryFields: SettingFieldInfo[] }) {
+function SettingRow(p: BoxProps & { field: SettingFieldInfo }) {
   const { field: f } = p;
   const [more, setMore] = useState(false);
   const pend = p.pending.get(f.path);
@@ -374,12 +390,38 @@ function SettingRow(p: BoxProps & { field: SettingFieldInfo; entryFields: Settin
   const inFile = p.data.inFile.includes(f.path);
   const shown = pend && 'value' in pend ? pend.value : pend && 'reset' in pend ? f.default : current;
   const label = f.info?.label ?? humanize(f.path.split('.').pop()!);
-  const disabled = p.readOnly || !!f.info?.locked || !!f.info?.retired;
+  const envName = p.data.envSet?.[f.path];
+  const disabled = p.readOnly || !!f.info?.locked || !!f.info?.retired || !!envName;
   const set = (v: unknown) => {
     if (JSON.stringify(v) === JSON.stringify(current) && inFile) p.onChange(f.path, null);
     else p.onChange(f.path, { value: v });
   };
   const err = p.errors[f.path];
+  if (f.kind === 'map' || f.kind === 'list') {
+    // Entries: each change is its own path below this one.
+    const entryErrors = Object.entries(p.errors).filter(([k]) => k.startsWith(`${f.path}.`));
+    return (
+      <div id={`setting-${f.path}`} className={`settings-row ${p.highlight === f.path ? 'hl' : ''}`}>
+        <div className="settings-row-main">
+          <span className="settings-label">{label}{f.info?.level === 'advanced' && <span className="settings-adv">advanced</span>}</span>
+        </div>
+        {f.info?.help && <p className="settings-help">{f.info.help}</p>}
+        <EntriesControl tpl={f.path} at={f.path} value={current} ctx={{ fields: p.data.fields, pending: p.pending, disabled, change: p.onChange }} />
+        {entryErrors.map(([k, m]) => <p key={k} className="settings-error"><code>{k}</code>: {m}</p>)}
+        {(f.info?.more || f.info?.docs) && (
+          <button type="button" className="settings-more" onClick={() => setMore((m) => !m)}>
+            {more ? <ChevronDown size={11} /> : <ChevronRight size={11} />} more
+          </button>
+        )}
+        {more && (
+          <div className="settings-more-text">
+            {f.info?.more && <p>{f.info.more}</p>}
+            <p className="settings-path"><code>{f.path}</code>{f.info?.docs && <> · <a href={docsUrl(f.info.docs)} target="_blank" rel="noreferrer">Read in the docs</a></>}</p>
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div id={`setting-${f.path}`} className={`settings-row ${pend ? 'changed' : ''} ${p.highlight === f.path ? 'hl' : ''}`}>
       <div className="settings-row-main">
@@ -391,7 +433,7 @@ function SettingRow(p: BoxProps & { field: SettingFieldInfo; entryFields: Settin
           {isSecret(current) || f.info?.sensitive ? (
             <SecretControl id={`in-${f.path}`} set={isSecret(current) ? current.set : false} pending={pend && 'secret' in pend} disabled={disabled} onSecret={(s) => p.onChange(f.path, s === null ? null : { secret: s })} />
           ) : (
-            <Control id={`in-${f.path}`} field={f} value={shown} disabled={disabled} onChange={set} entryFields={p.entryFields} />
+            <Control id={`in-${f.path}`} field={f} value={shown} disabled={disabled} onChange={set} />
           )}
           {f.info?.retired && !p.readOnly && inFile ? (
             pend ? (
@@ -399,6 +441,8 @@ function SettingRow(p: BoxProps & { field: SettingFieldInfo; entryFields: Settin
             ) : (
               <button type="button" className="settings-text-btn" title="No longer read: remove it from config.yaml" onClick={() => p.onChange(f.path, { reset: true })}>Remove</button>
             )
+          ) : envName ? (
+            <span className="settings-default" title={`Set by ${envName}`}>env</span>
           ) : f.info?.locked ? (
             <span className="settings-default" title={f.info.locked}><Lock size={11} /></span>
           ) : !disabled && (pend ? (
@@ -411,6 +455,7 @@ function SettingRow(p: BoxProps & { field: SettingFieldInfo; entryFields: Settin
         </div>
       </div>
       {f.info?.help && <p className="settings-help">{f.info.help}</p>}
+      {envName && <p className="settings-help settings-locked"><Lock size={10} className="icon-inline" /> Set by the environment variable <code>{envName}</code>, which wins over config.yaml; the value shown is the file's.</p>}
       {f.info?.locked && <p className="settings-help settings-locked"><Lock size={10} className="icon-inline" /> {f.info.locked}</p>}
       {pend && 'reset' in pend && <p className="settings-help">{f.info?.retired ? 'The line is removed from config.yaml.' : 'Goes back to the default: the line is removed from config.yaml.'}</p>}
       {f.info?.unit === 'bytes' && typeof shown === 'number' && <p className="settings-help">= {formatBytes(shown)}</p>}
@@ -451,7 +496,7 @@ function SecretControl({ id, set, pending, disabled, onSecret }: { id: string; s
   );
 }
 
-function Control({ id, field: f, value, disabled, onChange, entryFields }: { id: string; field: SettingFieldInfo; value: unknown; disabled: boolean; onChange: (v: unknown) => void; entryFields: SettingFieldInfo[] }) {
+function Control({ id, field: f, value, disabled, onChange }: { id: string; field: SettingFieldInfo; value: unknown; disabled: boolean; onChange: (v: unknown) => void }) {
   switch (f.kind) {
     case 'boolean':
       return (
@@ -484,9 +529,6 @@ function Control({ id, field: f, value, disabled, onChange, entryFields }: { id:
       const list = Array.isArray(value) ? (value as unknown[]).map(String) : typeof value === 'string' ? [value] : [];
       return <StringsControl id={id} value={list} disabled={disabled} onChange={(v) => onChange((v as string[]).length === 1 ? (v as string[])[0] : v)} />;
     }
-    case 'list':
-    case 'map':
-      return <EntriesControl field={f} value={value} disabled={disabled} onChange={onChange} entryFields={entryFields} />;
     default:
       return <TextControl id={id} value={typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)} placeholder={f.info?.placeholder} disabled={disabled} onChange={(t) => onChange(t === '' && f.nullable ? null : t)} />;
   }
@@ -551,58 +593,321 @@ function StringsControl({ id, value, disabled, onChange }: { id: string; value: 
   );
 }
 
+/** What an entries editor needs from the window: every field, the
+ *  pending changes and the way to record one. Each change is one path:
+ *  a field of an entry (`mcp.servers.<name>.url`), a new entry as a
+ *  whole (`mcp.servers.<name>`, `imageGen.models.3`), or an entry
+ *  removed — so the file keeps everything else, comments included. */
+interface EntryCtx {
+  fields: SettingFieldInfo[];
+  pending: Pending;
+  disabled: boolean;
+  change: (path: string, c: { value: unknown } | { reset: true } | { secret: string } | null) => void;
+}
+
+const fieldAt = (fields: SettingFieldInfo[], tpl: string) => fields.find((x) => x.path === tpl);
+const childrenOf = (fields: SettingFieldInfo[], tpl: string) => {
+  const depth = tpl.split('.').length + 1;
+  return fields.filter((x) => x.path.startsWith(`${tpl}.`) && x.path.split('.').length === depth);
+};
+const summaryOf = (e: unknown) => {
+  if (!e || typeof e !== 'object') return '';
+  const o = e as Record<string, unknown>;
+  const v = o.alias ?? o.name ?? o.id ?? o.label ?? o.slug ?? o.url ?? o.command ?? o.host;
+  return typeof v === 'string' ? v : '';
+};
+
+/** An entry name as one path segment: a dot inside it (a model alias
+ *  such as `gpt-5.5`) is written `%2E`, and the server reads it back. */
+const pathKey = (k: string) => k.replace(/%/g, '%25').replace(/\./g, '%2E');
+const keyName = (k: string) => {
+  try {
+    return decodeURIComponent(k);
+  } catch {
+    return k;
+  }
+};
+
 /** Named entries (a map) or a list of entries: one line per entry, a
- *  click opens its fields; + adds, − removes. The change goes to the
- *  server as the whole list or map. */
-function EntriesControl({ field: f, value, disabled, onChange, entryFields }: { field: SettingFieldInfo; value: unknown; disabled: boolean; onChange: (v: unknown) => void; entryFields: SettingFieldInfo[] }) {
+ *  click opens its fields; + adds, − removes. A map whose entries are
+ *  plain values (headers, voices per agent) is a list of name → value. */
+function EntriesControl({ tpl, at, value, ctx }: { tpl: string; at: string; value: unknown; ctx: EntryCtx }) {
   const [open, setOpen] = useState<string | null>(null);
-  const isMap = f.kind === 'map';
-  const entries: Array<[string, Record<string, unknown>]> = isMap
-    ? Object.entries((value ?? {}) as Record<string, Record<string, unknown>>)
-    : ((Array.isArray(value) ? value : []) as Array<Record<string, unknown>>).map((v, i) => [String(i), v]);
-  const direct = entryFields.filter((x) => x.path.split('.').length === f.path.split('.').length + 2);
-  const summary = (e: Record<string, unknown>) => String(e.alias ?? e.id ?? e.name ?? e.label ?? e.slug ?? Object.values(e).find((v) => typeof v === 'string') ?? '');
-  const write = (next: Array<[string, Record<string, unknown>]>) => onChange(isMap ? Object.fromEntries(next) : next.map(([, v]) => v));
-  const setField = (key: string, name: string, v: unknown) => write(entries.map(([k, e]) => (k === key ? [k, { ...e, [name]: v }] : [k, e])));
+  const holder = fieldAt(ctx.fields, tpl);
+  const isMap = holder?.kind === 'map';
+  const entryTpl = `${tpl}.*`;
+  const plain = childrenOf(ctx.fields, entryTpl).length === 0;
+  const current: Array<[string, unknown]> = isMap
+    ? Object.entries((value && typeof value === 'object' ? value : {}) as Record<string, unknown>).map(([k, v]) => [pathKey(k), v] as [string, unknown])
+    : (Array.isArray(value) ? value : []).map((v, i) => [String(i), v]);
+  // Keys here are path segments: a name with a dot is written with %2E.
+  const known = new Set(current.map(([k]) => k));
+  const added: Array<[string, unknown]> = [...ctx.pending]
+    .filter(([p, c]) => p.startsWith(`${at}.`) && !p.slice(at.length + 1).includes('.') && 'value' in c && !known.has(p.slice(at.length + 1)))
+    .map(([p, c]) => [p.slice(at.length + 1), (c as { value: unknown }).value] as [string, unknown])
+    .sort(([a], [b]) => (isMap ? 0 : Number(a) - Number(b)));
+  const sensitive = !!holder?.info?.sensitive || /headers$/.test(tpl);
   const add = () => {
-    const name = isMap ? window.prompt('Name of the new entry') : String(entries.length);
-    if (!name || (isMap && entries.some(([k]) => k === name))) return;
-    write([...entries, [name, {}]]);
+    const raw = isMap ? window.prompt(plain ? 'Name of the new entry (for a header: its name)' : 'Name of the new entry')?.trim() : String(current.length + added.length);
+    const name = raw ? (isMap ? pathKey(raw) : raw) : '';
+    if (!name || known.has(name) || added.some(([k]) => k === name)) return;
+    ctx.change(`${at}.${name}`, { value: plain ? '' : {} });
     setOpen(name);
+  };
+  // Remove an entry of the file (or keep it again), or drop a new one.
+  // New entries of a list stay numbered right after the file's own.
+  const toggle = (k: string, origin: 'file' | 'new', isRemoved: boolean) => {
+    if (origin === 'file') return ctx.change(`${at}.${k}`, isRemoved ? null : { reset: true });
+    if (isMap) return ctx.change(`${at}.${k}`, null);
+    const rest = added.filter(([x]) => x !== k);
+    for (const [x] of added) ctx.change(`${at}.${x}`, null);
+    rest.forEach(([, v], i) => ctx.change(`${at}.${current.length + i}`, { value: v }));
+  };
+  const rows: Array<[string, unknown, 'file' | 'new']> = [...current.map(([k, v]) => [k, v, 'file'] as [string, unknown, 'file']), ...added.map(([k, v]) => [k, v, 'new'] as [string, unknown, 'new'])];
+  return (
+    <div className="settings-entries">
+      {rows.length === 0 && <span className="settings-help">none</span>}
+      {rows.map(([k, e, origin]) => {
+        const path = `${at}.${k}`;
+        const removed = ctx.pending.get(path);
+        const isRemoved = !!removed && 'reset' in removed;
+        const title = isMap ? keyName(k) : summaryOf(e) || `entry ${Number(k) + 1}`;
+        if (plain) {
+          return (
+            <div key={k} className={`settings-entry plain ${isRemoved ? 'removed' : ''} ${origin === 'new' ? 'added' : ''}`}>
+              <span className="settings-entry-name">{keyName(k)}</span>
+              {isRemoved ? (
+                <span className="settings-help">removed on Apply</span>
+              ) : sensitive || isSecret(e) ? (
+                <SecretControl id={`in-${path}`} set={isSecret(e) ? e.set : false} pending={ctx.pending.has(path) && origin === 'file'} disabled={ctx.disabled} onSecret={(s) => ctx.change(path, s === null ? (origin === 'new' ? { value: '' } : null) : origin === 'new' ? { value: s } : { secret: s })} />
+              ) : (
+                <TextControl id={`in-${path}`} value={String((ctx.pending.get(path) as { value?: unknown } | undefined)?.value ?? e ?? '')} disabled={ctx.disabled} onChange={(t) => ctx.change(path, origin === 'file' && t === String(e ?? '') ? null : { value: plainValue(t, holder?.valueKind) })} />
+              )}
+              {!ctx.disabled && <EntryRemove origin={origin} removed={isRemoved} onToggle={() => toggle(k, origin, isRemoved)} />}
+            </div>
+          );
+        }
+        return (
+          <div key={k} className={`settings-entry ${isRemoved ? 'removed' : ''} ${origin === 'new' ? 'added' : ''}`}>
+            <div className="settings-entry-row">
+              <button type="button" className="settings-entry-head" disabled={isRemoved} onClick={() => setOpen(open === k ? null : k)}>
+                {open === k && !isRemoved ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                <span>{title}</span>
+                {isMap && summaryOf(e) && <span className="settings-entry-sub">{summaryOf(e)}</span>}
+                {origin === 'new' && <span className="settings-entry-sub">new</span>}
+                {isRemoved && <span className="settings-entry-sub">removed on Apply</span>}
+              </button>
+              {!ctx.disabled && <EntryRemove origin={origin} removed={isRemoved} onToggle={() => toggle(k, origin, isRemoved)} />}
+            </div>
+            {open === k && !isRemoved && (
+              <div className="settings-entry-body">
+                {origin === 'new' ? (
+                  <NewEntryFields tpl={entryTpl} value={(e ?? {}) as Record<string, unknown>} onSet={(v) => ctx.change(path, { value: v })} ctx={ctx} />
+                ) : (
+                  <EntryFields tpl={entryTpl} at={path} value={(e ?? {}) as Record<string, unknown>} ctx={ctx} />
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {!ctx.disabled && <button type="button" className="settings-btn" onClick={add}>+ Add</button>}
+    </div>
+  );
+}
+
+function EntryRemove({ origin, removed, onToggle }: { origin: 'file' | 'new'; removed: boolean; onToggle: () => void }) {
+  return removed ? (
+    <button type="button" className="settings-icon-btn" title="Keep this entry" onClick={onToggle}><RotateCcw size={12} /></button>
+  ) : (
+    <button type="button" className="settings-icon-btn" title={origin === 'new' ? 'Drop this new entry' : 'Remove this entry'} onClick={onToggle}>−</button>
+  );
+}
+
+/** A typed value from a plain text box: a number or true/false when it
+ *  reads as one, text otherwise. */
+function plainValue(t: string, kind?: SettingFieldInfo['valueKind']): unknown {
+  if (kind === 'string') return t;
+  if (/^-?\d+(\.\d+)?$/.test(t.trim())) return Number(t);
+  if (t === 'true' || t === 'false') return t === 'true';
+  return t;
+}
+
+/** The fields of an entry the file has: each change is its own path. */
+function EntryFields({ tpl, at, value, ctx }: { tpl: string; at: string; value: Record<string, unknown>; ctx: EntryCtx }) {
+  return (
+    <>
+      {childrenOf(ctx.fields, tpl).map((df) => {
+        const name = df.path.split('.').pop()!;
+        const path = `${at}.${name}`;
+        const current = value[name];
+        const pend = ctx.pending.get(path);
+        const label = (
+          <span className="settings-entry-label" title={df.info?.help}>
+            {df.info?.label ?? humanize(name)}
+            {df.required ? ' *' : ''}
+          </span>
+        );
+        if (df.kind === 'object') {
+          return <EntryBlock key={df.path} label={label} tpl={df.path} at={path} value={current} ctx={ctx} />;
+        }
+        if (df.kind === 'map' || df.kind === 'list') {
+          return (
+            <div key={df.path} className="settings-entry-group">
+              {label}
+              <div className="settings-entry-nested"><EntriesControl tpl={df.path} at={path} value={current} ctx={ctx} /></div>
+            </div>
+          );
+        }
+        const shown = pend && 'value' in pend ? pend.value : pend && 'reset' in pend ? undefined : current;
+        return (
+          <div key={df.path} className="settings-entry-field">
+            {label}
+            {df.info?.sensitive || isSecret(current) ? (
+              <SecretControl id={`in-${path}`} set={isSecret(current) ? current.set : false} pending={!!pend && 'secret' in pend} disabled={ctx.disabled} onSecret={(s) => ctx.change(path, s === null ? null : { secret: s })} />
+            ) : (
+              <Control
+                id={`in-${path}`}
+                field={df}
+                value={shown}
+                disabled={ctx.disabled}
+                onChange={(v) => ctx.change(path, JSON.stringify(v) === JSON.stringify(current) ? null : v === undefined || v === '' ? (current === undefined ? null : { reset: true }) : { value: v })} />
+            )}
+            {/* A field the entry has, not required: take it out (a switch
+                cannot say "not set", e.g. transport local → resource). */}
+            {!ctx.disabled && (pend ? (
+              <button type="button" className="settings-icon-btn" title="Undo this change" onClick={() => ctx.change(path, null)}><RotateCcw size={12} /></button>
+            ) : current !== undefined && !df.required ? (
+              <button type="button" className="settings-icon-btn" title="Remove this setting from the entry" onClick={() => ctx.change(path, { reset: true })}>↺</button>
+            ) : null)}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** A block inside an entry (`auth`, `tools`). One the file does not
+ *  have stays closed until asked for, so its required fields do not
+ *  look like something missing. */
+function EntryBlock({ label, tpl, at, value, ctx }: { label: ReactNode; tpl: string; at: string; value: unknown; ctx: EntryCtx }) {
+  const touched = [...ctx.pending.keys()].some((k) => k.startsWith(`${at}.`));
+  const [open, setOpen] = useState(value !== undefined || touched);
+  return (
+    <div className="settings-entry-group">
+      <span className="settings-entry-field">
+        {label}
+        {!open && <button type="button" className="settings-text-btn" disabled={ctx.disabled} onClick={() => setOpen(true)}>Set up…</button>}
+      </span>
+      {open && <div className="settings-entry-nested"><EntryFields tpl={tpl} at={at} value={(value && typeof value === 'object' ? value : {}) as Record<string, unknown>} ctx={ctx} /></div>}
+    </div>
+  );
+}
+
+/** The fields of an entry added in this window. The whole entry —
+ *  its keys, blocks and lists included — is one change, written as one
+ *  block on Apply, so it is complete when the file is checked. */
+function NewEntryFields({ tpl, value, onSet, ctx }: { tpl: string; value: Record<string, unknown>; onSet: (v: Record<string, unknown>) => void; ctx: EntryCtx }) {
+  const set = (name: string, v: unknown) => {
+    const next = { ...value };
+    // A switch turned off again, where the setting has no default of its
+    // own, means "not set" (transport: local off → a remote machine).
+    const df = childrenOf(ctx.fields, tpl).find((x) => x.path.endsWith(`.${name}`));
+    const unset = v === false && df?.kind === 'boolean' && df.default === undefined && !df.required;
+    if (unset || v === undefined || v === '' || (v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0)) delete next[name];
+    else next[name] = v;
+    onSet(next);
+  };
+  return (
+    <>
+      {childrenOf(ctx.fields, tpl).map((df) => {
+        const name = df.path.split('.').pop()!;
+        const label = (
+          <span className="settings-entry-label" title={df.info?.help}>
+            {df.info?.label ?? humanize(name)}
+            {df.required ? ' *' : ''}
+          </span>
+        );
+        if (df.kind === 'object') {
+          return (
+            <div key={df.path} className="settings-entry-group">
+              {label}
+              <div className="settings-entry-nested">
+                <NewEntryFields tpl={df.path} value={(value[name] ?? {}) as Record<string, unknown>} onSet={(v) => set(name, v)} ctx={ctx} />
+              </div>
+            </div>
+          );
+        }
+        if (df.kind === 'map' || df.kind === 'list') {
+          return (
+            <div key={df.path} className="settings-entry-group">
+              {label}
+              <div className="settings-entry-nested">
+                <NewEntries tpl={df.path} value={value[name]} onSet={(v) => set(name, v)} ctx={ctx} />
+              </div>
+            </div>
+          );
+        }
+        if (df.info?.sensitive) {
+          return (
+            <div key={df.path} className="settings-entry-field">
+              {label}
+              <SecretControl id={`in-new-${df.path}`} set={false} pending={typeof value[name] === 'string'} disabled={ctx.disabled} onSecret={(s) => set(name, s ?? undefined)} />
+            </div>
+          );
+        }
+        return (
+          <div key={df.path} className="settings-entry-field">
+            {label}
+            <Control id={`in-new-${df.path}-${name}`} field={df} value={value[name]} disabled={ctx.disabled} onChange={(v) => set(name, v)} />
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** Entries inside an entry that is itself new: kept in its value. */
+function NewEntries({ tpl, value, onSet, ctx }: { tpl: string; value: unknown; onSet: (v: unknown) => void; ctx: EntryCtx }) {
+  const holder = fieldAt(ctx.fields, tpl);
+  const isMap = holder?.kind === 'map';
+  const plain = childrenOf(ctx.fields, `${tpl}.*`).length === 0;
+  const secret = !!holder?.info?.sensitive || /headers$/.test(tpl);
+  const entries: Array<[string, unknown]> = isMap
+    ? Object.entries((value && typeof value === 'object' ? value : {}) as Record<string, unknown>)
+    : (Array.isArray(value) ? value : []).map((v, i) => [String(i), v]);
+  const write = (next: Array<[string, unknown]>) => onSet(isMap ? Object.fromEntries(next) : next.map(([, v]) => v));
+  const put = (k: string, v: unknown) => write(entries.map(([x, e]) => (x === k ? [x, v] : [x, e])));
+  const add = () => {
+    const name = isMap ? window.prompt('Name of the new entry')?.trim() : String(entries.length);
+    if (!name || entries.some(([k]) => k === name)) return;
+    write([...entries, [name, plain ? '' : {}]]);
   };
   return (
     <div className="settings-entries">
-      {entries.length === 0 && <span className="settings-help">none</span>}
       {entries.map(([k, e]) => (
-        <div key={k} className="settings-entry">
-          <button type="button" className="settings-entry-head" onClick={() => setOpen(open === k ? null : k)}>
-            {open === k ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-            <span>{isMap ? k : summary(e) || `entry ${Number(k) + 1}`}</span>
-            {isMap && summary(e) && <span className="settings-entry-sub">{summary(e)}</span>}
-          </button>
-          {!disabled && <button type="button" className="settings-icon-btn" title="Remove" onClick={() => write(entries.filter(([x]) => x !== k))}>−</button>}
-          {open === k && (
-            <div className="settings-entry-body">
-              {direct.map((df) => {
-                const name = df.path.split('.').pop()!;
-                return (
-                  <div key={df.path} className="settings-entry-field">
-                    <span className="settings-entry-label" title={df.info?.help}>{df.info?.label ?? humanize(name)}{df.required ? ' *' : ''}</span>
-                    {df.info?.sensitive ? (
-                      <span className="settings-help">{e[name] ? '•••• set' : 'not set'} — keys of entries are changed in config.yaml</span>
-                    ) : df.kind === 'object' || df.kind === 'list' || df.kind === 'map' ? (
-                      <span className="settings-help">{e[name] === undefined ? 'not set' : 'set'} — change it in config.yaml for now</span>
-                    ) : (
-                      <Control id={`in-${f.path}-${k}-${name}`} field={df} value={e[name]} disabled={disabled} onChange={(v) => setField(k, name, v)} entryFields={[]} />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+        <div key={k} className={`settings-entry added ${plain ? 'plain' : ''}`}>
+          {plain ? (
+            <>
+              <span className="settings-entry-name">{k}</span>
+              {secret ? (
+                <SecretControl id={`in-new-${tpl}-${k}`} set={false} pending={typeof e === 'string' && e !== ''} disabled={ctx.disabled} onSecret={(s) => put(k, s ?? '')} />
+              ) : (
+                <TextControl id={`in-new-${tpl}-${k}`} value={String(e ?? '')} disabled={ctx.disabled} onChange={(t) => put(k, plainValue(t, holder?.valueKind))} />
+              )}
+            </>
+          ) : (
+            <>
+              <span className="settings-entry-name">{isMap ? k : summaryOf(e) || `entry ${Number(k) + 1}`}</span>
+              <div className="settings-entry-body">
+                <NewEntryFields tpl={`${tpl}.*`} value={(e ?? {}) as Record<string, unknown>} onSet={(v) => put(k, v)} ctx={ctx} />
+              </div>
+            </>
           )}
+          {!ctx.disabled && <button type="button" className="settings-icon-btn" title="Drop this entry" onClick={() => write(entries.filter(([x]) => x !== k))}>−</button>}
         </div>
       ))}
-      {!disabled && <button type="button" className="settings-btn" onClick={add}>+ Add</button>}
+      {!ctx.disabled && <button type="button" className="settings-btn" onClick={add}>+ Add</button>}
     </div>
   );
 }

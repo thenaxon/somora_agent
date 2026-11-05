@@ -439,7 +439,7 @@ whether the file is valid, and whether the server can restart itself.
   "loadedAt": "2026-05-14T11:09:08.429Z",
   "changedOnDisk": false,
   "restartRequiredSections": ["server", "memory", "obsidian", "wiki", "mcp",
-    "claudeCli", "codexCli", "stt", "tts", "sentinel", "updateCheck",
+    "browser", "claudeCli", "codexCli", "stt", "tts", "sentinel", "updateCheck",
     "tmux", "web", "mobile"],
   "restartAvailable": true }
 ```
@@ -477,15 +477,16 @@ passwords never leave the server: in `values` they are
 
 #### `GET /settings`
 
-`{path, hash, valid, issues?, groups, restartSections, fields, values, inFile}`.
+`{path, hash, valid, issues?, groups, restartSections, fields, values, inFile, envSet}`.
 
 | Field | Content |
 |---|---|
 | `hash` | The file's state; `POST /settings/apply` needs it back. |
 | `groups` | `{id, title, icon, sections, ready}`. A group that is not `ready` is read only. |
-| `fields` | One per setting: `{path, kind, section, default?, enum?, min?, max?, minExclusive?, nullable?, required?, info?}`. `kind` is `boolean`, `integer`, `number`, `string`, `enum`, `strings`, `one-or-many`, `object`, `map` or `list`. `*` in `path` stands for an entry name. `info` is `{label, help, more?, level, sensitive?, unit?, docs?, placeholder?}`. |
+| `fields` | One per setting: `{path, kind, section, default?, enum?, min?, max?, minExclusive?, nullable?, required?, info?}`. `kind` is `boolean`, `integer`, `number`, `string`, `enum`, `strings`, `one-or-many`, `object`, `map` or `list`. `*` in `path` stands for an entry name. `info` is `{label, help, more?, level, sensitive?, unit?, docs?, placeholder?, locked?, retired?}`: `locked` gives the reason a setting is not changed here, `retired` marks one somora no longer reads. |
 | `values` | The configuration in force, defaults filled in; `null` when the file does not validate. |
 | `inFile` | Dotted paths the file itself sets. |
+| `envSet` | Settings an environment variable overrides, as `{path: variable}`. They cannot be changed here. |
 
 #### `GET /settings/yaml`
 
@@ -495,7 +496,18 @@ passwords never leave the server: in `values` they are
 
 Body `{hash, changes: [...]}`, each change `{path, value}`, `{path,
 reset: true}` (back to the default: the line is removed) or `{path,
-secret}`. Only the changed lines are written; comments and layout
+secret}`.
+
+A path may name an entry of a map or list
+(`mcp.servers.<name>`, `imageGen.models.3`) to add it with an object
+value or remove it with `reset`, or a field inside one
+(`mcp.servers.<name>.headers.Authorization`). List indexes mean the
+entries as the file has them; a name with a dot of its own is
+written with `%2E` (`toolCatalog.models.gpt-5%2E5`). A value carrying
+`{secret: true, set}`
+is refused.
+
+Only the changed lines are written; comments and layout
 stay. Before writing, the file is saved to `~/.somora/config-backups/`
 (the last 20 stay); after it, the configuration is reloaded as by
 `POST /config/reload`.
