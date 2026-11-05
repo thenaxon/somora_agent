@@ -54,7 +54,7 @@ export const BUILDER_SHORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
     'passed | failed | not_run, evidence (command and result, file, test). passed/failed need evidence, not_run ' +
     'the reason (refused without when the list is required); check ' +
     'the deciding counter-case. Items stay and keep their wording; the person or the orderer accepts, not you. ' +
-    'Whole list each call; no items = read it.',
+    'Whole list each call; an unchanged item as id + status only (keeps its evidence and review — new evidence clears a review). No items = read it.',
   spawn_subagent:
     'Start a helper of your own kind on a sealed sub-task, in the same working directory. Give it the complete ' +
     'brief — it sees nothing of this conversation. Returns a task_id; fetch the outcome with subagent_result ' +

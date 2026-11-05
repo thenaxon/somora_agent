@@ -80,7 +80,8 @@ export function composeSendBack(reviewer: string, rejected: ReadonlyArray<{ id: 
     `[review] ${reviewer} rejected ${rejected.length} item(s) of your acceptance list:`,
     ...rejected.map((r) => `- ${r.id}: ${r.note}`),
     '',
-    'Fix what each note names, verify it again, and send each item with acceptance_write with the new evidence (that clears the rejection). ' +
+    'Fix what each note names, verify it again, and send the rejected item with acceptance_write with the new evidence (that clears the rejection). ' +
+      'Every other item goes as id and status only, so it keeps its evidence and review — new evidence on an accepted item would undo the acceptance. ' +
       'If a note is wrong, say why with evidence instead of changing the item. Then end with your complete report again.',
   ].join('\n');
 }

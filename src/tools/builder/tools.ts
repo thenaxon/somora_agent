@@ -221,7 +221,8 @@ export const acceptanceWrite: ToolDefinition<z.infer<typeof AcceptanceInput>> = 
     'evidence. When the session requires the list, an item without them is refused and keeps its status. Check the deciding counter-case ' +
     '(a rejected result, a real contradiction, an interrupted run), not only the happy path. Items cannot be ' +
     'removed or reworded, and accepted is not yours to set: the person or the orderer reviews. Send the whole ' +
-    'list every time; call without items to read it.',
+    'list every time; an item that did not change goes as id and status only — it keeps its evidence and its review, ' +
+    'while new evidence clears the review (an accepted item would need accepting again). Call without items to read it.',
   inputSchema: AcceptanceInput,
   jsonSchema: {
     type: 'object',
