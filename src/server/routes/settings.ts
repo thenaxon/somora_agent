@@ -11,6 +11,8 @@ import type { Hono } from 'hono';
 import { isPair, isScalar, parseDocument, visit } from 'yaml';
 import { configPath, envOverriddenSettings, validateConfigText } from '../../config/loader.ts';
 import type { Config } from '../../config/types.ts';
+import { samplingBody } from '../../engine/sampling.ts';
+import { resolveOpenAiReasoning } from '../../engine/thinking-params.ts';
 import { RESTART_REQUIRED_SECTIONS } from '../../config/reload.ts';
 import { SETTINGS_CATALOG, SETTINGS_GROUPS, groupOfSection } from '../../config/settings/catalog/index.ts';
 import { matchesFieldPath, settingFields, type SettingField } from '../../config/settings/fields.ts';
@@ -45,7 +47,15 @@ export async function testModel(config: Config, providerName: string, modelId: s
       headers: { 'content-type': 'application/json', ...(provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {}) },
       // The limit as a chat turn sends it: only when the model sets one
       // (some reasoning models refuse `max_tokens`).
-      body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'Reply with the single word OK.' }], ...(model.maxTokens ? { max_tokens: model.maxTokens } : {}) }),
+      // With the model's own saved defaults: its reasoning level and
+      // sampling, as a chat turn without an agent preference sends them.
+      body: JSON.stringify({
+        model: modelId,
+        messages: [{ role: 'user', content: 'Reply with the single word OK.' }],
+        ...(model.maxTokens ? { max_tokens: model.maxTokens } : {}),
+        ...resolveOpenAiReasoning(model.reasoning?.default, model).body,
+        ...samplingBody(model.sampling),
+      }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await res.text();
@@ -203,6 +213,12 @@ async function backup(text: string): Promise<string> {
   return name;
 }
 
+function valueAt(data: unknown, path: string): unknown {
+  let cur = data;
+  for (const k of path.split('.')) cur = cur && typeof cur === 'object' ? (cur as Record<string, unknown>)[k] : undefined;
+  return cur;
+}
+
 /** Every agent's model and fallback chain (agent.yaml). */
 async function agentModels(): Promise<AgentModels[]> {
   const out: AgentModels[] = [];
@@ -341,6 +357,12 @@ export function registerSettingsRoutes(app: Hono, deps: SettingsRoutesDeps): voi
       // A model, provider or named model still in use must not vanish.
       const was = validateConfigText(text);
       if (was.ok) {
+        // A locked setting stays as it was, also when its block is sent whole.
+        const lockedChanged = Object.entries(SETTINGS_CATALOG)
+          .filter(([p, e]) => e.locked && !p.includes('*'))
+          .filter(([p]) => JSON.stringify(valueAt(was.config, p)) !== JSON.stringify(valueAt(checked.config, p)))
+          .map(([p, e]) => ({ path: p, message: e.locked! }));
+        if (lockedChanged.length > 0) return c.json({ error: 'some changes were refused', issues: lockedChanged }, 400);
         const broken = brokenRefs(was.config, checked.config, await agentModels());
         if (broken.length > 0) return c.json({ error: 'the changes would remove something still in use; nothing was written', issues: broken }, 400);
       }

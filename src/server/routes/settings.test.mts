@@ -127,6 +127,11 @@ test('a locked setting is refused; a retired one can only be removed', async () 
   assert.match(r.body.issues[0].message, /index anew/);
   assert.match(r.body.issues[1].message, /can only be removed/);
   assert.equal(readFileSync(FILE, 'utf8'), withVoice);
+  // Not around the lock by sending its block whole.
+  const whole = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'memory.embedding', value: { provider: 'local', model: 'other-model' } }] });
+  assert.equal(whole.status, 400, JSON.stringify(whole.body));
+  assert.match(whole.body.issues[0].message, /index anew/);
+  assert.equal(readFileSync(FILE, 'utf8'), withVoice);
   const removed = await call('POST', '/settings/apply', { hash: view.hash, changes: [{ path: 'realtimeVoice.transport', reset: true }] });
   assert.equal(removed.status, 200);
   assert.equal(readFileSync(FILE, 'utf8'), `${START}  realtimeVoice:\n    model: rt\n`);

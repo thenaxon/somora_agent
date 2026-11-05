@@ -659,7 +659,7 @@ export interface SettingInfo {
 }
 export interface SettingFieldInfo {
   path: string;
-  kind: 'boolean' | 'integer' | 'number' | 'string' | 'enum' | 'strings' | 'one-or-many' | 'object' | 'map' | 'list';
+  kind: 'boolean' | 'integer' | 'number' | 'string' | 'enum' | 'strings' | 'one-or-many' | 'boolean-or-strings' | 'object' | 'map' | 'list';
   section: string;
   default?: unknown;
   enum?: string[];

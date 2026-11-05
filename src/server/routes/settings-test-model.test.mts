@@ -34,9 +34,10 @@ await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
 after(() => server.close());
 const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 const model = { id: 'm1', contextWindow: 8000 };
+const thinker = { id: 't1', contextWindow: 8000, capabilities: ['text', 'reasoning'], reasoning: { default: 'off', levels: { off: 'none' } }, sampling: { temperature: 0.3 } };
 const config = ConfigSchema.parse({
   providers: {
-    good: { engine: 'openai-compatible', baseUrl: `${base}/v1/`, apiKey: 'k1', models: [model] },
+    good: { engine: 'openai-compatible', baseUrl: `${base}/v1/`, apiKey: 'k1', models: [model, thinker] },
     bad: { engine: 'openai-compatible', baseUrl: `${base}/broken/v1`, apiKey: 'k2', models: [model] },
     empty: { engine: 'openai-compatible', baseUrl: `${base}/empty/v1`, apiKey: 'k3', models: [model] },
     cli: { engine: 'claude-cli', models: [{ id: 'sonnet', contextWindow: 200000 }] },
@@ -49,6 +50,13 @@ test('a model that answers: ok, the time and its words; the key goes along', asy
   assert.equal(r.reply, 'OK');
   assert.equal(seen.auth, 'Bearer k1');
   assert.equal(seen.body?.model, 'm1');
+});
+
+test('the model is asked with its own saved reasoning level and sampling', async () => {
+  const r = await testModel(config, 'good', 't1');
+  assert.equal(r.ok, true);
+  assert.equal(seen.body?.reasoning_effort, 'none');
+  assert.equal(seen.body?.temperature, 0.3);
 });
 
 test('a provider that fails says how; unknown names and other engines are not asked', async () => {

@@ -16,6 +16,7 @@ export type FieldKind =
   | 'enum'
   | 'strings' // a list of texts
   | 'one-or-many' // one text (a model alias) or a list of them
+  | 'boolean-or-strings' // on, off, or a list of names (auth.refresh)
   | 'object' // a block of its own settings (optional when not required)
   | 'map' // named entries: `<name>: {...}`
   | 'list'; // a list of entries: `- {...}`
@@ -93,6 +94,10 @@ function walk(n: Node, path: string, section: string, required: boolean, out: Se
           walk(v, `${path}.${k}`, section, false, out);
         }
       }
+      return;
+    }
+    if (types.length === 2 && types.includes('boolean') && types.includes('array')) {
+      out.push({ ...base, kind: 'boolean-or-strings' });
       return;
     }
     if (types.includes('string') && types.includes('array')) {

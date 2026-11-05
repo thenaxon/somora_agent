@@ -483,7 +483,7 @@ passwords never leave the server: in `values` they are
 |---|---|
 | `hash` | The file's state; `POST /settings/apply` needs it back. |
 | `groups` | `{id, title, icon, sections, ready}`. A group that is not `ready` is read only. |
-| `fields` | One per setting: `{path, kind, section, default?, enum?, min?, max?, minExclusive?, nullable?, required?, info?}`. `kind` is `boolean`, `integer`, `number`, `string`, `enum`, `strings`, `one-or-many`, `object`, `map` or `list`. `*` in `path` stands for an entry name. `info` is `{label, help, more?, level, sensitive?, unit?, docs?, placeholder?, locked?, retired?, ref?}`: `locked` gives the reason a setting is not changed here, `retired` marks one somora no longer reads. |
+| `fields` | One per setting: `{path, kind, section, default?, enum?, min?, max?, minExclusive?, nullable?, required?, info?}`. `kind` is `boolean`, `integer`, `number`, `string`, `enum`, `strings`, `one-or-many`, `boolean-or-strings` (on, off or a list of names), `object`, `map` or `list`. `*` in `path` stands for an entry name. `info` is `{label, help, more?, level, sensitive?, unit?, docs?, placeholder?, locked?, retired?, ref?}`: `locked` gives the reason a setting is not changed here, `retired` marks one somora no longer reads. |
 | `values` | The configuration in force, defaults filled in; `null` when the file does not validate. |
 | `inFile` | Dotted paths the file itself sets, entries of lists by index. |
 | `envSet` | Settings an environment variable overrides, as `{path: variable}`. They cannot be changed here. |

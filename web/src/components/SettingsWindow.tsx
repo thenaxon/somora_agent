@@ -534,6 +534,22 @@ function Control({ id, field: f, value, disabled, onChange }: { id: string; fiel
       return <NumberControl id={id} field={f} value={value} disabled={disabled} onChange={onChange} />;
     case 'strings':
       return <StringsControl id={id} value={Array.isArray(value) ? (value as unknown[]).map(String) : []} disabled={disabled} onChange={onChange} options={options} />;
+    case 'boolean-or-strings': {
+      // All (true), none (false), or only the names listed.
+      const mode = Array.isArray(value) ? 'some' : value === false ? 'none' : value === true ? 'all' : '';
+      return (
+        <span className="settings-chips">
+          <span id={id} className="settings-seg" role="radiogroup">
+            {(['all', 'none', 'some'] as const).map((m) => (
+              <button key={m} type="button" role="radio" aria-checked={mode === m} disabled={disabled} className={mode === m ? 'on' : ''} onClick={() => onChange(m === 'all' ? true : m === 'none' ? false : Array.isArray(value) ? value : [])}>
+                {m === 'some' ? 'only these' : m}
+              </button>
+            ))}
+          </span>
+          {Array.isArray(value) && <StringsControl id={`${id}-list`} value={(value as unknown[]).map(String)} disabled={disabled} onChange={onChange} options={options} />}
+        </span>
+      );
+    }
     case 'one-or-many': {
       const list = Array.isArray(value) ? (value as unknown[]).map(String) : typeof value === 'string' ? [value] : [];
       return <StringsControl id={id} value={list} disabled={disabled} onChange={(v) => onChange((v as string[]).length === 1 ? (v as string[])[0] : v)} options={options} />;
@@ -910,7 +926,7 @@ function NewEntryFields({ tpl, value, onSet, ctx }: { tpl: string; value: Record
         return (
           <div key={df.path} className="settings-entry-field">
             {label}
-            <Control id={`in-new-${df.path}-${name}`} field={df} value={value[name]} disabled={ctx.disabled} onChange={(v) => set(name, v)} />
+            <Control id={`in-new-${df.path}-${name}`} field={df} value={value[name] === undefined ? df.default : value[name]} disabled={ctx.disabled} onChange={(v) => set(name, v)} />
           </div>
         );
       })}
