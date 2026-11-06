@@ -73,7 +73,7 @@ and is set up in `config.yaml`, not in an agent folder.
 | **Tools** | Everything configured, minus what you hide | A short coding set, plus what you allow |
 | **Skills** | All, minus what you hide | None, plus what you allow |
 | **Turn limits** | The server's `agentLoop` values: 8 rounds, 30 tool calls | No round cap, 2000 tool calls, 8 hours |
-| **Memory** | Notices facts, dreams them into notes and the wiki | Reads memory, never writes it, does not dream |
+| **Memory** | Notices facts, dreams them into notes and the wiki | Reads memory, never writes it, does not dream unless `dreams: true` |
 | **Works in** | Its workspace | The pinned project's folder, and folders an order allows |
 | **Window** | Chat | Chat plus a task panel |
 
@@ -446,7 +446,7 @@ so it has nothing to send that way.
 ```yaml
 subagents:
   tools:
-    deny: [agent_ask, agent_ask_result, agent_ask_cancel]   # the default
+    deny: [agent_ask, agent_ask_result, agent_ask_cancel, builder_review]   # the default
 ```
 
 - The entries take the same forms as `tools.deny` in `agent.yaml`: a

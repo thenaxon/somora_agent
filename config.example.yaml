@@ -543,13 +543,15 @@ providers:
 #                               # google has no adapter yet (different protocol entirely).
 #   model: gpt-realtime-2.1-mini
 #   apiKeyFile: ~/.somora/secrets/openai-realtime.key   # a FILE (chmod 600), never the key itself
-#   # url: ws://127.0.0.1:8787/realtime   # where to connect. Omitted = OpenAI. Required for
+#   # url: ws://<host>:8766/v1/realtime   # where to connect. Omitted = OpenAI. Required for
 #                               # provider: local. The model id is appended as ?model=…, and a
 #                               # service without a credential needs no apiKeyFile.
-#   transport: websocket        # audio goes browser -> somora -> provider
 #   defaultVoice: alloy         # alloy ash ballad coral echo sage shimmer verse marin cedar
+#                               # provider: local -> defaultVoice: <set-name>, a set on the service
 #   consultPolicy: always       # auto | substantive | always — when the voice must ask the agent
 #   maxCallMinutes: 20          # hard stop; the meter runs while nobody speaks
+#   keepTranscript: true        # one folded call record per call in the session; the agent's
+#                               # context, memory and dreams never read it
 #   allowAgentSwitch: false     # let a call move to another agent or session mid-conversation
 #   consult:                    # how long a spoken question waits on the agent. It queues on
 #                               # the session like any turn, but a conversation cannot wait on
@@ -574,7 +576,7 @@ providers:
 # back to the parent as a follow-up (an echo). docs/agents.md.
 # subagents:
 #   tools:
-#     deny: [agent_ask, agent_ask_result, agent_ask_cancel]
+#     deny: [agent_ask, agent_ask_result, agent_ask_cancel, builder_review]
 
 # Agent-loop tunables. Apply to engines that run
 # their own tool-call loop — currently openai-compatible — for the per-
@@ -803,6 +805,9 @@ providers:
 #                                         # 384 dim, ~30MB), all-mpnet-base-v2 (768 dim,
 #                                         # ~110MB), paraphrase-multilingual-MiniLM-L12-v2
 #                                         # (multilingual, 384 dim, ~120MB)
+#                                         # choose it BEFORE memory is first indexed: a
+#                                         # change later mixes old and new vectors, and a
+#                                         # different vector size stops memory from starting
 #   chunking:
 #     targetTokens: 400
 #     overlapTokens: 80
@@ -987,7 +992,7 @@ providers:
 #   maxMessageChars: 64000              # longest task text
 #   archiveAfterDays: 7                 # quiet conversations with peers are archived
 #   tools:
-#     deny: [agent_ask, agent_ask_result, agent_ask_cancel, spawn_subagent, spawn_subagents, builder_dispatch, session_model, sentinel]
+#     deny: [agent_ask, agent_ask_result, agent_ask_cancel, spawn_subagent, spawn_subagents, builder_dispatch, builder_review, session_model, sentinel]
 
 # Web-tools credentials. Per-provider keys — tools whose provider isn't
 # configured are hidden from the agent (the `available()` probe on the

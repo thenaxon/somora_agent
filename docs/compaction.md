@@ -248,13 +248,13 @@ is in progress, what is blocked, the checks still owed with the last
 failure, the repository state, what is still running, the next move and
 the relevant files.
 
-The task list is appended. The last six rounds stay word for word.
+The task list and the acceptance list are appended. The last six rounds stay word for word.
 
 This leaves a `context compacted` row. It uses `workers` and
 `preferSessionModel`, asks at most three models, and falls back to
 trimming when none delivers.
 
-**Before a builder turn.** A builder turn starts with room to work. When
+**Before a builder turn** (`openai-compatible`). A builder turn starts with room to work. When
 the request is above `builderTargetRatio` (0.6) of the input budget,
 the compaction runs even below `triggerRatio`. It keeps only as many of
 the newest exchanges as fit below that share, measured as they are
@@ -415,7 +415,7 @@ fallback:
 |---|---|---|
 | `compaction.triggerRatio` | 0.8 | Share of the input budget at which a compaction runs. Above 0, at most 1. `openai-compatible` only. |
 | `compaction.safetyCushionPairs` | 4 | The most recent exchanges that are never summarised. For builders, at most this many. |
-| `compaction.builderTargetRatio` | 0.6 | Builders only: the share of the input budget a turn may start with. 0.2 to 0.9. See [Builder turns](#builder-turns). |
+| `compaction.builderTargetRatio` | 0.6 | Builders only: the share of the input budget a turn may start with. 0.2 to 0.9. `openai-compatible` only. See [Builder turns](#builder-turns). |
 | `compaction.workers` | unset | Models that may summarise, in the order they are tried. Unset means automatic choice. |
 | `compaction.preferSessionModel` | false | Ask the session's own model before the workers. |
 | `compaction.modelOverride` | unset | One model that is always asked first. |

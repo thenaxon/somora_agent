@@ -420,7 +420,7 @@ no encrypted store.
 | Claude login | `~/.somora/claude-home/.credentials.json`, kept identical to `~/.claude/.credentials.json` |
 | Codex login | `~/.somora/codex-home/auth.json`, copied from `~/.codex/auth.json` when that one is newer |
 | Grok login | `~/.somora/grok-home/auth.json`, kept in step with `~/.grok/auth.json`: the copy that expires later wins, in both directions |
-| API keys of providers | `apiKey` under `providers` in `~/.somora/config.yaml` |
+| API keys of providers | `apiKey` under `providers` in `~/.somora/config.yaml`, and in the copies the settings window keeps in `~/.somora/config-backups/` |
 | Secrets for skills and tools | `~/.somora/somora.env`, loaded into the server's environment at start |
 | SSH keys for resources | the file named by `resources.<name>.keyPath`. Pinned host keys are in `~/.somora/known_hosts.json`. |
 | TLS certificate and key | the files named by `server.tls.cert` and `server.tls.key` |

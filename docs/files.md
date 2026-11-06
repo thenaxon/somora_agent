@@ -548,7 +548,7 @@ extension get a delete followed by a rename.
 | `file_search: ripgrep (rg) not found on PATH. Install via your package manager (brew/apt/dnf/pacman) or set $RG_BIN to a custom location.` | Install ripgrep on the somora host, or point `$RG_BIN` at it. There is no built-in fallback. |
 | `file_search on '<resource>': ripgrep (rg) not installed.` | Install ripgrep on the remote machine. |
 | `read blocked: ...` or `write blocked: ...` | The path is under a closed folder. See the table above. |
-| `write refused: ... is outside the project folder` | A builder tried to write outside its project. |
+| `write refused: ... is outside the project folder` | A builder tried to write outside its project. Give the order the folder in `write_allow`, or run it attended; a shell command does not get around it. |
 | `file_read: file_not_found at '<path>'. Did you mean: a.ts, b.ts?` | The file does not exist. Up to three similar names from the same folder are suggested. |
 | `file_list: file_not_found at '<path>'` | The folder does not exist. |
 | `old_string was not found in the file` | The text differs too much. Read the file again and copy the lines exactly. |

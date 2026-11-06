@@ -233,8 +233,9 @@ of the working copy (from somora, not from the builder)":
 When everything is committed, one line says so. A worktree whose `git
 status` gives no answer within the time limit is listed as "state
 unknown", never as clean. A failed order gets the block too. A turn
-that wrote nothing with the file tools, such as an answer to a
-question, gets the block only when something is open.
+without tool calls gets no block. One that used tools but none of
+`file_write`, `file_patch` and `todo_write`, such as a look-up for a
+question, gets it only when something is open.
 
 Nothing is committed, cleaned or stopped: the block only reports. git
 runs without the repository's fsmonitor, filters and hooks, does not
@@ -620,7 +621,7 @@ The builder's tools:
 | `todo_write` | `todos: [{content, status, priority?}]` | Replaces the whole task list. Status is `pending`, `in_progress`, `completed` or `cancelled`. |
 | `ask_user` | `question`, `options` (2 to 6, each `{label, description?}`), `header?`, `multiple?`, `timeout_ms?` | Asks in the task panel and waits. Returns `{answered, answers[], text?}`. |
 | `plan_write` | `content` | Writes the whole plan file. |
-| `acceptance_write` | `items?: [{id, requirement?, status, evidence?}]` | Replaces the acceptance list under its [rules](#the-acceptance-list). Returns the counts, the list and `warnings` for what was not taken or refused. Without `items` it returns the list. |
+| `acceptance_write` | `items?: [{id, requirement?, status, evidence?}]` | Merges into the acceptance list under its [rules](#the-acceptance-list): send an item that did not change as `id` and `status` only, so it keeps its evidence and review. Returns the counts, the list and `warnings` for what was not taken or refused. Without `items` it returns the list. |
 
 A chat agent never gets `todo_write`, `plan_write` and `acceptance_write`, whatever its
 `agent.yaml` says. `ask_user` belongs to every agent ([Questions to
@@ -635,7 +636,7 @@ is `GET /agents/:agent/sessions/:session/builder`.
 | Route | Body | Returns |
 |---|---|---|
 | `GET …/builder` | | `{agent, session, kind, state, acceptance, writeAllow, question, turn}` |
-| `PATCH …/builder` | `{mode?, phase?, planPath?, orderer?, acceptanceRequired?, writeAllow?}` | `{state}`. Publishes `builder_state`, and `acceptance_updated` when `acceptanceRequired` is sent. |
+| `PATCH …/builder` | `{mode?, phase?, planPath?, orderer?, acceptanceRequired?, writeAllow?}` | `{agent, session, state}`. Publishes `builder_state`, and `acceptance_updated` when `acceptanceRequired` is sent. |
 | `POST …/builder/go` | `{note?}` | 202 with `{state, turnId, callId?, wakes?}`. 409 `folder busy` when another builder turn holds the folder. |
 | `PUT …/todos` | `{todos: [{content, status, priority?}]}` | `{todos}`. Publishes `todo_updated`. Used by `todo_write`. |
 | `PUT …/plan` | `{content}` | `{path, bytes, archived?}`. Used by `plan_write`. |
@@ -653,6 +654,7 @@ Fields of `GET …/builder`:
 |---|---|
 | `state` | `{mode, phase, planPath, todos, orderer?}`, or `null` before the first turn. |
 | `acceptance` | `{items, required}`: the acceptance list and whether the session requires it. |
+| `writeAllow` | The extra folders this session may write in besides its project, from the order's `write_allow`. |
 | `question` | `{questionId, question, header, options, multiple, askedAt, expiresAt}`, or `null`. |
 | `turn` | `{turnId, startedAt, toolCalls, lastTool?, lastToolAt?}` while a turn runs, else `null`. |
 

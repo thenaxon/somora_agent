@@ -4,7 +4,8 @@
 // (acceptance_write) but never accepts its own work. The person reviews
 // in the task panel; the agent that gave the order reviews here. Only
 // that agent: the server checks it against the session's orderer (the
-// agent of the latest order — builder_dispatch or agent_ask). The
+// agent builder_dispatch names, or else the first agent that wrote into
+// the session; a later message from another agent does not take over). The
 // pattern follows the reviewer tools of other harnesses: a verdict per
 // item, a rejection always with its reason, and rejected work goes back
 // to the one who did it (docs/builder.md "Reviewing the list").
@@ -91,7 +92,7 @@ export const builderReview: ToolDefinition<ReviewInput> = {
   toolset: 'agents',
   description:
     'Review the acceptance list of a builder you gave an order to (builder_dispatch or agent_ask): accept or reject items. ' +
-    'Only the agent of the latest order in that session may. Accept only what you checked yourself: the note names the ' +
+    'Only the agent that gave the order may (the one builder_dispatch named, or else the first agent that wrote into the session). Accept only what you checked yourself: the note names the ' +
     'command you ran and what you saw — re-run two or three of the builder\'s own evidence commands, the builder\'s word ' +
     'is a claim. A suite result is context, not evidence for a requirement it does not exercise. Reject with the reason; ' +
     'rejected items count as open for the builder and, unless send_back is false, go to its session as one message ' +

@@ -17,6 +17,8 @@ talking to your agents.
 - **A builder's panel.** Mode, phase, Go, its task list and its
   acceptance list, which you accept or reject item by item.
 - **Voice in and out.** Dictate a message, have the answer read aloud.
+- **Call an agent.** A phone in the header starts a live voice call
+  with the agent in the open session ([Calling an agent](#calling-an-agent)).
 - **Photos and PDFs** from the camera, the photo library or files.
 - **Dots that show what happens elsewhere**: which agents are working,
   where something unread is waiting.
@@ -476,6 +478,7 @@ extra step.
 
 - [Web client](web.md): the full desktop
 - [Voice](voice.md): speech-to-text and spoken replies
+- [Realtime voice](realtime-voice.md): live calls with an agent
 - [Thinking](thinking.md): which engines show their reasoning
 - [Setup](setup.md): HTTPS via Tailscale, speech-to-text
 - [API](api.md): `GET /activity/stream`, `DELETE /chat/queue/:id`,

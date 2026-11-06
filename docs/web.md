@@ -438,6 +438,7 @@ session too.
 | Pictures and videos under a reply | Media the turn generated. |
 | `Image from <host>` with **Show** and **Always show** | A picture from another website, held back until you allow it. See [Security](security.md#pictures-from-other-websites). |
 | Thumbnails on your message | Your attachments. |
+| Folded call record, `call · <length> · N lines · <reason>` | One voice call: open it for what you and the voice said, with interruptions, questions to the agent and notices, each with its time into the call. See [Realtime voice](realtime-voice.md#what-the-session-records). |
 
 A notice appears once when a backup model takes over and once when the
 primary model answers again. When every model fails, the error names
@@ -738,9 +739,11 @@ A setting an environment variable overrides, such as
 variable wins over the file.
 
 A setting that names a model, a provider or a named image, video or
-decision model offers the configured names as you type. Apply refuses
+decision model offers the configured names as you type. A typed name
+that is not configured gets an amber border, and hovering it says "Not
+a name configured here". Apply refuses
 a change that would remove a model, provider or named model still in
-use: by an agent's model or fallback, or by another setting. The
+use: by an agent's model, fallback or own REM worker models, or by another setting. The
 message names who uses it.
 
 In **Models & providers**, **Test** beside a model asks it one short
@@ -855,6 +858,8 @@ controls on this page:
 | `POST /attachments` | Uploads |
 | `GET /stt/config`, `POST /stt/transcribe` | Microphone |
 | `GET /tts/config` | Voice toggle |
+| `GET /voice/status`, `WS /voice/attach` | The voice tile and window: who can be called, the call itself |
+| `GET /voice/instructions` | **Voice prompt** tab of the Agent window |
 | `GET /config/status`, `POST /config/reload`, `POST /server/restart` | Gear menu |
 | `GET /version` | Version under the logo |
 | `GET /inbox`, `POST /inbox/read`, `POST /inbox/mute`, `POST /inbox/unmute` | Inbox |
@@ -885,7 +890,7 @@ guide.
 | `session_model` | none | The session's model was switched. The window reads the session info again. |
 | `chat` | `{state: 'delta'\|'final', text}` | Assistant text. Each delta carries the full text so far. |
 | `thinking` | `{state: 'delta'\|'final', text, truncated?}` | Reasoning text, cumulative like `chat`. |
-| `tool` | `{phase: 'call'\|'result'\|'error', tool, summary?, details?, error?}` | A tool call and its outcome. |
+| `tool` | `{phase: 'call'\|'result'\|'error', tool, callId, summary?, details?, error?}` | A tool call and its outcome. `callId` pairs a result or error with its call when several run at once. |
 | `engine_meta` | `{engine, itemType, label, summary?, payload}` | The engine's own rows, for example the codex `todo_list`. |
 | `memory` | `{count, topScore, refs, fullText?}` | Notes recalled for this turn. |
 | `project` | `{from, to, via}` | The session's project changed. |

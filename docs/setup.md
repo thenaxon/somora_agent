@@ -203,7 +203,10 @@ output goes to `~/.somora/logs/launchd.log`.
 ## Connect models
 
 somora needs at least one model. `somora setup models` writes these
-blocks for you. By hand, edit `providers` in `~/.somora/config.yaml`.
+blocks for you. By hand, edit `providers` in `~/.somora/config.yaml`,
+or use **Models & providers** in the web client's
+[settings window](web.md#the-settings-window): it shows the file as a
+form, and **Test** beside a model asks it one short question.
 
 | Kind | Engine | Login |
 |---|---|---|
@@ -414,6 +417,9 @@ need one.
 | TUI | `/reload` |
 | API | `POST /config/reload` |
 
+The [settings window](web.md#the-settings-window) in the web client
+reloads by itself after each **Apply**.
+
 The server reads `config.yaml` again and checks it. A file with a
 mistake is rejected with the reason, and the running config stays as it
 was. A reload also forgets which models were marked unreachable.
@@ -422,7 +428,7 @@ The answer lists the sections that changed, and which of them only
 apply after a restart. These sections are read once at start:
 
 `server`, `memory`, `obsidian`, `wiki`, `mcp`, `claudeCli`, `codexCli`,
-`stt`, `tts`, `sentinel`, `updateCheck`, `tmux`, `web`, `mobile`
+`stt`, `tts`, `sentinel`, `updateCheck`, `tmux`, `web`, `mobile`, `browser`
 
 One exception: `sentinel.checks` applies with the reload.
 
@@ -580,7 +586,9 @@ name. There is nothing to configure.
 ## Settings
 
 Server settings live in `~/.somora/config.yaml`. The values shown are
-the defaults. `server.tls` has no default.
+the defaults. `server.tls` has no default. The web client's
+[settings window](web.md#the-settings-window) shows the same file as a
+form, keeps a backup before each change and restores earlier versions.
 
 ```yaml
 server:
@@ -800,6 +808,7 @@ Everything somora keeps lives under `~/.somora/`, or under
 | Path | What it is |
 |---|---|
 | `config.yaml` | The server config. |
+| `config-backups/` | The last 20 versions of `config.yaml`, one taken before each change from the settings window. Owner-only, and like the config they hold the API keys in plain text. |
 | `server.key` | The login key. Owner-only (`chmod 600`). `somora key rotate` replaces it. |
 | `inbox.json` | The web client's inbox: what is open, read or muted. |
 | `somora.env` | Secrets for skills and tools, one `KEY=value` per line. Loaded into the server's environment at start. A variable that is already set wins. Keep it at `chmod 600`. |

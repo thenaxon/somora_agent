@@ -477,24 +477,26 @@ passwords never leave the server: in `values` they are
 
 #### `GET /settings`
 
-`{path, hash, valid, issues?, groups, restartSections, fields, values, inFile, envSet, refOptions}`.
+`{path, hash, valid, issues?, groups, restartSections, fields, values, inFile, envSet, refOptions?}`.
 
 | Field | Content |
 |---|---|
 | `hash` | The file's state; `POST /settings/apply` needs it back. |
 | `groups` | `{id, title, icon, sections, ready}`. A group that is not `ready` is read only. |
-| `fields` | One per setting: `{path, kind, section, default?, enum?, min?, max?, minExclusive?, nullable?, required?, info?}`. `kind` is `boolean`, `integer`, `number`, `string`, `enum`, `strings`, `one-or-many`, `boolean-or-strings` (on, off or a list of names), `object`, `map` or `list`. `*` in `path` stands for an entry name. `info` is `{label, help, more?, level, sensitive?, unit?, docs?, placeholder?, locked?, retired?, ref?}`: `locked` gives the reason a setting is not changed here, `retired` marks one somora no longer reads. |
+| `fields` | One per setting: `{path, kind, section, default?, enum?, min?, max?, minExclusive?, nullable?, required?, valueKind?, info?}`. `kind` is `boolean`, `integer`, `number`, `string`, `enum`, `strings`, `one-or-many`, `boolean-or-strings` (on, off or a list of names), `object`, `map` or `list`. `*` in `path` stands for an entry name. `valueKind` belongs to a `map` of plain values and says what each value is (`string`, `number`, `integer` or `boolean`; a header is a `string`). `info` is `{label, help, more?, level, sensitive?, unit?, docs?, placeholder?, locked?, retired?, ref?}`: `locked` gives the reason a setting is not changed here, `retired` marks one somora no longer reads. |
 | `values` | The configuration in force, defaults filled in; `null` when the file does not validate. |
 | `inFile` | Dotted paths the file itself sets, entries of lists by index. |
 | `envSet` | Settings an environment variable overrides, as `{path: variable}`. They cannot be changed here. |
-| `refOptions` | The names a reference can take, by kind: `model` (aliases and `provider/id`), `provider`, `image-model`, `video-model`, `decision-model`. A field's `info.ref` names its kind. |
+| `refOptions` | The names a reference can take, by kind: `model` (aliases and `provider/id`), `provider`, `image-model`, `video-model`, `decision-model`. A field's `info.ref` names its kind. Sent only when the file validates. |
 
 #### `POST /settings/test-model`
 
-Body `{provider, model}` (the model's id). Asks an openai-compatible
-model of the saved configuration one short question:
-`{ok, ms, reply?, error?}`. For a model on another engine `{ok: false,
-note}`; it is not asked.
+Body `{provider, model}` (the model's id); without both, 400. Asks an
+openai-compatible model of the saved configuration one short question,
+with the model's saved reasoning default and sampling, as a chat turn
+sends them: `{ok, ms, reply?, error?}`. A provider or model that is not
+in the saved configuration gives `{ok: false, error}` without `ms`. For
+a model on another engine `{ok: false, note}`; it is not asked.
 
 #### `GET /settings/yaml`
 
@@ -514,7 +516,7 @@ entries as the file has them; a name with a dot of its own is
 written with `%2E` (`toolCatalog.models.gpt-5%2E5`).
 
 A value carrying `{secret: true, set}` is refused, and so is a change that removes a model, provider or
-named model still in use (an agent's model or fallback, or a setting
+named model still in use (an agent's model, fallback or own REM worker models, or a setting
 that names it); `issues` says who uses it.
 
 Only the changed lines are written; comments and layout
@@ -525,7 +527,7 @@ stay. Before writing, the file is saved to `~/.somora/config-backups/`
 | Status | Body |
 |---|---|
 | `200` | `{ok: true, hash, backup, reload}`. `reload` is the answer of the reload. Changes that leave the file as it was give `{ok: true, hash, unchanged: true}`: nothing written, no backup. |
-| `400` | `{error, issues: [{path, message}]}`: an unknown setting, one of a group that is not ready, or a value the schema refuses. Nothing was written. |
+| `400` | `{error, issues: [{path, message}]}`: an unknown setting, one of a group that is not ready, one an environment variable sets, a locked setting (also when its whole block is sent), a retired setting changed other than by `reset`, a change with none of `value`, `reset` or `secret`, a value the schema refuses, or the removal of a name still in use. An edit the file cannot take gives `{error}` alone. Nothing was written. |
 | `409` | `{error, hash}`: the file changed since `hash`. Nothing was written. |
 
 #### `GET /settings/backups`
@@ -1111,6 +1113,7 @@ most notes have a readable `payload.text`.
 | `attachments_unsupported` | The engine cannot pass attachments on. |
 | `session_model` | An agent switched this session's model (label `model switched`). |
 | `voice_handover`, `voice_spoken` | A call was handed to or from another agent. What a call said out loud, in older sessions. |
+| `voice_call_record` | One realtime voice call (engine `voice`, label `call record`), written when the call ends and, for the part before a move, into the session it left. Off with `realtimeVoice.keepTranscript: false`. `payload` has `text` (one line: length, line count, reason), `startedAt`, `endedAt` (ms), `reason`, `voice` and `lines`: `{at, who, text}` with `at` in ms since the call started and `who` `caller`, `voice` or `event` (interruptions, questions to the agent, notices, errors). A `voice` line of an interrupted answer ends in ` (cut off)`. |
 | `reasoning_effort_adjusted`, `sampling_dropped` | The backend refused a parameter and the turn was retried without it. |
 | `doom_loop_notice`, `doom_loop_stop` | The same tool calls three rounds in a row: the model was told to change course (label `loop noticed`). Five rounds: the turn was stopped (`loop stopped`). |
 | `budget_checkpoint` | A builder used 75 % of its turn budget and was told to save its progress and keep working. `payload` has `round`, `toolCalls`, `maxRounds` (`null` without a round cap) and `maxToolCallsPerTurn`. |
@@ -3005,7 +3008,7 @@ Server to client:
 | `{"type": "ready", "call", "rateHz": 24000}` | The call is up. |
 | `{"type": "audio", "base64", "rateHz"}` | Speech to play. |
 | `{"type": "state", "call"}` | The call's state changed. |
-| `{"type": "event", "event", "call"}` | Something happened. `event.kind` is `user_speech`, `user_transcript`, `model_speech`, `model_transcript`, `tool_call`, `interrupted`, `usage`, `closed` or `error`. |
+| `{"type": "event", "event", "call"}` | Something happened. `event.kind` is `ready` (the provider session is up), `user_speech`, `user_transcript`, `model_speech`, `model_transcript`, `tool_call`, `interrupted`, `usage`, `notice` (`message`: a warning from the voice service, each once), `closed` or `error` (`message`, `fatal`). `model_transcript` carries `responseId` when the service names its answers. |
 
 `call` is `{id, target, state, startedAt, consults, spokenTurns, handoverTo?, lastError?}`.
 `state` is `connecting`, `listening`, `consulting`, `speaking` or

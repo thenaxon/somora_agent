@@ -334,7 +334,7 @@ wiki:
 
 | Setting | Meaning |
 |---|---|
-| `memory.embedding.model` | The local embedding model. |
+| `memory.embedding.model` | The local embedding model. Choose it before memory is first indexed: notes already indexed are not embedded again when it changes, so old and new vectors mix, and a model with another vector size stops memory from starting. `memory.embedding.provider` works only as `local`. |
 | `memory.chunking.targetTokens` | Size of one indexed section. |
 | `memory.chunking.overlapTokens` | How much neighbouring sections overlap. |
 | `memory.autoInject.queryTurns` | The current message plus this many minus one earlier turns steer the search. |

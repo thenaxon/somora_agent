@@ -24,7 +24,9 @@ Your agent, with its memory and tools, supplies the answers.
 - **Move the call by saying so.** Ask for another agent or another
   session and the call continues there.
 - **A clean record.** The session keeps the question and the answer,
-  like any other turn. The small talk around it is not stored.
+  like any other turn. The small talk around it stays out of the turns
+  the agent reads; the folded call record keeps it for you, unless
+  `keepTranscript: false`.
 
 ## Set it up
 
@@ -263,11 +265,17 @@ realtimeVoice:
   url: ws://127.0.0.1:8766/v1/realtime
   model: voice-route:auto
   apiKeyFile: ~/.somora/secrets/realtimevoice.token
+  defaultVoice: <set-name>
 ```
 
 [somora_realtimevoice](https://github.com/thenaxon/somora_realtimevoice)
 is such a service: its own speech recognition, model and speech output
-behind this protocol. Its docs show how to set it up for somora.
+behind this protocol. [Its somora guide](https://github.com/thenaxon/somora_realtimevoice/blob/main/docs/somora.md)
+shows how to set it up.
+
+- With `model: voice-route:auto`, the agent's `voice` (or
+  `defaultVoice`) names a set on the service, and the call speaks with
+  that set. A name the service has no set for is refused.
 
 - `provider: local` requires `url`.
 - The model id is appended as `?model=…`. A service with one model can
@@ -295,17 +303,27 @@ at 24 kHz:
 | somora sends | `session.update` (instructions, voice, tools, turn detection, transcription of your audio), `input_audio_buffer.append`, `conversation.item.create` with a `function_call_output`, `response.create`, `response.cancel` |
 | somora reads | `session.created`, `session.updated`, `input_audio_buffer.speech_started`, `input_audio_buffer.speech_stopped`, `conversation.item.input_audio_transcription.completed`, `response.output_audio.delta`, `response.output_audio_transcript.delta`, `response.output_audio_transcript.done`, `response.function_call_arguments.done`, `response.created`, `response.done`, `error` |
 
+What somora reads beyond OpenAI's fields:
+
+| Field | Effect |
+|---|---|
+| `error.fatal` | `false` ends that answer, `true` ends the call. Without it, the error type decides. |
+| `response.done` with `response.status: cancelled` | With `provider: local`, stops playback: the service confirmed that you talked over the answer. |
+| `session.updated` `session.x_realtimevoice.warnings` | A list of texts; each shows once as a notice in the call. |
+| A refused upgrade's body `{error: {code, message}}` | Becomes the reason the call shows, after the HTTP status. |
+
 ## Cost and limits
 
-- **Billed by connection time.** A call costs per minute, silence
-  included. `maxCallMinutes` ends it. The limit counts from the start
+- **Billed by connection time with OpenAI.** A call costs per minute,
+  silence included. A service of your own has its own costs. `maxCallMinutes` ends it. The limit counts from the start
   of the call and is not reset by a move.
 - **The agent's turns are billed separately**, as usual.
 - **A ChatGPT or Codex subscription does not cover the realtime API.**
   It needs its own key.
 - **One call at a time.** A second window is refused and told who is on
   the line.
-- **Web client only.** The mobile app and the TUI cannot make calls.
+- **Web client and mobile app.** The [mobile app](mobile.md#calling-an-agent)
+  calls too; the TUI cannot.
 - **Audio goes browser, somora, provider.** Tools therefore run in
   exactly one place, the server.
 
@@ -319,7 +337,7 @@ realtimeVoice:
   provider: openai
   model: <model-id>             # required, no default
   # apiKeyFile: ~/.somora/secrets/openai-realtime.key
-  # url: ws://127.0.0.1:8787/realtime
+  # url: ws://127.0.0.1:8766/v1/realtime
   defaultVoice: alloy
   consultPolicy: always
   maxCallMinutes: 20
@@ -367,7 +385,7 @@ Per agent, under `voice:` in `agent.yaml`:
 | Setting | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | May this agent be called. Without a `voice:` block the agent cannot be called and is not in the picker. |
-| `voice` | `defaultVoice` | Voice id of the provider. |
+| `voice` | `defaultVoice` | Voice id of the provider. With `provider: local`, the name of a set on the service. |
 | `language` | `stt.language`, else `en` | Spoken language, as a code such as `de`. |
 | `style` | not set | One line on how the agent sounds. At most 400 characters. |
 | `consultPolicy` | the global value | Overrides `realtimeVoice.consultPolicy` for this agent. |
@@ -377,6 +395,11 @@ Per agent, under `voice:` in `agent.yaml`:
 `shimmer`, `verse`, `marin`, `cedar`. The provider refuses anything
 else. They are not tied to a language, but they sound clearly
 different, so give each agent its own.
+
+With `provider: local` and `model: voice-route:auto`, a voice is the
+name of a set on the service, and `defaultVoice` should name one too:
+the default `alloy` is only a set there if you made one by that name.
+An unknown name is refused.
 
 ## Tools of the voice
 
