@@ -24,6 +24,8 @@ import { resolveAgentColor } from '../hooks/agentColors';
 import { SessionSheet } from './SessionSheet';
 import { AgentOrderSheet } from './AgentOrderSheet';
 import { QuestionCard, useSessionQuestion } from './QuestionCard';
+import { CallSheet, PhoneIcon } from './CallSheet';
+import { fetchVoiceStatus, useVoiceCall, type VoiceStatus } from '../../../web/src/hooks/useVoiceCall';
 import { sessionKey } from '../hooks/useActivityStream';
 import { MAIN_SESSION, labelForRef, modelLabel, readLastSession, writeLastSession, type OpenSession } from '../hooks/session-pick';
 import type { SessionSummary } from '../../../web/src/lib/api';
@@ -324,6 +326,27 @@ export function MobileApp() {
   // foreground, because the browser drops it whenever the page hides.
   const wakeLock = useWakeLock();
 
+  // Calls (realtime voice): who can be called, and the call itself. The
+  // call lives here, not in its sheet, so the tap on the call button can
+  // start it — a phone allows audio only from a gesture.
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
+  const [callOpen, setCallOpen] = useState(false);
+  const [callTarget, setCallTarget] = useState<{ agent: string; session: string } | null>(null);
+  const voiceCall = useVoiceCall();
+  useEffect(() => {
+    let alive = true;
+    void fetchVoiceStatus().then((s) => { if (alive) setVoiceStatus(s); });
+    return () => { alive = false; };
+  }, []);
+  const callable = Boolean(voiceStatus?.enabled && activeAgent && voiceStatus.agents.includes(activeAgent));
+  const startCall = () => {
+    if (!activeAgent) return;
+    const target = { agent: activeAgent, session: session.slug };
+    setCallTarget(target);
+    setCallOpen(true);
+    void voiceCall.connect(target.agent, target.session);
+  };
+
   // A broken config.yaml: the server keeps the last valid version and
   // edits do nothing — say so on the phone too. Checked on start, when
   // the app comes back to the front, and every minute.
@@ -469,6 +492,29 @@ export function MobileApp() {
             <span aria-hidden="true">{wakeLock.enabled ? '☀️' : '🌙'}</span>
           </button>
         )}
+        {callable && (
+          <button
+            type="button"
+            data-testid="call-button"
+            onClick={startCall}
+            aria-label={`call ${activeAgent}`}
+            title={`call ${activeAgent} in this session`}
+            style={{
+              marginLeft: 6,
+              background: 'transparent',
+              border: '1px solid var(--border-2, #444)',
+              borderRadius: 6,
+              padding: '4px 8px',
+              color: 'var(--accent, #6cf)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 12,
+            }}
+          >
+            <PhoneIcon size={14} />
+          </button>
+        )}
         {ttsEnabled && autoPlayAllowOverride && activeAgent && (
           <button
             type="button"
@@ -496,6 +542,17 @@ export function MobileApp() {
           </button>
         )}
       </header>
+
+      {callOpen && callTarget && (
+        <CallSheet
+          call={voiceCall}
+          agent={callTarget.agent}
+          session={callTarget.session}
+          agents={agents.map((a) => ({ name: a.name, color: resolveAgentColor(a), icon: a.icon }))}
+          maxCallMinutes={voiceStatus?.maxCallMinutes ?? 20}
+          onClose={() => setCallOpen(false)}
+        />
+      )}
 
       {activeAgent && activeKind === 'builder' && (
         <BuilderSheet

@@ -64,7 +64,7 @@ Otherwise the link points at `127.0.0.1`, which the phone cannot open.
 
 | Part | What it does |
 |---|---|
-| **Header** | Shows `agent · session ▾ model`. Tap it to switch session or model. On the right: the work badge, the **tools** switch (a wrench; on a wide screen with its name), in a builder session the **builder** button (a clipboard, with the number of open tasks), the screen-awake toggle and the voice toggle. |
+| **Header** | Shows `agent · session ▾ model`. Tap it to switch session or model. On the right: the work badge, the **tools** switch (a wrench; on a wide screen with its name), in a builder session the **builder** button (a clipboard, with the number of open tasks), the screen-awake toggle, the voice toggle and, with realtime voice, the **call** button (a phone). |
 | **Avatar row** | One tile per agent. Tap to switch. The app remembers the last agent. Long-press a tile to change the order, see below. |
 | **Chat** | The history of the open session, newest first loaded. Scroll to the top, or tap **Load older messages**, for the next older part. Replies are rendered as Markdown. A wide code block scrolls sideways. |
 | **Input bar** | Paperclip, microphone, text field, Send. Enter sends, Shift+Enter starts a new line. |
@@ -204,6 +204,30 @@ off or the browser cannot record.
 `🔊`/`🔇` toggle. When it is on and you sent the message by voice, the
 reply is also played. The toggle is remembered per agent. Replies with
 audio get a Play button. Details are in the [voice guide](voice.md).
+
+### Calling an agent
+
+With [realtime voice](realtime-voice.md) set up, the header shows a
+phone for every agent that can be called. Tap it to call the agent in
+the session that is open: a real conversation, as in the web client's
+call window. Interrupt it any time; facts and requests to act go to the
+agent itself.
+
+The call screen shows the agent and session, the clock, a figure that
+moves with both voices, what is happening (`listening`, `looking it
+up…`, `<agent> is talking`) and what was said. Below: **mute** and
+**hang up**. When the agent moves the call to another agent or session,
+the screen follows. After a call ends: **call again** or **close**.
+
+- The first call asks for the microphone. Allow it for the site; on an
+  iPhone the web app must be opened over HTTPS.
+- The screen stays on while the call runs.
+- A call ends when the app goes to the background or the screen locks:
+  a web app is paused there and could no longer listen. The call screen
+  says so.
+- Headphones and Bluetooth work as for any call. Without them, the
+  phone decides whether the voice comes from the earpiece or the
+  loudspeaker.
 
 ### Keeping the screen awake
 

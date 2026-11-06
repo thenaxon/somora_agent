@@ -216,6 +216,10 @@ curl -H "Authorization: Bearer $(somora key)" -s "http://127.0.0.1:18737/voice/i
 Closing the window or the tab ends the call. The browser holds no key
 and never sees a tool call. The server owns all of it.
 
+On the phone, the [mobile app](mobile.md#calling-an-agent) has the same
+call as a full screen: a phone button in the header calls the agent in
+the open session.
+
 ## Moving the call
 
 With `allowAgentSwitch: true`, say where you want to go:

@@ -61,6 +61,8 @@ export default defineConfig({
       '/files': { target: proxyTarget, changeOrigin: true, secure: true },
       '/models': { target: proxyTarget, changeOrigin: true, secure: true },
       '/tools': { target: proxyTarget, changeOrigin: true, secure: true },
+      // calls: /voice/status and the /voice/attach audio WebSocket
+      '/voice': { target: proxyTarget, changeOrigin: true, secure: true, ws: true },
       '/tui-config': { target: proxyTarget, changeOrigin: true, secure: true },
       '/mobile-config': { target: proxyTarget, changeOrigin: true, secure: true },
       '/stt': { target: proxyTarget, changeOrigin: true, secure: true },
