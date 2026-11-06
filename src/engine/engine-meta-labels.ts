@@ -107,6 +107,8 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     // calls keep their talking in the call, but sessions recorded before
     // that still carry these rows and must still render.
     voice_spoken: 'spoken aloud',
+    // What was said in a call, folded: for reading back and debugging.
+    voice_call_record: 'call record',
   },
 };
 
@@ -182,7 +184,7 @@ export function summariseEngineMeta(
     const p = payload as { text?: unknown } | null | undefined;
     return typeof p?.text === 'string' ? p.text : undefined;
   }
-  if (itemType === 'voice_spoken' || itemType === 'voice_handover') {
+  if (itemType === 'voice_spoken' || itemType === 'voice_handover' || itemType === 'voice_call_record') {
     const p = payload as { text?: unknown } | null | undefined;
     return typeof p?.text === 'string' ? p.text : undefined;
   }

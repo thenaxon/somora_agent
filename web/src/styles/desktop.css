@@ -1997,6 +1997,17 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .voice-spoken svg { flex: 0 0 auto; opacity: 0.7; align-self: center; }
 .voice-spoken-text { overflow-wrap: anywhere; }
 .voice-spoken-time { margin-left: auto; opacity: 0.6; font-style: normal; }
+/* A call's record, folded until opened (docs/realtime-voice.md). */
+.voice-record { margin: 2px 0 2px 34px; color: var(--text-3, #777); font-size: 11px; }
+.voice-record-head { all: unset; display: flex; align-items: center; gap: 6px; width: 100%; cursor: pointer; line-height: 1.4; }
+.voice-record-head svg { flex: 0 0 auto; opacity: 0.7; }
+.voice-record-title { overflow-wrap: anywhere; }
+.voice-record-lines { margin: 4px 0 2px 17px; padding-left: 8px; border-left: 2px solid var(--line, #333); display: flex; flex-direction: column; gap: 3px; }
+.voice-record-line { display: flex; gap: 8px; color: var(--text-1, #ccc); line-height: 1.45; }
+.voice-record-line.event { color: var(--text-3, #777); font-style: italic; }
+.voice-record-at { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.7; }
+.voice-record-who { flex: 0 0 3.2em; font-weight: 600; }
+.voice-record-text { overflow-wrap: anywhere; }
 
 /* ── Builder panel (docs/builder.md) ─────────────────────────────────
  * Docked to the right of a builder's chat window. The chat keeps its

@@ -52,6 +52,15 @@ export interface OpenAiRealtimeOptions {
   url?: string;
   /** Injectable for tests: anything that behaves like a ws socket. */
   connect?: (url: string, headers: Record<string, string>) => WebSocketLike;
+  /**
+   * The service decides whether speech over an answer is an interruption
+   * (somora_realtimevoice confirms it on real speech, so room noise does
+   * not cut an answer). Then somora does not cancel on the first sound:
+   * playback stops when the service cancels the answer, or when the
+   * caller really spoke after the answer was fully sent. OpenAI's own
+   * service gets the immediate cancel it has always had.
+   */
+  serviceConfirmsBargeIn?: boolean;
 }
 
 /** The slice of `ws` this adapter uses. */
@@ -112,6 +121,16 @@ class OpenAiRealtimeSession implements RealtimeSession {
    *  progress" refusal can put a delivery back in line. */
   private lastRequest: { instructions?: string; deliver: boolean } | null = null;
 
+  /** Speech from the caller is open (speech_started seen, no stop yet). */
+  private callerSpeaking = false;
+  /** When the browser will have played all audio it was sent, as its
+   *  player schedules it (each chunk after the later of its arrival and
+   *  the previous chunk's end): the service sends faster than real time,
+   *  so the browser may still be playing after response.done. */
+  private playbackEndsAt = 0;
+  /** Warnings the service reported in session.updated, each said once. */
+  private warned = new Set<string>();
+
   /** Ask the model to speak, or remember to ask once it is free.
    *
    *  The flag is set the moment WE ask, not when the server confirms:
@@ -146,10 +165,17 @@ class OpenAiRealtimeSession implements RealtimeSession {
     }
   }
 
+  /** The browser may still be playing the latest answer (with a margin
+   *  for its buffer). */
+  private playbackOutstanding(now: number): boolean {
+    return now < this.playbackEndsAt + 300;
+  }
+
   constructor(
     private readonly ws: WebSocketLike,
     private readonly req: RealtimeSessionRequest,
     id: string,
+    private readonly serviceConfirmsBargeIn = false,
   ) {
     this.id = id;
     this.ws.on('message', (data: unknown) => this.onMessage(String(data)));
@@ -228,11 +254,24 @@ class OpenAiRealtimeSession implements RealtimeSession {
     const ts = Date.now();
     switch (type) {
       case 'session.created':
-      case 'session.updated':
+      case 'session.updated': {
         this.push({ kind: 'ready', ts });
+        // somora_realtimevoice reports what it did not do as asked (an
+        // unknown model name, a language the profile overrides): said once
+        const ext = (msg.session as { x_realtimevoice?: { warnings?: unknown } } | undefined)?.x_realtimevoice;
+        for (const w of Array.isArray(ext?.warnings) ? ext.warnings : []) {
+          if (typeof w !== 'string' || this.warned.has(w)) continue;
+          this.warned.add(w);
+          this.push({ kind: 'notice', ts, message: w });
+        }
         break;
+      }
       case 'input_audio_buffer.speech_started':
         this.push({ kind: 'user_speech', ts, phase: 'start' });
+        this.callerSpeaking = true;
+        // A service that confirms barge-in itself decides: a noise must
+        // not cut the answer here before it had the chance to say no.
+        if (this.serviceConfirmsBargeIn) break;
         // Talking over the model IS the interruption signal; there is
         // no separate event for it on this transport.
         if (this.speaking) {
@@ -246,6 +285,15 @@ class OpenAiRealtimeSession implements RealtimeSession {
         break;
       case 'input_audio_buffer.speech_stopped':
         this.push({ kind: 'user_speech', ts, phase: 'end' });
+        this.callerSpeaking = false;
+        // The service only reports a stop for real speech (noise is
+        // dropped). Spoken after the answer was fully sent, it talks over
+        // the audio the browser is still playing: that stops now. During
+        // an answer the service's own cancel decides (response.done).
+        if (this.serviceConfirmsBargeIn && !this.responseActive && this.playbackOutstanding(ts)) {
+          this.playbackEndsAt = 0;
+          this.push({ kind: 'interrupted', ts });
+        }
         break;
       case 'conversation.item.input_audio_transcription.completed': {
         const text = typeof msg.transcript === 'string' ? msg.transcript : '';
@@ -254,17 +302,22 @@ class OpenAiRealtimeSession implements RealtimeSession {
       }
       case 'response.output_audio_transcript.delta': {
         const text = typeof msg.delta === 'string' ? msg.delta : '';
-        if (text) this.push({ kind: 'model_transcript', ts, text, final: false });
+        const responseId = typeof msg.response_id === 'string' ? msg.response_id : undefined;
+        if (text) this.push({ kind: 'model_transcript', ts, text, final: false, ...(responseId ? { responseId } : {}) });
         break;
       }
       case 'response.output_audio_transcript.done': {
         const text = typeof msg.transcript === 'string' ? msg.transcript : '';
-        if (text) this.push({ kind: 'model_transcript', ts, text, final: true });
+        const responseId = typeof msg.response_id === 'string' ? msg.response_id : undefined;
+        if (text) this.push({ kind: 'model_transcript', ts, text, final: true, ...(responseId ? { responseId } : {}) });
         break;
       }
       case 'response.output_audio.delta': {
         const b64 = typeof msg.delta === 'string' ? msg.delta : '';
         if (b64) {
+          // PCM16 mono: 2 bytes a sample; base64 is 4 chars for 3 bytes
+          const chunkMs = ((b64.length * 3) / 4 / 2 / AUDIO_RATE_HZ) * 1000;
+          this.playbackEndsAt = Math.max(ts, this.playbackEndsAt) + chunkMs;
           if (!this.speaking) {
             this.speaking = true;
             this.push({ kind: 'model_speech', ts, phase: 'start' });
@@ -285,6 +338,14 @@ class OpenAiRealtimeSession implements RealtimeSession {
         break;
       case 'response.done': {
         this.responseActive = false;
+        const status = (msg.response as { status?: unknown } | undefined)?.status;
+        if (this.serviceConfirmsBargeIn && status === 'cancelled' && this.speaking) {
+          // the service confirmed the caller's barge-in: stop playback (the
+          // browser drops its queued audio, so nothing is left playing)
+          this.speaking = false;
+          this.playbackEndsAt = 0;
+          this.push({ kind: 'interrupted', ts });
+        }
         this.speakNext();
         if (this.speaking) {
           this.speaking = false;
@@ -303,7 +364,7 @@ class OpenAiRealtimeSession implements RealtimeSession {
         break;
       }
       case 'error': {
-        const err = msg.error as { message?: unknown; type?: unknown } | undefined;
+        const err = msg.error as { message?: unknown; type?: unknown; fatal?: unknown } | undefined;
         const message = typeof err?.message === 'string' ? err.message : JSON.stringify(msg).slice(0, 300);
         // The server knows better than our bookkeeping: if it says a
         // response is running, one is. Remember to ask again when that
@@ -335,7 +396,14 @@ class OpenAiRealtimeSession implements RealtimeSession {
         // A session-level error kills the call; an item-level one (a
         // rejected tool argument, say) must not — the conversation is
         // still alive and the model can be told.
-        const fatal = typeof err?.type === 'string' && /session|invalid_request_error/i.test(err.type) === false;
+        // A service that says whether the session can go on is believed
+        // (somora_realtimevoice sends fatal: false for a failed backend
+        // request: that answer ended, the call did not). Without the flag,
+        // OpenAI's error types decide as before.
+        const fatal =
+          typeof err?.fatal === 'boolean'
+            ? err.fatal
+            : typeof err?.type === 'string' && /session|invalid_request_error/i.test(err.type) === false;
         this.push({ kind: 'error', ts, message, fatal });
         break;
       }
@@ -447,7 +515,7 @@ export class OpenAiRealtimeProvider implements RealtimeProvider {
     const ws: WebSocketLike = this.opts.connect
       ? this.opts.connect(url, headers)
       : (new WebSocket(url, { headers }) as unknown as WebSocketLike);
-    const session = new OpenAiRealtimeSession(ws, req, `oai-${Date.now()}`);
+    const session = new OpenAiRealtimeSession(ws, req, `oai-${Date.now()}`, this.opts.serviceConfirmsBargeIn === true);
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('realtime connect timed out after 20s')), 20_000);
       ws.on('open', () => {
@@ -459,6 +527,32 @@ export class OpenAiRealtimeProvider implements RealtimeProvider {
         clearTimeout(timer);
         reject(err);
       });
+      // A refusal with a body (somora_realtimevoice: 401 invalid_token,
+      // 404 unknown profile, 503 settings unavailable): say which, instead
+      // of ws's bare "Unexpected server response: 403".
+      (ws as WebSocketLike & { on(ev: 'unexpected-response', cb: (req: { destroy(): void }, res: NodeJS.ReadableStream & { statusCode?: number }) => void): void }).on?.(
+        'unexpected-response',
+        (request, res) => {
+          let body = '';
+          const refused = (detailFromBody: boolean) => {
+            clearTimeout(timer);
+            request.destroy();
+            let detail = body.slice(0, 200);
+            try {
+              const e = (JSON.parse(body) as { error?: { code?: string; message?: string } }).error;
+              if (e) detail = [e.code, e.message].filter(Boolean).join(': ');
+            } catch {
+              /* not JSON: the raw start of the body */
+            }
+            reject(new Error(`realtime service refused the connection (HTTP ${res.statusCode ?? '?'}${detailFromBody && detail ? `: ${detail}` : ''})`));
+          };
+          // the body may come after the headers: read it to the end first
+          res.on('data', (c: Buffer) => (body += c.toString('utf8').slice(0, 2000)));
+          res.on('end', () => refused(true));
+          res.on('error', () => refused(false));
+          res.on('aborted', () => refused(false));
+        },
+      );
     });
     return session;
   }

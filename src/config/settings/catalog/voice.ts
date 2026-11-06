@@ -274,6 +274,13 @@ export const VOICE: Catalog = {
     unit: 'ms',
     retired: true,
   },
+  'realtimeVoice.keepTranscript': {
+    label: 'Keep a call record',
+    help: 'Keeps what was said in each call as one folded entry in the session, for reading back and debugging; the agent, memory and dreams never read it.',
+    more: 'The record has your sentences, the voice\'s answers (an interrupted one marked cut off), interruptions, questions to the agent and errors, each with its time into the call.',
+    level: 'basic',
+    docs: 'realtime-voice.md#what-the-session-records',
+  },
   'realtimeVoice.maxCallMinutes': {
     label: 'Longest call',
     help: 'A call is ended after this long, so a forgotten open window does not keep running up the bill.',

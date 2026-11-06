@@ -81,7 +81,7 @@ export type RealtimeEvent =
   /** The model started/stopped speaking. */
   | { kind: 'model_speech'; ts: number; phase: 'start' | 'end' }
   /** What the model said, as text. `final` is the spoken record. */
-  | { kind: 'model_transcript'; ts: number; text: string; final: boolean }
+  | { kind: 'model_transcript'; ts: number; text: string; final: boolean; responseId?: string }
   /** The voice self wants somora to run one of its tools. */
   | { kind: 'tool_call'; ts: number; callId: string; name: string; args: string }
   /** The user talked over the model; playback should stop. */
@@ -90,6 +90,10 @@ export type RealtimeEvent =
   | { kind: 'audio'; ts: number; base64: string; rateHz: number }
   /** Cost/usage, when the provider reports it. */
   | { kind: 'usage'; ts: number; inputTokens?: number; outputTokens?: number; seconds?: number }
+  /** The service reports it did not do something as asked (an unknown
+   *  model name, a language the profile overrides). For the log and the
+   *  call record; the call goes on. */
+  | { kind: 'notice'; ts: number; message: string }
   /** Terminal. `reason` is for the log and the UI, not for the model. */
   | { kind: 'closed'; ts: number; reason: string }
   | { kind: 'error'; ts: number; message: string; fatal: boolean };

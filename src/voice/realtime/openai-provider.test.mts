@@ -40,9 +40,9 @@ class FakeSocket implements WebSocketLike {
   server(obj: object): void { this.emit('message', JSON.stringify(obj)); }
 }
 
-async function openSession(): Promise<{ socket: FakeSocket; events: RealtimeEvent[]; session: Awaited<ReturnType<OpenAiRealtimeProvider['open']>> }> {
+async function openSession(opts: { serviceConfirmsBargeIn?: boolean } = {}): Promise<{ socket: FakeSocket; events: RealtimeEvent[]; session: Awaited<ReturnType<OpenAiRealtimeProvider['open']>> }> {
   const socket = new FakeSocket();
-  const provider = new OpenAiRealtimeProvider({ apiKey: 'test-key', connect: () => socket });
+  const provider = new OpenAiRealtimeProvider({ apiKey: 'test-key', connect: () => socket, ...opts });
   const opening = provider.open({
     model: 'gpt-realtime-2.1-mini',
     voice: 'marin',
@@ -283,6 +283,104 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   await tick();
   check('the socket is closed', socket.closed);
   check('and the call reports why', events.some((e) => e.kind === 'closed' && e.reason === 'user hung up'));
+}
+
+// ── a service that says fatal: false keeps the call ──────────────────
+{
+  // somora_realtimevoice: one failed TTS request ends that answer, not the
+  // call. Before, any error type but OpenAI's own counted as fatal.
+  const { socket, events } = await openSession();
+  socket.server({ type: 'session.created' });
+  socket.server({ type: 'error', error: { type: 'tts_http_error', code: 'tts_http_error', message: 'TTS failed: 503', fatal: false } });
+  socket.server({ type: 'error', error: { type: 'settings_unavailable', message: 'gone', fatal: true } });
+  await tick();
+  const errs = events.filter((e) => e.kind === 'error') as Array<{ message: string; fatal: boolean }>;
+  check('a backend error the service calls non-fatal does not end the call', errs[0]?.fatal === false, JSON.stringify(errs));
+  check('a fatal one still does', errs[1]?.fatal === true);
+}
+
+// ── a service that confirms barge-in itself decides ──────────────────
+{
+  const { socket, events } = await openSession({ serviceConfirmsBargeIn: true });
+  socket.server({ type: 'session.created' });
+  socket.server({ type: 'response.created' });
+  socket.server({ type: 'response.output_audio.delta', delta: 'AAAA' });
+  socket.server({ type: 'input_audio_buffer.speech_started' });
+  await tick();
+  check('a sound over the answer cancels nothing yet', !socket.sent.some((m) => JSON.parse(m).type === 'response.cancel'));
+  check('and playback goes on', !events.some((e) => e.kind === 'interrupted'));
+  // the service confirmed it: the answer ends cancelled
+  socket.server({ type: 'response.done', response: { status: 'cancelled' } });
+  await tick();
+  check('the confirmed barge-in stops playback', events.some((e) => e.kind === 'interrupted'));
+}
+{
+  const { socket, events } = await openSession({ serviceConfirmsBargeIn: true });
+  socket.server({ type: 'session.created' });
+  socket.server({ type: 'response.created' });
+  socket.server({ type: 'response.output_audio.delta', delta: Buffer.alloc(48_000).toString('base64') });
+  socket.server({ type: 'response.done', response: { status: 'completed' } });
+  // noise over the tail the browser still plays: no stop from the service
+  socket.server({ type: 'input_audio_buffer.speech_started' });
+  await tick();
+  check('noise over the playing tail leaves it playing', !events.some((e) => e.kind === 'interrupted'));
+  // real speech over the tail: the service reports its end
+  socket.server({ type: 'input_audio_buffer.speech_stopped' });
+  await tick();
+  check('real speech over the playing tail stops it', events.some((e) => e.kind === 'interrupted'));
+}
+{
+  // a caller who just talks, with nothing playing, interrupts nothing
+  const { socket, events } = await openSession({ serviceConfirmsBargeIn: true });
+  socket.server({ type: 'session.created' });
+  socket.server({ type: 'input_audio_buffer.speech_started' });
+  socket.server({ type: 'input_audio_buffer.speech_stopped' });
+  await tick();
+  check('speech with nothing playing is not an interruption', !events.some((e) => e.kind === 'interrupted'));
+}
+{
+  // OpenAI's own service keeps the immediate cancel
+  const { socket, events } = await openSession();
+  socket.server({ type: 'session.created' });
+  socket.server({ type: 'response.created' });
+  socket.server({ type: 'response.output_audio.delta', delta: 'AAAA' });
+  socket.server({ type: 'input_audio_buffer.speech_started' });
+  await tick();
+  check('OpenAI: the first sound cancels at once', socket.sent.some((m) => JSON.parse(m).type === 'response.cancel') && events.some((e) => e.kind === 'interrupted'));
+}
+
+// ── what the service did not do as asked is reported, once ──────────
+{
+  const { socket, events } = await openSession();
+  const upd = { type: 'session.updated', session: { x_realtimevoice: { warnings: ['unknown_model_using_baseline'] } } };
+  socket.server(upd);
+  socket.server(upd);
+  await tick();
+  const notices = events.filter((e) => e.kind === 'notice') as Array<{ message: string }>;
+  check('a service warning becomes one notice', notices.length === 1 && notices[0]!.message === 'unknown_model_using_baseline', JSON.stringify(notices));
+}
+
+// ── a refused connection says why, even when the body comes late ─────
+{
+  const { createServer } = await import('node:http');
+  const server = createServer((_req, res) => {
+    res.writeHead(401, { 'content-type': 'application/json' });
+    res.flushHeaders();
+    setTimeout(() => res.end(JSON.stringify({ error: { code: 'invalid_token', message: 'invalid or missing token' } })), 150);
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  const provider = new OpenAiRealtimeProvider({ apiKey: 'wrong', url: `ws://127.0.0.1:${port}/v1/realtime` });
+  const started = Date.now();
+  let message = '';
+  try {
+    await provider.open({ model: 'voice-route:auto', voice: 'x', instructions: 'x', language: 'de', tools: [] });
+  } catch (err) {
+    message = (err as Error).message;
+  }
+  server.close();
+  check('the refusal names status and reason', /HTTP 401: invalid_token: invalid or missing token/.test(message), message);
+  check('and comes at once, not after the connect timeout', Date.now() - started < 5000, String(Date.now() - started));
 }
 
 console.log(`\n${pass} ok, ${fail} failed`);

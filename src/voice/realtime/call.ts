@@ -176,6 +176,27 @@ export interface VoiceCallConfig {
   turnDetection?: { threshold: number; prefixPaddingMs: number; silenceDurationMs: number };
   /** Hand-written character from VOICE.md, when there is one. */
   personaOverride?: string;
+  /** Write the call record into the session when the call ends. */
+  keepTranscript?: boolean;
+}
+
+/** Marks an answer that was cut: the text is what the voice generated up
+ *  to the cut; how much of it the caller heard is not known (the service
+ *  sends audio ahead of playback). */
+const CUT_MARK = ' (cut off)';
+
+/** "45 s", "3 min" — the length of a call for its record. */
+function callLength(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s} s` : `${Math.round(s / 60)} min`;
+}
+
+/** One line of the call record: who said it (or what happened), when. */
+export interface VoiceCallRecordLine {
+  /** Milliseconds since the call started. */
+  at: number;
+  who: 'caller' | 'voice' | 'event';
+  text: string;
 }
 
 export interface VoiceCallSnapshot {
@@ -220,6 +241,21 @@ export class VoiceCall {
    * OpenClaw keeps it on its call object.
    */
   private transcript: Array<{ role: 'caller' | 'voice'; text: string }> = [];
+  /** The whole call, for the folded record in the session. */
+  private record: VoiceCallRecordLine[] = [];
+  /** What the model has said of the answer that is running. */
+  private partialAnswer = '';
+  private recordStartedAt = 0;
+  /** The start of an answer recorded as cut: its final transcript, if
+   *  the service still sends one after the cancel, is the same answer. */
+  private cutAnswer = '';
+  /** The response the running answer belongs to, and the one recorded as
+   *  cut (when the service names responses). */
+  private answerResponseId: string | undefined;
+  private cutResponseId: string | undefined;
+  /** The record line of the latest finished answer, while it may still be
+   *  playing: an interruption after its final transcript marks it cut. */
+  private lastAnswerLine: VoiceCallRecordLine | null = null;
   /** Consults that came back handed over: what was asked, when, and
    *  for whom — a result for a previous agent is not read out as this
    *  one's after a switch. */
@@ -263,6 +299,7 @@ export class VoiceCall {
     private readonly deps: VoiceCallDeps,
   ) {
     this.startedAt = this.now();
+    this.recordStartedAt = this.startedAt;
     this.announced = { ...target };
   }
 
@@ -428,13 +465,46 @@ export class VoiceCall {
           this.lastHeardAt = this.now();
           if (ev.final && ev.text.trim().length > 0) {
             this.remember('caller', ev.text.trim());
+            this.recordLine('caller', ev.text.trim());
+            this.lastAnswerLine = null;
             yield this.snapshot();
           }
           break;
         case 'model_transcript':
-          if (ev.final && ev.text.trim().length > 0) {
-            this.remember('voice', ev.text.trim());
+          // the rest of an answer that was already recorded as cut (OpenAI
+          // still sends its deltas and full text after the cancel): skip
+          if (ev.responseId && ev.responseId === this.cutResponseId) {
+            if (ev.final) this.remember('voice', ev.text.trim());
+            break;
           }
+          if (!ev.final) {
+            // a new answer begins: an earlier cut one's late final is no longer expected
+            if (this.partialAnswer === '') this.cutAnswer = '';
+            this.partialAnswer += ev.text;
+            if (ev.responseId) this.answerResponseId = ev.responseId;
+          }
+          else {
+            const text = ev.text.trim();
+            if (text.length > 0) {
+              this.remember('voice', text);
+              // OpenAI sends the cancelled answer's full text after the
+              // cancel: it is already recorded, up to where it was cut
+              // by response when the service names it; by text only without
+              const sameAsCut = ev.responseId
+                ? ev.responseId === this.cutResponseId
+                : this.cutAnswer !== '' && text.startsWith(this.cutAnswer);
+              if (!sameAsCut) {
+                this.recordLine('voice', text);
+                this.lastAnswerLine = this.record[this.record.length - 1] ?? null;
+              }
+            }
+            this.partialAnswer = '';
+            this.cutAnswer = '';
+          }
+          break;
+        case 'notice':
+          this.log({ msg: 'voice.provider_notice', notice: ev.message });
+          this.recordLine('event', `service: ${ev.message}`);
           break;
         case 'tool_call':
           // Not awaited: a consult can take the whole patience, and the
@@ -449,11 +519,24 @@ export class VoiceCall {
         case 'interrupted':
           this.setState('listening');
           this.log({ msg: 'voice.interrupted' });
+          // what was said of the answer before it was cut, and that it was
+          if (this.partialAnswer.trim()) {
+            this.cutAnswer = this.partialAnswer.trim();
+            this.cutResponseId = this.answerResponseId;
+            this.recordLine('voice', `${this.cutAnswer}${CUT_MARK}`);
+          } else if (this.lastAnswerLine && !this.lastAnswerLine.text.endsWith(CUT_MARK)) {
+            // the answer was fully sent and still playing: heard only in part
+            this.lastAnswerLine.text += CUT_MARK;
+          }
+          this.lastAnswerLine = null;
+          this.partialAnswer = '';
+          this.recordLine('event', 'interrupted');
           yield this.snapshot();
           break;
         case 'error':
           this.lastError = ev.message;
           this.log({ msg: 'voice.error', err: ev.message, fatal: ev.fatal });
+          this.recordLine('event', `${ev.fatal ? 'error, call ended' : 'error'}: ${ev.message}`);
           yield this.snapshot();
           if (ev.fatal) {
             await this.close(`provider error: ${ev.message}`);
@@ -465,6 +548,7 @@ export class VoiceCall {
           this.setState('closed');
           this.clearDeadline();
           this.log({ msg: 'voice.call_end', reason: ev.reason, consults: this.consults, spokenTurns: this.spokenTurns });
+          await this.writeRecord(this.target, ev.reason);
           yield this.snapshot();
           return true;
         default:
@@ -510,6 +594,7 @@ export class VoiceCall {
       this.deps.onState?.(this.snapshot());
       await this.start();
       this.log({ msg: 'voice.switched', from: `${from.agent}/${from.slug}`, to: `${this.target.agent}/${this.target.slug}` });
+      await this.writeRecord(from, 'handed over', fromCfg.voice);
       const moved = from.agent !== this.target.agent;
       // A line in both places, so reading either conversation later
       // shows where it went and where it came from. Moving between two
@@ -761,6 +846,7 @@ export class VoiceCall {
     const startedAt = this.now();
     const turn = renderConsultTurn(parsed.args, 'the user', this.recentTranscript());
     this.log({ msg: 'voice.consult_start', question: parsed.args.question.slice(0, 160) });
+    this.recordLine('event', `asked ${this.target.agent}: ${parsed.args.question}`);
     // Fill the silence from here rather than asking the model to
     // announce its own lookup: told to do that, it announced and never
     // called (both models, 2026-09-11).
@@ -779,6 +865,7 @@ export class VoiceCall {
         const id = result.consultId;
         this.openConsults.set(id, { question: parsed.args.question, startedAt, agent: this.target.agent, fetched: false });
         this.log({ msg: 'voice.consult_handed_over', consultId: id, position: result.position ?? 0, ms: this.now() - startedAt });
+        this.recordLine('event', `${this.target.agent} is still working on it; the answer follows`);
         if (this.state !== 'closed' && session === this.session) {
           await session.sendToolResult(
             callId,
@@ -903,6 +990,7 @@ export class VoiceCall {
       // forty went silent while the log said announced).
       await this.session.speak?.(instruction, { deliver: true });
       this.log({ msg: 'voice.consult_announced', consultId: res.consultId, state: res.state, chars: body.length, ...(res.followUp ? { followUp: true } : {}) });
+      this.recordLine('event', `${this.target.agent} answered (${res.state})`);
     } catch (err) {
       this.log({ msg: 'voice.consult_announce_failed', consultId: res.consultId, err: (err as Error).message });
     }
@@ -943,6 +1031,51 @@ export class VoiceCall {
       this.state = 'closed';
       await this.session?.close(reason).catch(() => {});
       this.log({ msg: 'voice.call_closed', reason, consults: this.consults, spokenTurns: this.spokenTurns });
+      await this.writeRecord(this.target, reason);
+    }
+  }
+
+  private recordLine(who: VoiceCallRecordLine['who'], text: string): void {
+    this.record.push({ at: this.now() - this.recordStartedAt, who, text });
+  }
+
+  /**
+   * The call as one folded record in the session it talked to (a handover
+   * writes the part before it into the session it left). An engine_meta
+   * row: the chat shows it folded; the agent's context, memory and dreams
+   * read only user and assistant messages, so it never reaches them.
+   */
+  private async writeRecord(target: VoiceCallTarget, reason: string, voice: string = this.cfg.voice): Promise<void> {
+    // an answer still being spoken when the call ended or moved: what of
+    // it was said so far
+    if (this.partialAnswer.trim()) this.recordLine('voice', `${this.partialAnswer.trim()}${CUT_MARK}`);
+    const lines = this.record;
+    this.record = [];
+    this.partialAnswer = '';
+    this.cutAnswer = '';
+    this.lastAnswerLine = null;
+    const startedAt = this.recordStartedAt;
+    // a call that goes on (a handover) starts the next record's clock here
+    this.recordStartedAt = this.now();
+    if (this.cfg.keepTranscript === false || lines.length === 0) return;
+    const said = lines.filter((l) => l.who !== 'event').length;
+    try {
+      await this.deps.appendEvent(target.agent, target.session, {
+        kind: 'engine_meta',
+        ts: this.now(),
+        engine: 'voice',
+        itemType: 'voice_call_record',
+        payload: {
+          text: `call · ${callLength(this.now() - startedAt)} · ${said} ${said === 1 ? 'line' : 'lines'} · ${reason}`,
+          startedAt,
+          endedAt: this.now(),
+          reason,
+          voice,
+          lines,
+        },
+      } as NormalizedEvent);
+    } catch (err) {
+      this.log({ msg: 'voice.call_record_failed', err: (err as Error).message });
     }
   }
 }

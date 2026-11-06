@@ -128,7 +128,9 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   // that reached the agent, and the answer it gave. The talking around
   // it stays in the call — written as user messages it broke three
   // readers at once (CLI replay, REM, the session lock).
-  check('nothing was written into the session besides the turn', h.events.length === 0, JSON.stringify(h.events));
+  // besides the turn, only the folded call record (keepTranscript)
+  const notRecord = (evs: NormalizedEvent[]) => evs.filter((e) => (e as { itemType?: string }).itemType !== 'voice_call_record');
+  check('nothing was written into the session besides the turn', notRecord(h.events).length === 0, JSON.stringify(h.events));
   check(
     'what the caller said travels WITH the question instead',
     h.consults[0]?.text.includes('Wie weit ist der Umbau?') === true,
@@ -136,6 +138,97 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   );
   check('the call counted what was said to it', h.call.snapshot().spokenTurns === 1, String(h.call.snapshot().spokenTurns));
   check('the call counted its consults', h.call.snapshot().consults === 1);
+}
+
+// ── the call is kept as one folded record in the session ─────────────
+{
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'user_transcript', ts: 2, text: 'Erzähl mir was.', final: true } },
+    { emit: { kind: 'model_transcript', ts: 3, text: 'Es war einmal ', final: false } },
+    { emit: { kind: 'model_transcript', ts: 3, text: 'ein Haus', final: false } },
+    { emit: { kind: 'interrupted', ts: 4 } },
+    { emit: { kind: 'notice', ts: 4, message: 'language_overridden_by_profile' } },
+    { emit: { kind: 'user_transcript', ts: 5, text: 'Stopp, kürzer bitte.', final: true } },
+    { emit: { kind: 'model_transcript', ts: 6, text: 'Ein Haus. Ende.', final: true } },
+    { emit: { kind: 'closed', ts: 7, reason: 'user hung up' } },
+  ];
+  const h = harness(script, async () => ({ text: 'x', outcome: 'completed' }));
+  await drain(h.call);
+  const records = h.events.filter((e) => e.kind === 'engine_meta' && (e as { itemType?: string }).itemType === 'voice_call_record');
+  check('one record per call', records.length === 1, String(records.length));
+  const lines = ((records[0] as { payload?: { lines?: Array<{ who: string; text: string }> } })?.payload?.lines ?? []).map((l) => `${l.who}:${l.text}`);
+  check(
+    'the caller, the voice, the cut answer and what happened, in order',
+    JSON.stringify(lines) ===
+      JSON.stringify([
+        'caller:Erzähl mir was.',
+        'voice:Es war einmal ein Haus (cut off)',
+        'event:interrupted',
+        'event:service: language_overridden_by_profile',
+        'caller:Stopp, kürzer bitte.',
+        'voice:Ein Haus. Ende.',
+      ]),
+    JSON.stringify(lines),
+  );
+  check('it is an engine_meta row: never context, memory or dreams', records[0]?.kind === 'engine_meta');
+}
+{
+  const provider = new FakeRealtimeProvider([
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'user_transcript', ts: 2, text: 'Hallo.', final: true } },
+    { emit: { kind: 'closed', ts: 3, reason: 'user hung up' } },
+  ]);
+  const events: NormalizedEvent[] = [];
+  const call = new VoiceCall(
+    { agent: 'ada', session: '20260911-120000_projektA', slug: 'projektA' },
+    persona(),
+    { model: 'fake-realtime', voice: 'marin', language: 'de', consultPolicy: 'always', maxCallMinutes: 20, keepTranscript: false },
+    { provider, runConsult: async () => ({ text: 'x' }), appendEvent: async (_a, _s, ev) => { events.push(ev); } },
+  );
+  await drain(call);
+  check('keepTranscript: false writes no record', !events.some((e) => (e as { itemType?: string }).itemType === 'voice_call_record'));
+}
+
+{
+  // hung up mid-answer: what was said of it is kept; OpenAI's late final
+  // transcript of a cancelled answer is not recorded twice
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'model_transcript', ts: 2, text: 'Die erste Antwort geht so weiter ', final: false } },
+    { emit: { kind: 'interrupted', ts: 3 } },
+    { emit: { kind: 'model_transcript', ts: 3, text: 'Die erste Antwort geht so weiter und noch weiter.', final: true } },
+    { emit: { kind: 'model_transcript', ts: 4, text: 'Zweite Antwort, mitten im ', final: false } },
+    { emit: { kind: 'closed', ts: 5, reason: 'user hung up' } },
+  ];
+  const h = harness(script, async () => ({ text: 'x', outcome: 'completed' }));
+  await drain(h.call);
+  const rec = h.events.find((e) => (e as { itemType?: string }).itemType === 'voice_call_record') as { payload?: { lines?: Array<{ who: string; text: string }> } } | undefined;
+  const lines = (rec?.payload?.lines ?? []).map((l) => `${l.who}:${l.text}`);
+  check(
+    'the cut answer once, the answer running at hang-up kept',
+    JSON.stringify(lines) === JSON.stringify(['voice:Die erste Antwort geht so weiter (cut off)', 'event:interrupted', 'voice:Zweite Antwort, mitten im (cut off)']),
+    JSON.stringify(lines),
+  );
+}
+
+{
+  // OpenAI: deltas and the full text of the cancelled answer still arrive
+  // after the cancel; they stay out of the record
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'model_transcript', ts: 2, text: 'Teil eins ', final: false, responseId: 'r1' } },
+    { emit: { kind: 'interrupted', ts: 3 } },
+    { emit: { kind: 'model_transcript', ts: 3, text: 'und Teil zwei', final: false, responseId: 'r1' } },
+    { emit: { kind: 'model_transcript', ts: 3, text: 'Teil eins und Teil zwei.', final: true, responseId: 'r1' } },
+    { emit: { kind: 'model_transcript', ts: 4, text: 'Neue Antwort.', final: true, responseId: 'r2' } },
+    { emit: { kind: 'closed', ts: 5, reason: 'user hung up' } },
+  ];
+  const h = harness(script, async () => ({ text: 'x', outcome: 'completed' }));
+  await drain(h.call);
+  const rec = h.events.find((e) => (e as { itemType?: string }).itemType === 'voice_call_record') as { payload?: { lines?: Array<{ who: string; text: string }> } } | undefined;
+  const lines = (rec?.payload?.lines ?? []).map((l) => `${l.who}:${l.text}`);
+  check('late pieces of a cancelled answer stay out', JSON.stringify(lines) === JSON.stringify(['voice:Teil eins (cut off)', 'event:interrupted', 'voice:Neue Antwort.']), JSON.stringify(lines));
 }
 
 // ── the question carries the conversation around it ──────────────────
@@ -163,7 +256,7 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('what the caller was doing rides along beside it', around.includes('deploy von somora'), around);
   check('including what the voice already answered', around.includes('sag bescheid'), around);
   check('the caller is named as the speaker', /the user: ich sitz/.test(around), around);
-  check('nothing of it was written into the session', h.events.length === 0, JSON.stringify(h.events));
+  check('nothing of it was written into the session (but the folded record)', h.events.every((e) => (e as { itemType?: string }).itemType === 'voice_call_record'), JSON.stringify(h.events));
 }
 
 // ── a consult that fails must not kill the call ──────────────────────
@@ -352,7 +445,8 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
       runConsult: async () => ({ text: 'x' }),
       appendEvent: async (agent, session, ev) => {
         const payload = (ev as { payload?: { text?: string } }).payload;
-        if (payload?.text) notes.push({ agent, session, text: payload.text });
+        // handover notes; the folded call record is checked on its own
+        if (payload?.text && (ev as { itemType?: string }).itemType !== 'voice_call_record') notes.push({ agent, session, text: payload.text });
       },
       callableAgents: ['ada', 'bea', 'nova'],
       onState: (snap) => { states.push({ agent: snap.target.agent, ...(snap.handoverTo ? { to: snap.handoverTo } : {}) }); },
@@ -496,7 +590,8 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
       runConsult: async () => ({ text: 'x' }),
       appendEvent: async (agent, session, ev) => {
         const payload = (ev as { payload?: { text?: string } }).payload;
-        if (payload?.text) notes.push({ agent, session, text: payload.text });
+        // handover notes; the folded call record is checked on its own
+        if (payload?.text && (ev as { itemType?: string }).itemType !== 'voice_call_record') notes.push({ agent, session, text: payload.text });
       },
       callableAgents: ['bea', 'nova'],
       resolveTarget: async (agent, sessionRef) => ({

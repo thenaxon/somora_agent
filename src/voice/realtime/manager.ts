@@ -143,6 +143,9 @@ export class VoiceCallManager {
       // Same adapter, different service: the protocol is what this
       // speaks, not the vendor.
       ...(cfg.url ? { url: cfg.url } : {}),
+      // A local service (somora_realtimevoice) confirms a barge-in on
+      // real speech itself; OpenAI's keeps the immediate cancel.
+      serviceConfirmsBargeIn: cfg.provider === 'local',
     });
   }
 
@@ -246,6 +249,7 @@ export class VoiceCallManager {
       language: string;
       consultPolicy: 'auto' | 'substantive' | 'always';
       maxCallMinutes: number;
+      keepTranscript?: boolean;
       personaOverride?: string;
       turnDetection?: { threshold: number; prefixPaddingMs: number; silenceDurationMs: number };
     };
@@ -272,6 +276,7 @@ export class VoiceCallManager {
         language: persona.voice.language ?? this.deps.config.stt?.language ?? 'en',
         consultPolicy: persona.voice.consultPolicy ?? cfg.consultPolicy,
         maxCallMinutes: cfg.maxCallMinutes,
+        keepTranscript: cfg.keepTranscript,
         ...(personaOverride ? { personaOverride } : {}),
         ...(cfg.turnDetection
           ? {
@@ -318,6 +323,7 @@ export class VoiceCallManager {
         language: persona.voice.language ?? this.deps.config.stt?.language ?? 'en',
         consultPolicy: persona.voice.consultPolicy ?? cfg.consultPolicy,
         maxCallMinutes: cfg.maxCallMinutes,
+        keepTranscript: cfg.keepTranscript,
         ...(cfg.turnDetection
           ? {
               turnDetection: {

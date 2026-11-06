@@ -131,8 +131,14 @@ Good to know:
 ## What the session records
 
 One question, one answer, the same trace a request from another agent
-leaves. Your sentences as you said them and the spoken version of the
-answer live for the length of the call and are not written.
+leaves. Next to it, when the call ends, one folded **call record**: your
+sentences, the voice's answers (one that was interrupted marked `(cut
+off)`: its text is what the voice had generated, how much you heard is
+not known), interruptions, questions to the agent, notices from the service
+and errors, each with its time into the call.
+
+Open it in the chat to read the call back. The agent's context, memory search and the dream
+phases never read it. `keepTranscript: false` turns it off.
 
 The note that tells the agent "this comes from a voice call", and the
 lines of the call that go with it, travel beside the question, not
@@ -250,16 +256,30 @@ the record work the same.
 realtimeVoice:
   enabled: true
   provider: local
-  url: ws://127.0.0.1:8787/realtime
-  model: my-voice-model
+  url: ws://127.0.0.1:8766/v1/realtime
+  model: voice-route:auto
+  apiKeyFile: ~/.somora/secrets/realtimevoice.token
 ```
+
+[somora_realtimevoice](https://github.com/thenaxon/somora_realtimevoice)
+is such a service: its own speech recognition, model and speech output
+behind this protocol. Its docs show how to set it up for somora.
 
 - `provider: local` requires `url`.
 - The model id is appended as `?model=…`. A service with one model can
   ignore it.
-- Without `apiKeyFile` no `Authorization` header is sent, so a service
-  on your own machine needs no credential. OpenAI's own endpoint
-  refuses to connect without a key.
+- Without `apiKeyFile` no `Authorization` header is sent. A service that
+  needs no credential works that way; somora_realtimevoice needs its
+  instance token. OpenAI's own endpoint refuses to connect without a key.
+- A refused connection names the reason when the service sends one (a
+  wrong token, an unknown profile).
+- **Talking over an answer.** With `provider: local` the service decides
+  whether a sound is an interruption, so a noise in the room does not
+  cut an answer: playback stops when the service cancels the answer, or
+  when you really spoke after it was fully sent. With `openai` the first
+  sound stops it, as OpenAI's service expects.
+- An error the service marks as not fatal (one failed request to its
+  speech output, say) ends that answer, not the call.
 - `ws://` is meant for a service on the same machine. Use `wss://` for
   anything reachable from outside.
 
@@ -299,6 +319,7 @@ realtimeVoice:
   defaultVoice: alloy
   consultPolicy: always
   maxCallMinutes: 20
+  keepTranscript: true
   allowAgentSwitch: false
   consult:
     quickAnswerMs: 8000
@@ -318,6 +339,7 @@ realtimeVoice:
 | `defaultVoice` | `alloy` | Voice for agents that name none. |
 | `consultPolicy` | `always` | When the voice must ask the agent. See below. |
 | `maxCallMinutes` | `20` | Hard stop for one call. Range 1 to 180. |
+| `keepTranscript` | `true` | Keep each call as one folded record in the session. See "What the session records". |
 | `allowAgentSwitch` | `false` | Allow moving a call to another agent or session. |
 | `consult.quickAnswerMs` | `8000` | How long a spoken question waits before it is handed over. Range 1000 to 120000. |
 | `turnDetection.threshold` | `0.4` | How loud speech must be to count. Lower reacts to quieter speech. Range 0 to 1. |

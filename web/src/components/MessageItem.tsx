@@ -21,6 +21,7 @@ import {
   Brain,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Copy,
   FileText,
@@ -125,6 +126,9 @@ export const MessageItem = memo(function MessageItem({
         ts={msg.ts}
       />
     );
+  }
+  if (msg.role === 'engine_meta' && msg.meta.itemType === 'voice_call_record') {
+    return <CallRecordBlock payload={msg.meta.payload} ts={msg.ts} />;
   }
   if (msg.role === 'engine_meta' && msg.meta.itemType === 'voice_spoken') {
     // Spoken aloud by the voice self. Only sessions recorded before
@@ -493,6 +497,43 @@ function SpokenAsideLine({ text, ts }: { text: string; ts: number }) {
       <Volume2 size={11} />
       <span className="voice-spoken-text">{text}</span>
       <span className="voice-spoken-time">{formatBubbleTime(ts)}</span>
+    </div>
+  );
+}
+
+/** What was said in a call, folded into one line until opened: the
+ *  caller, the voice and what happened (interruptions, questions to the
+ *  agent, errors), with the time into the call. */
+function CallRecordBlock({ payload, ts }: { payload: unknown; ts: number }) {
+  const [open, setOpen] = useState(false);
+  const p = (payload && typeof payload === 'object' ? payload : {}) as {
+    text?: unknown;
+    lines?: Array<{ at?: unknown; who?: unknown; text?: unknown }>;
+  };
+  const lines = Array.isArray(p.lines) ? p.lines : [];
+  const clock = (ms: unknown) => {
+    const s = Math.max(0, Math.round((typeof ms === 'number' ? ms : 0) / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+  return (
+    <div className="voice-record" aria-label="call record">
+      <button type="button" className="voice-record-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        <PhoneCall size={11} />
+        <span className="voice-record-title">{typeof p.text === 'string' ? p.text : 'call record'}</span>
+        <span className="voice-spoken-time">{formatBubbleTime(ts)}</span>
+      </button>
+      {open && (
+        <div className="voice-record-lines">
+          {lines.map((l, i) => (
+            <div key={i} className={`voice-record-line ${l.who === 'event' ? 'event' : ''}`}>
+              <span className="voice-record-at">{clock(l.at)}</span>
+              {l.who !== 'event' && <span className="voice-record-who">{l.who === 'caller' ? 'You' : 'Voice'}</span>}
+              <span className="voice-record-text">{String(l.text ?? '')}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

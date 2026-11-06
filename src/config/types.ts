@@ -1425,6 +1425,10 @@ export const RealtimeVoiceConfigSchema = z
     /** Hard stop for one call. The meter runs while nobody speaks, so
      *  an open tab is a standing bill. */
     maxCallMinutes: z.number().int().min(1).max(180).default(20),
+    /** Keep what was said in a call as one folded record in the session,
+     *  for reading back and debugging. Shown in the chat, never part of
+     *  the agent's context, memory or dreams. */
+    keepTranscript: z.boolean().default(true),
     /** Switching agent mid-call (a second tool). Off until the basic
      *  call has proven itself. */
     allowAgentSwitch: z.boolean().default(false),
