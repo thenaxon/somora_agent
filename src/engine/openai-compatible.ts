@@ -293,19 +293,31 @@ export function buildPartialDigest(messages: readonly ChatMessage[]): string {
  * aren't the known scaffold string (weak models loop on all sorts of
  * phrases). Cheap and bounded: only looks once the text is long enough to
  * be suspicious, and by then the stream is cut so `text` never grows huge.
+ *
+ * A loop repeats back to back: the last four occurrences of a probe from
+ * the tail must be separated by the same text each time. A long piece
+ * that merely recurs with different text in between (links to four files
+ * in one deep folder, a URL prefix in a table) is an answer, not a loop:
+ * that case cut correct answers and replaced them with "could not produce
+ * a clean answer" (measured 2026-11-09, private/parallel-tools/KONZEPT.md).
+ * The text in between is compared as is: links that differ only in a date
+ * are different links.
  */
 export function looksRepetitive(text: string): boolean {
   if (text.length < 240) return false;
   // A 60-char probe taken from near the end. If it recurs ≥4×, it's a loop.
   const probe = text.slice(-80, -20);
   if (probe.length < 40) return false;
-  let count = 0;
+  const at: number[] = [];
   let idx = text.indexOf(probe);
-  while (idx !== -1 && count < 4) {
-    count++;
+  while (idx !== -1) {
+    at.push(idx);
     idx = text.indexOf(probe, idx + probe.length);
   }
-  return count >= 4;
+  if (at.length < 4) return false;
+  const last = at.slice(-4);
+  const gap = (i: number): string => text.slice(last[i], last[i + 1]);
+  return gap(0) === gap(1) && gap(1) === gap(2);
 }
 
 /**

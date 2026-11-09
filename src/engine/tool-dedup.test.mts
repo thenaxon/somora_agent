@@ -161,6 +161,22 @@ const SCAFFOLD =
     ),
   );
   check('empty is not repetitive', !looksRepetitive(''));
+  {
+    // 2026-11-09: an answer linking four files of one deep folder was cut
+    // as a loop and replaced by "could not produce a clean answer".
+    const dir = '/tmp/agent-runs/2026-11-09/measurement/workspace-variant-b/notizen';
+    const answer =
+      '## Zusammenfassung der Wochennotizen\n\nIch habe vier Wochennotizen gelesen ' +
+      `([01.10.](${dir}/2026-10-01.md), [08.10.](${dir}/2026-10-08.md), ` +
+      `[15.10.](${dir}/2026-10-15.md), [22.10.](${dir}/2026-10-22.md)).`;
+    let flagged = false;
+    for (let k = 240; k <= answer.length; k++) if (looksRepetitive(answer.slice(0, k))) flagged = true;
+    check('links into one deep folder are not a loop, at any point of the stream', !flagged);
+    check(
+      'a loop that started after a normal opening is still a loop',
+      looksRepetitive('Hier die Antwort auf deine Frage zu den Dateien. ' + 'Ich lese die Datei jetzt noch einmal und prüfe sie. '.repeat(12)),
+    );
+  }
   check(
     'two repeats is not enough (needs a real loop)',
     !looksRepetitive('Der Kernel ist 6.12.69+deb13-amd64 und läuft stabil. '.repeat(2)),
