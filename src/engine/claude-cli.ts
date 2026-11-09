@@ -86,6 +86,16 @@ function createSteerableInput(first: SDKUserMessage): SteerableInput {
 
 const ENGINE = 'claude-cli';
 
+/**
+ * `text` ended so that what follows starts a paragraph of its own: the
+ * text of a later request in the same turn reads as a new paragraph,
+ * not glued to the last word of the one before.
+ */
+export function endParagraph(text: string): string {
+  if (!text || text.endsWith('\n\n')) return text;
+  return text + (text.endsWith('\n') ? '\n' : '\n\n');
+}
+
 /** The text of a tool_result block's content, whatever shape it has. */
 function toolResultText(content: unknown): string {
   if (typeof content === 'string') return content;
@@ -254,6 +264,13 @@ export const claudeCliEngine: AgentEngine = {
     }
 
     let cumulative = '';
+    /** A new request began after text: its first text starts a paragraph. */
+    let paragraphNext = false;
+    const withParagraph = (text: string): string => {
+      if (!paragraphNext) return text;
+      paragraphNext = false;
+      return endParagraph(text);
+    };
     let finalText = '';
     let sawToolUse = false;
     let yieldedErrorEvent = false;
@@ -651,14 +668,15 @@ export const claudeCliEngine: AgentEngine = {
           const ev = msg.event;
           // A new request after a result: the SDK is answering the steers
           // that came in while the final answer was written.
-          if (ev.type === 'message_start' && resultsSeen > 0) {
-            unansweredSteers = 0;
-            // The steer's answer continues the same bubble: keep it a
-            // paragraph of its own instead of gluing it to the last word.
-            if (cumulative && !cumulative.endsWith('\n\n')) cumulative += cumulative.endsWith('\n') ? '\n' : '\n\n';
-          }
+          if (ev.type === 'message_start' && resultsSeen > 0) unansweredSteers = 0;
+          // Every request of the turn (after a tool result, or the
+          // answer to a steer) continues the same bubble: its text is a
+          // paragraph of its own instead of being glued to the last word
+          // ("…relative to workspace.In logs/app.log stehen…", measured
+          // 2026-11-09). Added only once the new request writes text.
+          if (ev.type === 'message_start' && cumulative) paragraphNext = true;
           if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta') {
-            cumulative += ev.delta.text;
+            cumulative = withParagraph(cumulative) + ev.delta.text;
             receivedTextViaStream = true;
             yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: cumulative };
           } else if (ev.type === 'content_block_delta' && ev.delta.type === 'thinking_delta') {
@@ -675,6 +693,8 @@ export const claudeCliEngine: AgentEngine = {
             lastCallContextTokens =
               (au.input_tokens ?? 0) + (au.cache_read_input_tokens ?? 0) + (au.cache_creation_input_tokens ?? 0);
           }
+          // Without a stream, each assistant message is one request.
+          if (!receivedTextViaStream && cumulative) paragraphNext = true;
           for (const block of msg.message.content) {
             if (block.type === 'thinking' && !receivedThinkingViaStream) {
               const t = (block as { thinking?: unknown }).thinking;
@@ -687,7 +707,7 @@ export const claudeCliEngine: AgentEngine = {
             } else if (block.type === 'redacted_thinking') {
               sawRedactedThinking = true;
             } else if (block.type === 'text' && !receivedTextViaStream) {
-              cumulative += block.text;
+              cumulative = withParagraph(cumulative) + block.text;
               yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: cumulative };
             } else if (block.type === 'tool_use') {
               // A tool is now running in the MCP child — relax the
