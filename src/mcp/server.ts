@@ -334,6 +334,14 @@ async function main(): Promise<void> {
       name: tool.name,
       description: persona?.kind === 'builder' ? builderToolDescription(tool.name, tool.description) : tool.description,
       inputSchema: mcpAdvertisedSchema(tool),
+      // A tool that changes nothing (`concurrent: true`) says so: Claude
+      // Code runs calls of such tools of one reply side by side (its
+      // isConcurrencySafe is readOnlyHint), as the openai-compatible
+      // engine does (private/parallel-tools/KONZEPT.md §6). Our tool gate
+      // allows every somora tool anyway, so the hint changes no
+      // permission. A classifier that depends on the input cannot be
+      // said in MCP; such tools stay unmarked.
+      ...(tool.concurrent === true ? { annotations: { readOnlyHint: true } } : {}),
       ...(alwaysLoad.has(tool.name) ? { _meta: { 'anthropic/alwaysLoad': true } } : {}),
     })),
   }));

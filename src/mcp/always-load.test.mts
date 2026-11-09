@@ -24,7 +24,7 @@ for (const [name, yaml] of [['al', 'model: x\n'], ['bo', 'kind: builder\nmodel: 
   writeFileSync(join(home, 'agents', name, 'AGENTS.md'), `# ${name}\n`);
 }
 
-type Listed = { name: string; inputSchema: unknown; _meta?: Record<string, unknown> };
+type Listed = { name: string; inputSchema: unknown; _meta?: Record<string, unknown>; annotations?: { readOnlyHint?: boolean } };
 
 async function listed(agent: string, session: string, env: Record<string, string> = {}): Promise<Listed[]> {
   const transport = new StdioClientTransport({
@@ -81,4 +81,18 @@ test('every tool advertises its jsonSchema — the schema codex-cli and openai-c
     assert.deepEqual(t.inputSchema, JSON.parse(JSON.stringify(mcpAdvertisedSchema(def))), t.name);
     assert.ok(!('oneOf' in (t.inputSchema as object)), `${t.name}: no top-level oneOf for the Anthropic API`);
   }
+});
+
+test('a tool that changes nothing is advertised read-only, so Claude Code may run its calls side by side; no other tool is', async () => {
+  const id = await createSession('al', 'always-load-readonly');
+  const reg = new ToolRegistry();
+  registerAllTools(reg);
+  const tools = await listed('al', id);
+  const marked = tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name);
+  for (const t of tools) {
+    const def = reg.list().find((d) => d.name === t.name)!;
+    assert.equal(t.annotations?.readOnlyHint === true, def.concurrent === true, `${t.name}: readOnlyHint follows concurrent`);
+  }
+  assert.ok(marked.includes('file_read') && marked.includes('memory_search'));
+  assert.ok(!marked.includes('file_write') && !marked.includes('exec'));
 });
