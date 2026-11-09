@@ -80,6 +80,11 @@ const MAX_CUT_ANSWER_CONTINUES = 2;
 // the Zod schema and defaults itself.
 const DEFAULT_MAX_TOOL_ROUNDS = 8;
 const DEFAULT_MAX_TOOL_CALLS_PER_TURN = 30;
+
+/** agentLoop.parallelToolHint: said only to a model that may call
+ *  several tools at once (parallelToolCalls: true). */
+export const PARALLEL_TOOL_HINT =
+  'Tool calls that do not depend on each other — several files to read, several searches — can go in one reply: they run at the same time. Calls that need an earlier result still go one after another.';
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 30_000;
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -853,7 +858,15 @@ export const openAiCompatibleEngine: AgentEngine = {
     });
     // The listing is part of the system prompt, so the compaction check
     // and every rebuild see the same bytes the request carries.
-    const systemPromptForTurn = catalogPlan ? `${input.systemPrompt}\n\n${catalogPlan.listing}` : input.systemPrompt;
+    const withListing = catalogPlan ? `${input.systemPrompt}\n\n${catalogPlan.listing}` : input.systemPrompt;
+    // agentLoop.parallelToolHint (private/parallel-tools/KONZEPT.md §4):
+    // Hermes asks every model to batch independent calls. Here only a
+    // model that may call several tools at once is told, and only while
+    // the measurement has not decided it helps — off by default.
+    const systemPromptForTurn =
+      input.agentLoopConfig?.parallelToolHint === true && resolvedModel.model.parallelToolCalls === true && toolList.length > 0
+        ? `${withListing}\n\n${PARALLEL_TOOL_HINT}`
+        : withListing;
 
     let meta = (await metaStore.get(agent, session)) as OpenAiCompatibleMeta;
     let compactions = meta.compactions;

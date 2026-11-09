@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { openAiCompatibleEngine } from './openai-compatible.ts';
+import { openAiCompatibleEngine, PARALLEL_TOOL_HINT } from './openai-compatible.ts';
 import { createLimiter, runsConcurrently } from './tool-concurrency.ts';
 import type { SessionMeta, SessionMetaStore, TurnInput } from './types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
@@ -97,13 +97,13 @@ function memStore(): SessionMetaStore {
   } as unknown as SessionMetaStore;
 }
 
-async function run(port: number, calls: Call[], loop: Record<string, unknown> = {}, signal?: AbortSignal): Promise<{ events: NormalizedEvent[]; ms: number; error?: unknown }> {
+async function run(port: number, calls: Call[], loop: Record<string, unknown> = {}, signal?: AbortSignal, modelExtra: Record<string, unknown> = {}): Promise<{ events: NormalizedEvent[]; ms: number; error?: unknown }> {
   roundOne = calls;
   requests.length = 0;
   timeline = [];
   inFlight = 0;
   maxInFlight = 0;
-  const model = { id: 'm', contextWindow: 200_000, capabilities: ['text'] as const, maxTokens: 4_000 };
+  const model = { id: 'm', contextWindow: 200_000, capabilities: ['text'] as const, maxTokens: 4_000, ...modelExtra };
   const provider = { engine: 'openai-compatible' as const, baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'x', models: [model] };
   const resolvedModel = { providerName: 'fake', provider, modelId: 'm', model } as unknown as TurnInput['resolvedModel'];
   const input = {
@@ -218,6 +218,18 @@ test('stop while calls wait for a slot: the waiting ones never start', async (t)
     invoker.invoke = orig;
   }
   assert.deepEqual(started, ['A', 'B'], 'C and D were still waiting when the turn stopped');
+});
+
+test('the batching hint reaches only a model that may call several tools, and only when switched on', async (t) => {
+  const { server, port } = await backend();
+  t.after(() => server.close());
+  const system = () => requests[0]!.messages.find((m: any) => m.role === 'system')?.content as string;
+  await run(port, [read('A', 10)], { parallelToolHint: true }, undefined, { parallelToolCalls: true });
+  assert.ok(system().endsWith(PARALLEL_TOOL_HINT), 'switched on, model allowed: told');
+  await run(port, [read('A', 10)], { parallelToolHint: true }, undefined, {});
+  assert.ok(!system().includes(PARALLEL_TOOL_HINT), 'model not allowed several calls: not told');
+  await run(port, [read('A', 10)], {}, undefined, { parallelToolCalls: true });
+  assert.ok(!system().includes(PARALLEL_TOOL_HINT), 'off by default');
 });
 
 test('which calls may run side by side: only a tool that says so, never on a doubt', () => {

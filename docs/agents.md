@@ -814,6 +814,7 @@ an `openai-compatible` provider.
 | `agentLoop.maxRounds` | `8` | Rounds per turn, `openai-compatible` engine. |
 | `agentLoop.maxToolCallsPerTurn` | `30` | Tool calls per turn. |
 | `agentLoop.maxParallelTools` | `8` | Calls of one reply that run at the same time, for tools that change nothing. See [Tools](tools.md#results-limits-and-timeouts). |
+| `agentLoop.parallelToolHint` | `false` | Tells a model with `parallelToolCalls: true` that independent calls can go in one reply. |
 | `agentLoop.longTaskDefaultTimeoutMs` | `300000` | Default wait of `agent_ask` and the result tools. |
 | `agentLoop.longTaskMaxTimeoutMs` | `1800000` | Longest wait. |
 | `agentLoop.wakeGraceMs` | `3000` | Delay before a wake turn. 0 to 60000. |

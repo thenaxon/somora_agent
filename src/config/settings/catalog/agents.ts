@@ -86,6 +86,13 @@ export const AGENTS: Catalog = {
     unit: 'calls',
     docs: 'agents.md#related-settings-in-configyaml',
   },
+  'agentLoop.parallelToolHint': {
+    label: 'Ask for several tool calls at once',
+    help: 'Tells a model that may call several tools at once that independent calls can go in one reply.',
+    more: 'Only on the openai-compatible engine, and only for models whose parallelToolCalls is true. Off by default.',
+    level: 'advanced',
+    docs: 'tools.md#results-limits-and-timeouts',
+  },
   'agentLoop.maxTurnMs': {
     label: 'Time limit per turn',
     help: 'How long one turn may run in total before the model is asked for a final summary; unset means no time limit.',

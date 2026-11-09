@@ -633,6 +633,13 @@ export const AgentLoopConfigSchema = z.object({
    */
   maxParallelTools: z.number().int().min(1).max(32).default(8),
   /**
+   * Tell a model that may call several tools at once (a model with
+   * `parallelToolCalls: true`) that independent calls can go in one
+   * reply. Off until the measurement in private/parallel-tools shows
+   * it helps without costing quality. Openai-compatible engine only.
+   */
+  parallelToolHint: z.boolean().default(false),
+  /**
    * Wall-clock cap for one turn of the openai-compatible loop, in ms.
    * Unset = no time cap (only rounds and calls bound the turn). A
    * builder agent sets this per agent (agent.yaml `agentLoop.maxTurnMs`,
@@ -720,6 +727,7 @@ export const AgentLoopConfigSchema = z.object({
   maxRounds: 8,
   maxToolCallsPerTurn: 30,
   maxParallelTools: 8,
+  parallelToolHint: false,
   toolUsageReminder: true,
   toolCallTimeoutMs: 30_000,
   longTaskDefaultTimeoutMs: 300_000,

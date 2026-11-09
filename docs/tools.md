@@ -647,6 +647,7 @@ Settings that shape how tools run:
 |---|---|---|
 | `agentLoop.toolCallTimeoutMs` | `30000` | Time limit of one tool call, unless the tool sets its own. |
 | `agentLoop.maxParallelTools` | `8` | Calls of one reply that run at the same time, for tools that change nothing. `1` runs them one after another. `openai-compatible` only. |
+| `agentLoop.parallelToolHint` | `false` | Tells a model with `parallelToolCalls: true` that independent calls can go in one reply. `openai-compatible` only. |
 | `agentLoop.longTaskMaxTimeoutMs` | `1800000` | Longest wait of the tools that wait for other work. |
 | `wiki.lucid.maxCallsPerTurn` | `3` | `wiki_*` calls per turn inside a review loop. |
 | `toolCatalog.alwaysVisible` | the list above | Tools kept in the model's list on `claude-cli`, `codex-cli` and `openai-compatible` instead of behind the tool search. Takes effect on the next turn. |
