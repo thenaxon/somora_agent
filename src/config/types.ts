@@ -624,6 +624,15 @@ export const AgentLoopConfigSchema = z.object({
    */
   maxToolCallsPerTurn: z.number().int().positive().max(500).default(30),
   /**
+   * How many tool calls of one round run at the same time. Only tools
+   * that change nothing (`concurrent` on their definition: reads,
+   * searches, status lookups) run side by side; everything else runs
+   * alone, in the model's order (private/parallel-tools/KONZEPT.md).
+   * 1 runs every call one after another, as before 2026-11-09.
+   * Openai-compatible engine only.
+   */
+  maxParallelTools: z.number().int().min(1).max(32).default(8),
+  /**
    * Wall-clock cap for one turn of the openai-compatible loop, in ms.
    * Unset = no time cap (only rounds and calls bound the turn). A
    * builder agent sets this per agent (agent.yaml `agentLoop.maxTurnMs`,
@@ -710,6 +719,7 @@ export const AgentLoopConfigSchema = z.object({
 }).default({
   maxRounds: 8,
   maxToolCallsPerTurn: 30,
+  maxParallelTools: 8,
   toolUsageReminder: true,
   toolCallTimeoutMs: 30_000,
   longTaskDefaultTimeoutMs: 300_000,

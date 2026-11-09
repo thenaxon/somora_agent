@@ -109,6 +109,8 @@ const EntityListInput = z.object({}).strict();
 
 export const entityList: ToolDefinition<z.infer<typeof EntityListInput>> = {
   name: 'entity_list',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'projects',
   description:
     'List the entities configured in config.projects.entities — the controlled vocabulary for ' +
@@ -136,6 +138,8 @@ const ProjectListInput = z
 
 export const projectList: ToolDefinition<z.infer<typeof ProjectListInput>> = {
   name: 'project_list',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'projects',
   description:
     'List configured projects with light metadata. Returns slug, name, entity, description, ' +
@@ -180,6 +184,8 @@ const ProjectGetInput = z
 
 export const projectGet: ToolDefinition<z.infer<typeof ProjectGetInput>> = {
   name: 'project_get',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'projects',
   description:
     'Fetch a single project\'s full frontmatter — all fields including the paths array with ' +

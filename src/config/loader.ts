@@ -109,6 +109,7 @@ providers:
 # agentLoop:
 #   maxRounds: 8               # model rounds per turn (1..100)
 #   maxToolCallsPerTurn: 30    # tool calls per turn, across all rounds
+#   maxParallelTools: 8        # reading calls of one round that run at the same time
 #   toolCallTimeoutMs: 30000   # time limit of one tool call, in ms
 
 # Memory: works with the defaults below; add the block only to tune.

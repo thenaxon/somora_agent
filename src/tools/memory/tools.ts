@@ -53,6 +53,8 @@ const SearchInput = z.object({
 
 export const memorySearch: ToolDefinition<z.infer<typeof SearchInput>> = {
   name: 'memory_search',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'memory',
   description:
     'Search across all your knowledge sources: your own short-term memory, the shared long-term ' +
@@ -140,6 +142,8 @@ const GetInput = z.object({
 
 export const memoryGet: ToolDefinition<z.infer<typeof GetInput>> = {
   name: 'memory_get',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'memory',
   description:
     'Fetch the full content of a note, wiki page, or vault file by its `reference` from a recall ' +
@@ -180,6 +184,8 @@ const ListInput = z.object({
 
 export const memoryList: ToolDefinition<z.infer<typeof ListInput>> = {
   name: 'memory_list',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'memory',
   description:
     'List notes with slug, description, and tags. Default scope: your own short-term memory only. ' +

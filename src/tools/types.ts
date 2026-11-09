@@ -181,6 +181,15 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
    */
   readonly maxResultSizeChars?: number;
   /**
+   * May a call of this tool run at the same time as other such calls of
+   * the same round (private/parallel-tools/KONZEPT.md)? Only for tools
+   * that change nothing — reads, searches, status lookups — so the
+   * result does not depend on what ran beside it. `true`, or a function
+   * of the call's input; anything else (unset, false, a throw) runs the
+   * call alone, in the model's order. Read through `runsConcurrently`.
+   */
+  readonly concurrent?: true | ((input: TInput) => boolean);
+  /**
    * Runtime availability probe. When false, the tool is hidden from
    * `list()` (so the model never sees a tool it can't actually run —
    * missing API key, unconfigured vault, etc.) and `invoke()` returns

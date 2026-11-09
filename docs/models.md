@@ -597,7 +597,7 @@ providers:
 | `reasoning.param` | `reasoning_effort` | where the word goes: `reasoning_effort`, nested `reasoning` for OpenRouter, or `chat_template_kwargs` | not used | not used | not used |
 | `sampling` | unset | sent on every call, dropped once when the server rejects a key | not used | not used | not used |
 | `maxTokens` | unset, nothing sent | output cap on every call, dream and compaction workers included | not used | not used | not used |
-| `parallelToolCalls` | unset | unset or `false`: one tool call per round. `true` lets a model you trust call several tools at once. | not used | not used | not used |
+| `parallelToolCalls` | unset | unset or `false`: the model is asked for one tool call per round. `true` lets a model you trust call several tools at once; calls of tools that only read then run at the same time ([Tools](tools.md#results-limits-and-timeouts)). | not used | not used | not used |
 
 Keys allowed in `sampling`: `temperature`, `top_p`, `top_k`, `min_p`,
 `frequency_penalty`, `presence_penalty`, `repetition_penalty`, `seed`,

@@ -54,6 +54,7 @@ import { insideOpenThink, splitInlineThink } from './inline-think.ts';
 import { imageOriginalNotes } from '../multimodal/attachment-note.ts';
 import { DEFAULT_ALWAYS_VISIBLE } from '../tools/catalog.ts';
 import { explainInvalidInput, planCatalog, routeCall, runToolSearch, TOOL_CALL, TOOL_SEARCH } from './openai-tool-catalog.ts';
+import { createLimiter, runsConcurrently } from './tool-concurrency.ts';
 
 const ENGINE = 'openai-compatible';
 
@@ -1249,6 +1250,9 @@ export const openAiCompatibleEngine: AgentEngine = {
     const maxRounds = input.agentLoopConfig?.maxRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
     const maxToolCallsPerTurn =
       input.agentLoopConfig?.maxToolCallsPerTurn ?? DEFAULT_MAX_TOOL_CALLS_PER_TURN;
+    // Calls of one round that may run side by side, at most this many at
+    // once (tool-concurrency.ts); 1 = one after another.
+    const limitTools = createLimiter(input.agentLoopConfig?.maxParallelTools ?? 8);
     const globalToolTimeoutMs =
       input.agentLoopConfig?.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS;
 
@@ -2261,6 +2265,49 @@ export const openAiCompatibleEngine: AgentEngine = {
           throw new Error('model requested tool_calls but no tool registry was passed to the engine');
         }
         let leadPending = roundContent;
+        // Tool calls of one round (private/parallel-tools/KONZEPT.md,
+        // 2026-11-09). Consecutive calls of tools that change nothing
+        // (`concurrent` on the definition: reads, searches, status
+        // lookups) run side by side, at most agentLoop.maxParallelTools at
+        // once; any other call is a barrier — it waits for the group
+        // before it, runs alone, and later calls start after it. Results,
+        // `tool` messages and their events go out in the model's order,
+        // so the record and the next round read exactly as when every
+        // call ran one after another. A call that throws (an abort, a
+        // tool that crashed) ends the turn as before, once the calls
+        // beside it have settled.
+        type CallOut = { events: NormalizedEvent[]; message: ChatMessage };
+        type Settled = { ok: true; out: CallOut } | { ok: false; err: unknown };
+        let group: Array<Promise<Settled>> = [];
+        const settle = (p: Promise<CallOut>): Promise<Settled> =>
+          p.then(
+            (out) => ({ ok: true as const, out }),
+            (err: unknown) => ({ ok: false as const, err }),
+          );
+        // The finished result of a call: its event and its `tool` message.
+        const resultOut = (callId: string, output: unknown, error: string | undefined, content: ChatMessage['content'] | string): CallOut => ({
+          events: [
+            {
+              kind: 'tool_result',
+              ts: ts(),
+              engine: ENGINE,
+              callId,
+              output,
+              ...(error !== undefined ? { error } : {}),
+            } as NormalizedEvent,
+          ],
+          message: { role: 'tool', tool_call_id: callId, content } as ChatMessage,
+        });
+        async function* flushGroup(): AsyncGenerator<NormalizedEvent> {
+          const pending = group;
+          group = [];
+          const settled = await Promise.all(pending);
+          for (const r of settled) {
+            if (!r.ok) throw r.err;
+            for (const ev of r.out.events) yield ev;
+            loopMessages.push(r.out.message);
+          }
+        }
         for (const { call, args: parsedArgs, fault, why } of calls) {
           // Which tool really runs: tool_call unwraps to it, a deferred
           // name called directly runs as is (hydrated), a name the turn
@@ -2271,6 +2318,11 @@ export const openAiCompatibleEngine: AgentEngine = {
           const route = fault ? null : routeCall(catalogPlan, offeredNames, call.function.name, parsedArgs);
           const runName = route?.kind === 'run' ? route.name : call.function.name;
           const runArgs = route?.kind === 'run' ? route.args : parsedArgs;
+          const toolDef = toolByName.get(runName);
+          // Not run (cut-off/malformed arguments, a search, a refusal):
+          // answered on the spot, which changes nothing either.
+          const alone = !fault && route?.kind === 'run' && !runsConcurrently(toolDef, runArgs);
+          if (alone) yield* flushGroup();
           yield {
             kind: 'tool_call',
             ts: ts(),
@@ -2303,19 +2355,7 @@ export const openAiCompatibleEngine: AgentEngine = {
                   'Call it again with less in one go: fewer items, shorter values, or split across several calls.'
                 : `Your call to ${call.function.name} was complete but its arguments are not valid JSON (${why}), so it was not run. ` +
                   'For a tool with no required parameters use {}. Call it again with valid JSON.';
-            yield {
-              kind: 'tool_result',
-              ts: ts(),
-              engine: ENGINE,
-              callId: call.id,
-              output: null,
-              error: message,
-            };
-            loopMessages.push({
-              role: 'tool',
-              tool_call_id: call.id,
-              content: message,
-            } as ChatMessage);
+            group.push(settle(Promise.resolve(resultOut(call.id, null, message, message))));
             continue;
           }
           if (route && route.kind !== 'run') {
@@ -2340,19 +2380,18 @@ export const openAiCompatibleEngine: AgentEngine = {
               tool: call.function.name,
               ...(route.kind === 'search' ? { args: parsedArgs } : { error: route.error }),
             });
-            yield {
-              kind: 'tool_result',
-              ts: ts(),
-              engine: ENGINE,
-              callId: call.id,
-              output: answered.ok ? answered.data : null,
-              ...(answered.ok ? {} : { error: answered.error }),
-            };
-            loopMessages.push({
-              role: 'tool',
-              tool_call_id: call.id,
-              content: answered.ok ? JSON.stringify(answered.data) : answered.error,
-            } as ChatMessage);
+            group.push(
+              settle(
+                Promise.resolve(
+                  resultOut(
+                    call.id,
+                    answered.ok ? answered.data : null,
+                    answered.ok ? undefined : answered.error,
+                    answered.ok ? JSON.stringify(answered.data) : answered.error,
+                  ),
+                ),
+              ),
+            );
             continue;
           }
           if (route?.via) {
@@ -2372,7 +2411,6 @@ export const openAiCompatibleEngine: AgentEngine = {
           // pin a slot indefinitely. Pattern adapted from OpenClaw's
           // waitForAgentRun — engine itself has no fixed cap, the caller
           // declares the budget.
-          const toolDef = toolByName.get(runName);
           const dynamicTimeout = toolDef?.timeoutFromInput?.(runArgs as never);
           const staticTimeout = toolDef?.defaultTimeoutMs;
           const hardCap = toolDef?.maxTimeoutMs;
@@ -2388,95 +2426,85 @@ export const openAiCompatibleEngine: AgentEngine = {
           }
           if (runName === 'acceptance_write') acceptanceWrittenThisTurn = true;
           if (turnWorked([runName])) workedThisTurn = true;
-          const invoked = await raceToolInvoke(tools.invoke(runName, runArgs), {
-            timeoutMs: toolTimeoutMs,
-            signal: effectiveSignal,
-            timeoutResult: {
-              ok: false as const,
-              error:
-                `tool '${runName}' timed out after ${toolTimeoutMs}ms` +
-                (dynamicTimeout !== undefined
-                  ? ` — call again with a higher timeout_ms if more time is needed`
-                  : ''),
-            },
-          });
-          // Catalog mode: a refused input names the closest real fields
-          // (the model saw only the compact signature), and the third
-          // identical failing tool_call ends the turn's tool use.
-          const result =
-            catalogPlan && !invoked.ok && invoked.error?.startsWith('invalid input for ')
-              ? { ...invoked, error: explainInvalidInput(invoked.error, toolDef) }
-              : invoked;
-          if (catalogPlan && !result.ok && route?.via === 'tool_call') {
-            const sig = `${call.function.name}:${call.function.arguments}`;
-            const n = (metaFailures.get(sig) ?? 0) + 1;
-            metaFailures.set(sig, n);
-            if (n >= 3) hitMetaLoop = true;
-          }
-          // Multimodal results (file_read polymorph on image/PDF) carry
-          // contentBlocks instead of a JSON-able payload. OpenAI's API
-          // accepts a content-array in tool messages with text and
-          // image_url entries — local openai-compatible servers (omlx,
-          // ollama) may reject this; the failure surfaces as an API
-          // error visible to the operator. The model side: gpt-5+,
-          // openrouter-claude, gemma-vision all accept it.
-          const isMultimodalOk = result.ok && result.contentBlocks !== undefined;
-          if (isMultimodalOk) {
-            const blocks = result.contentBlocks!;
-            const contentArray = blocks.map((b) => {
-              if (b.type === 'image') {
-                return {
-                  type: 'image_url' as const,
-                  image_url: {
-                    url: `data:${b.source.mediaType};base64,${b.source.data}`,
-                  },
-                };
-              }
-              if (b.type === 'text') {
-                return { type: 'text' as const, text: b.text };
-              }
-              return {
-                type: 'text' as const,
-                text: `[document content block (${b.source.mediaType}) — not delivered as inline content; use analyze_file]`,
-              };
-            });
-            yield {
-              kind: 'tool_result',
-              ts: ts(),
-              engine: ENGINE,
-              callId: call.id,
-              output: {
-                multimodal: true,
-                blocks: blocks.length,
-                kinds: blocks.map((b) => b.type),
+          const callId = call.id;
+          const callName = call.function.name;
+          const callArgsRaw = call.function.arguments;
+          const viaToolCall = route?.via === 'tool_call';
+          // The timeout starts when the call does — a call waiting for a
+          // free slot is not yet on its clock.
+          const run = limitTools(() => {
+            // Stopped while this call waited for a slot: it never starts
+            // (Codex review 2026-11-09 — freed slots started the queue).
+            if (effectiveSignal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+            return raceToolInvoke(tools.invoke(runName, runArgs), {
+              timeoutMs: toolTimeoutMs,
+              signal: effectiveSignal,
+              timeoutResult: {
+                ok: false as const,
+                error:
+                  `tool '${runName}' timed out after ${toolTimeoutMs}ms` +
+                  (dynamicTimeout !== undefined
+                    ? ` — call again with a higher timeout_ms if more time is needed`
+                    : ''),
               },
-            };
-            loopMessages.push({
-              role: 'tool',
-              tool_call_id: call.id,
+            });
+          }).then((invoked): CallOut => {
+            // Catalog mode: a refused input names the closest real fields
+            // (the model saw only the compact signature), and the third
+            // identical failing tool_call ends the turn's tool use.
+            const result =
+              catalogPlan && !invoked.ok && invoked.error?.startsWith('invalid input for ')
+                ? { ...invoked, error: explainInvalidInput(invoked.error, toolDef) }
+                : invoked;
+            if (catalogPlan && !result.ok && viaToolCall) {
+              const sig = `${callName}:${callArgsRaw}`;
+              const n = (metaFailures.get(sig) ?? 0) + 1;
+              metaFailures.set(sig, n);
+              if (n >= 3) hitMetaLoop = true;
+            }
+            // Multimodal results (file_read polymorph on image/PDF) carry
+            // contentBlocks instead of a JSON-able payload. OpenAI's API
+            // accepts a content-array in tool messages with text and
+            // image_url entries — local openai-compatible servers (omlx,
+            // ollama) may reject this; the failure surfaces as an API
+            // error visible to the operator. The model side: gpt-5+,
+            // openrouter-claude, gemma-vision all accept it.
+            const isMultimodalOk = result.ok && result.contentBlocks !== undefined;
+            if (isMultimodalOk) {
+              const blocks = result.contentBlocks!;
+              const contentArray = blocks.map((b) => {
+                if (b.type === 'image') {
+                  return {
+                    type: 'image_url' as const,
+                    image_url: {
+                      url: `data:${b.source.mediaType};base64,${b.source.data}`,
+                    },
+                  };
+                }
+                if (b.type === 'text') {
+                  return { type: 'text' as const, text: b.text };
+                }
+                return {
+                  type: 'text' as const,
+                  text: `[document content block (${b.source.mediaType}) — not delivered as inline content; use analyze_file]`,
+                };
+              });
               // The OpenAI SDK type accepts string | ContentArray for tool
               // messages; ts narrows tightly here so we cast.
-              content: contentArray,
-            } as ChatMessage);
-          } else {
-            const outputText = result.ok
-              ? JSON.stringify(result.data)
-              : (result.error ?? 'tool failed');
-            yield {
-              kind: 'tool_result',
-              ts: ts(),
-              engine: ENGINE,
-              callId: call.id,
-              output: result.ok ? result.data : null,
-              ...(result.ok ? {} : { error: result.error ?? 'tool failed' }),
-            };
-            loopMessages.push({
-              role: 'tool',
-              tool_call_id: call.id,
-              content: outputText,
-            } as ChatMessage);
-          }
+              return resultOut(
+                callId,
+                { multimodal: true, blocks: blocks.length, kinds: blocks.map((b) => b.type) },
+                undefined,
+                contentArray as unknown as ChatMessage['content'],
+              );
+            }
+            const outputText = result.ok ? JSON.stringify(result.data) : (result.error ?? 'tool failed');
+            return resultOut(callId, result.ok ? result.data : null, result.ok ? undefined : (result.error ?? 'tool failed'), outputText);
+          });
+          group.push(settle(run));
+          if (alone) yield* flushGroup();
         }
+        yield* flushGroup();
 
         if (hitMetaLoop) {
           logger.warn({ msg: 'engine.tool_meta_loop_stop', engine: ENGINE, agent, session, round });

@@ -51,6 +51,8 @@ interface SessionListResult {
 
 export const sessionList: ToolDefinition<z.infer<typeof Input>, SessionListResult> = {
   name: 'session_list',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'agents',
   description:
     'List somora CHAT sessions — yours by default, another agent\'s with `agent`, everyone\'s with ' +

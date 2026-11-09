@@ -62,6 +62,8 @@ interface SkillOutput {
 
 export const skill: ToolDefinition<z.infer<typeof SkillInput>, SkillOutput> = {
   name: 'skill',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'skills',
   description:
     'Activate a skill — load its full step-by-step instructions into your context. ' +
@@ -239,6 +241,8 @@ interface SkillListOutput {
 
 export const skillList: ToolDefinition<z.infer<typeof SkillListInput>, SkillListOutput> = {
   name: 'skill_list',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'skills',
   description:
     'List every skill available to you, with name, description, when_to_use and availability. ' +

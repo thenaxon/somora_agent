@@ -64,6 +64,8 @@ interface BraveResponseRaw {
 
 export const webSearch: ToolDefinition<z.infer<typeof SearchInput>, SearchOutput> = {
   name: 'web_search',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'web',
   description:
     'Search the web for current information. Use this for facts that may have ' +

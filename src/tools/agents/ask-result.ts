@@ -97,6 +97,8 @@ interface ServerAskResult {
 
 export const agentAskResult: ToolDefinition<InputT, AskResultOutcome> = {
   name: 'agent_ask_result',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'agents',
   description:
     'Fetch the outcome of an agent_ask call by its call_id — use this when agent_ask returned ' +

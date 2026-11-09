@@ -340,6 +340,8 @@ type StatusArgs = z.infer<typeof StatusInput>;
 
 export const videoStatus: ToolDefinition<StatusArgs, { jobs: unknown[] }> = {
   name: 'video_status',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'video',
   description:
     'Look in on video renders — yours by default. Shows status, progress and, once finished, ' +
@@ -430,6 +432,8 @@ function mediaRow(slots: ReturnType<typeof mediaSlots>): VideoModelRow['media'] 
  */
 export const videoModels: ToolDefinition<ModelsArgs, { models: VideoModelRow[] }> = {
   name: 'video_models',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'video',
   description:
     'List the configured video models for video_generate. Call this before rendering when you ' +

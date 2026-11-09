@@ -441,12 +441,19 @@ each with a short explanation. It can allow several answers at once
 appears as a card above the input in the web client and on the phone,
 and with numbered options in the TUI.
 
+When you are to approve or pick content, such as a text to post or
+send, drafts or a plan, the agent puts it in full into `details`. The
+card shows it above the options, as formatted text that scrolls on its
+own when long; the TUI prints it before the question. The agent's
+reply around the card may be out of view where you answer, the card
+never is.
+
 It is offered only while someone watches, and who that is decides
 whether the question waits:
 
 | Turn | The question |
 |---|---|
-| A chat agent's turn you started, typed or spoken | Does not wait. The agent's turn ends; the card stays until you answer, also after a reload or a restart. A click sends the option as your next message. Writing anything else in the chat answers it too. |
+| A chat agent's turn you started, typed or spoken | Does not wait. The agent's turn ends; the card stays until you answer, also after a reload or a restart. A click sends the option as your next message; while the agent is still working, the answer goes into its running turn, like a [steered](web.md) message, whatever the agent's `steering` setting says. Writing anything else in the chat answers it too. |
 | A chat agent working on a task another system sent over [A2A](a2a.md#taking-work-in) | Waits, and goes back to that system. |
 | A builder's turn while the session is attended (see [Builder agents](builder.md)) | Waits in the task panel. |
 | A turn from Sentinel, another agent or a sub-agent | Not offered: nobody would answer. |
@@ -464,9 +471,13 @@ when it is offered, not behind the tool search.
 Codex has a question tool of its own. Its questions arrive as the same
 card, without waiting; one card can then hold several questions, some
 answered in your own words. The answer goes out as one message with
-each question and its answer. This holds for a builder too: Codex has
-ended its turn when it asks, so its question is a card next to the
-task panel, while the builder's own `ask_user` still waits.
+each question and its answer.
+
+Codex often keeps working after it asks. An answer that comes while it
+does goes straight into that turn; it does not wait for the turn to
+end. This holds for a builder too:
+Codex's question is a card next to the task panel, while the builder's
+own `ask_user` still waits.
 
 ## How a tool reaches the model
 
@@ -579,6 +590,19 @@ their own limit, or take it from the call: `agent_ask` and
 `agentLoop.longTaskMaxTimeoutMs`. `exec` takes `timeout_ms`, up to one
 hour.
 
+**Several calls at once.** When a model asks for several tool calls in
+one reply on `openai-compatible`, the calls of tools that change
+nothing run at the same time: reading and listing files, searching
+memory and the web, fetching a page, reading docs and skills, and
+looking up projects, sessions, sub-agents and media. At most
+`agentLoop.maxParallelTools` run at once.
+
+Every other call runs alone: it waits for the calls before it, and the
+calls after it wait for it. The results go back in the order the model asked for them, so the
+model reads exactly what it would read with one call after another.
+Whether a model may ask for several calls at once is its
+`parallelToolCalls` setting (see [Models](models.md)).
+
 **Wrong input.** Input is checked against the tool's schema, and the
 error names the field. A nested object sent as a JSON string is read
 and accepted. An unknown tool name is answered with up to three similar
@@ -622,6 +646,7 @@ Settings that shape how tools run:
 | Setting | Default | Meaning |
 |---|---|---|
 | `agentLoop.toolCallTimeoutMs` | `30000` | Time limit of one tool call, unless the tool sets its own. |
+| `agentLoop.maxParallelTools` | `8` | Calls of one reply that run at the same time, for tools that change nothing. `1` runs them one after another. `openai-compatible` only. |
 | `agentLoop.longTaskMaxTimeoutMs` | `1800000` | Longest wait of the tools that wait for other work. |
 | `wiki.lucid.maxCallsPerTurn` | `3` | `wiki_*` calls per turn inside a review loop. |
 | `toolCatalog.alwaysVisible` | the list above | Tools kept in the model's list on `claude-cli`, `codex-cli` and `openai-compatible` instead of behind the tool search. Takes effect on the next turn. |

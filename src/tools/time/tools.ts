@@ -43,6 +43,8 @@ function isoWeekNumber(d: Date): number {
 
 export const timeNow: ToolDefinition<z.infer<typeof NowInput>, NowOutput> = {
   name: 'time_now',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'time',
   description:
     'Returns the current date AND time, with day-of-week and ISO week number. ' +

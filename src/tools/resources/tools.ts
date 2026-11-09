@@ -34,6 +34,8 @@ interface ListedResource {
 
 export const resourceList: ToolDefinition<z.infer<typeof ListInput>> = {
   name: 'resource_list',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'memory', // grouped with discovery-style tools
   description:
     'List remote resources (named SSH targets) available to this agent. Each entry has a ' +

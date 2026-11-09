@@ -85,6 +85,8 @@ const failedUntil = new Map<string, number>();
 
 export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOutput> = {
   name: 'analyze_file',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'file',
   description:
     'Look at an image or PDF you cannot see yourself. Your active model has no `image` ' +

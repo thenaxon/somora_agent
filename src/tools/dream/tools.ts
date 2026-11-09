@@ -64,6 +64,8 @@ const ListInput = z.object({
 
 export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
   name: 'dream_list',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'dream',
   description:
     'List pending dreams awaiting user review. Returns both per-agent memory dreams (REM phase: ' +
@@ -145,6 +147,8 @@ const GetInput = z.object({
 
 export const dreamGet: ToolDefinition<z.infer<typeof GetInput>> = {
   name: 'dream_get',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'dream',
   description:
     'Fetch the full content of a dream — all findings with their proposed actions, reasons, and ' +

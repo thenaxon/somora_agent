@@ -176,6 +176,8 @@ const ReadInput = z
 
 export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
   name: 'file_read',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'file',
   description:
     'Read a file from the local filesystem or a remote resource. Text comes back with every ' +
@@ -547,6 +549,8 @@ const SearchInput = z
 
 export const fileSearch: ToolDefinition<z.infer<typeof SearchInput>> = {
   name: 'file_search',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'file',
   description:
     'Search file contents recursively for a regex pattern (ripgrep, respects .gitignore). ' +
@@ -665,6 +669,8 @@ const ListInput = z
 
 export const fileList: ToolDefinition<z.infer<typeof ListInput>> = {
   name: 'file_list',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'file',
   description:
     'List directory contents with type/size/mtime/ctime per entry. Use this to answer questions ' +

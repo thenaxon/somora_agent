@@ -262,6 +262,8 @@ function wrapExternal(content: string): string {
 
 export const webFetch: ToolDefinition<z.infer<typeof FetchInput>, FetchOutput> = {
   name: 'web_fetch',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'web',
   description:
     'Fetch a web page and return its main content as Markdown (default) or plain text. ' +

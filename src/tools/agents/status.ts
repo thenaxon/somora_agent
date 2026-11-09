@@ -86,6 +86,8 @@ const StatusInput = z.object({ task_id: z.string().min(1) }).strict();
 
 export const subagentStatus: ToolDefinition<z.infer<typeof StatusInput>> = {
   name: 'subagent_status',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'agents',
   description:
     'Check the status of a sub-agent task spawned with wait:false. Returns running/done/failed ' +
@@ -178,6 +180,8 @@ function circularWaitHint(chain?: string[]): string {
 
 export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
   name: 'subagent_result',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'agents',
   description:
     'Fetch the result of a sub-agent task. Returns one of three states: ' +
@@ -417,6 +421,8 @@ const ListInput = z
 
 export const subagentList: ToolDefinition<z.infer<typeof ListInput>> = {
   name: 'subagent_list',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'agents',
   description:
     'List sub-agent tasks YOU spawned (this agent\'s own subs only — no peer-agent visibility). ' +

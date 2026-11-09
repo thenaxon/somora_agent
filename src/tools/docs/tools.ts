@@ -77,6 +77,8 @@ const ListInput = z
 
 export const somoraDocsList: ToolDefinition<z.infer<typeof ListInput>> = {
   name: 'somora_docs_list',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'memory', // bundled with memory-class read tools for grouping
   description:
     'List available somora documentation topics. Each entry has a `topic` (use this with ' +
@@ -133,6 +135,8 @@ const ReadInput = z
 
 export const somoraDocsRead: ToolDefinition<z.infer<typeof ReadInput>> = {
   name: 'somora_docs_read',
+  // Changes nothing: may run beside other such calls of a round.
+  concurrent: true,
   toolset: 'memory',
   description:
     'Read the full contents of a somora documentation topic. Returns Markdown verbatim. ' +
