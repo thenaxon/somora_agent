@@ -202,5 +202,41 @@ const manager = (): InstanceType<typeof VoiceCallManager> =>
   check('local without a url is refused, by name', /needs realtimeVoice\.url/.test(refusal), refusal);
 }
 
+// ── a delivery whose call is gone (2026-11-06) ──────────────────────
+// Call A hit its time limit while a sub it had started was running; the
+// caller was already on call B with the same agent and session. The
+// follow-up was bound to A and dropped. Now: to the call on that agent
+// and session, or kept for the next one — once.
+{
+  const m = manager();
+  type Reroutable = { reroute(item: { id: string; target: { agent: string; session: string }; preview: string }, res: import('./call.ts').ConsultDelivery): void };
+  const r = m as unknown as Reroutable;
+  const { resolveSessionId } = await import('../../storage/sessions.ts');
+  const main = (await resolveSessionId('ada', 'main'))!;
+
+  const callB = await m.start({ agent: 'ada', session: 'main' });
+  const got: Array<import('./call.ts').CarriedDelivery> = [];
+  callB.call.carryOver = async (item) => { got.push(item); };
+  r.reroute({ id: 'root-1', target: { agent: 'ada', session: main }, preview: 'Analysiere die REM-Träume' }, { consultId: 'root-1', state: 'done', text: 'fertig', followUp: true });
+  check('the follow-up goes to the call on the same agent and session', got.length === 1 && got[0]!.question === 'Analysiere die REM-Träume', JSON.stringify(got));
+  check('and is not also kept for later', m.waitingDeliveries('ada', main) === 0);
+
+  r.reroute({ id: 'root-2', target: { agent: 'bea', session: 'x' }, preview: 'q' }, { consultId: 'root-2', state: 'done', text: 'other', followUp: true });
+  check('a call on another agent does not get it', got.length === 1);
+  check('it is kept for that agent and session instead', m.waitingDeliveries('bea', 'x') === 1);
+  await m.stop(callB.call.id, 'test');
+
+  // No call on the line: kept, and taken by the next call on it.
+  r.reroute({ id: 'root-3', target: { agent: 'ada', session: main }, preview: 'Frag die anderen' }, { consultId: 'root-3', state: 'done', text: 'drei Berichte', followUp: true });
+  r.reroute({ id: 'root-3', target: { agent: 'ada', session: main }, preview: 'Frag die anderen' }, { consultId: 'root-3', state: 'done', text: 'drei Berichte, neu', followUp: true });
+  check('without a call it waits, a newer one for the same consult replacing the older', m.waitingDeliveries('ada', main) === 1, String(m.waitingDeliveries('ada', main)));
+  const callC = await m.start({ agent: 'ada', session: 'main' });
+  check('the next call on that agent and session takes it', m.waitingDeliveries('ada', main) === 0);
+  await m.stop(callC.call.id, 'test');
+  const callD = await m.start({ agent: 'ada', session: 'main' });
+  check('and nobody gets it twice', m.waitingDeliveries('ada', main) === 0);
+  await m.stop(callD.call.id, 'test');
+}
+
 console.log(`\n${pass} ok, ${fail} failed`);
 assert.equal(fail, 0);

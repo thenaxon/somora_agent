@@ -255,9 +255,9 @@ function setState(t: InboundTask, state: TaskState, said?: string): void {
   for (const l of t.listeners) l(t, { kind: 'state' });
 }
 
-function questionText(q: { question: string; options: Array<{ label: string; description?: string }>; multiple: boolean }): string {
+function questionText(q: { question: string; options: Array<{ label: string; description?: string }>; multiple: boolean; details?: string }): string {
   const opts = q.options.map((o, i) => `${i + 1}) ${o.label}${o.description ? ` — ${o.description}` : ''}`).join('\n');
-  return `${q.question}\n\n${opts}\n\nAnswer in this conversation with the option${q.multiple ? 's' : ''} (number or text), or in your own words.`;
+  return `${q.question}${q.details ? `\n\n${q.details}` : ''}\n\n${opts}\n\nAnswer in this conversation with the option${q.multiple ? 's' : ''} (number or text), or in your own words.`;
 }
 
 /** The text a question is answered with: an option by number or label,

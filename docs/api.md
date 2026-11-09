@@ -979,7 +979,7 @@ All events:
 | `builder_state` | A builder session's mode, phase or plan file changed | `{mode, phase, planPath}` |
 | `todo_updated` | A builder replaced its task list | `{todos: [{content, status, priority?}], by?}` |
 | `acceptance_updated` | A builder wrote its acceptance list, an item was reviewed, or the list became required or optional | `{items: [{id, requirement, status, evidence?, updatedAt, review?}], required, by?}`. `by` is the builder, `person` or the reviewing agent; absent when only `required` changed. |
-| `question_asked` | An agent asks the person | `{questionId, question, header?, options, multiple, expiresAt, kind?, from?, async?, parts?, source?}`. `kind: "permission"` and `from: "external"` mark an external agent asking to run something; each option's `description` is then its kind (`allow_once`, `reject_once`, …). `async: true` marks a question that does not wait (`expiresAt` is `0`); `parts` lists several questions asked at once, `source` is `ask_user`, or `codex` for Codex's own question tool. |
+| `question_asked` | An agent asks the person | `{questionId, question, header?, options, multiple, expiresAt, kind?, from?, async?, parts?, source?, details?}`. `kind: "permission"` and `from: "external"` mark an external agent asking to run something; each option's `description` is then its kind (`allow_once`, `reject_once`, …). `async: true` marks a question that does not wait (`expiresAt` is `0`); `parts` lists several questions asked at once, `source` is `ask_user`, or `codex` for Codex's own question tool. `details` is what the person decides on, in full (markdown), shown on the card. |
 | `question_answered` | The open question was answered, replaced or ran out of time | `{questionId?, answered, choice?, by?}`. `by: "message"`: a question that does not wait, answered by writing something else. |
 
 Details where the table is not enough:
@@ -2038,6 +2038,7 @@ turn a person started does not block: it returns at once with
 | `options` | yes | 2 to 6 of `{label, description?}`. |
 | `header` | no | A short title, at most 40 characters. |
 | `multiple` | no | `true` allows several answers. |
+| `details` | no | What the person decides on, in full (markdown, at most 8000 characters): the text to approve, the drafts to pick from. Shown on the card; blank is left out. |
 | `timeout_ms` | no | Default 30 minutes for a builder, 10 for a chat agent; at most 4 hours. |
 
 Returns `{answered, answers: string[], text?}`. A second question on
@@ -3550,6 +3551,8 @@ question that does not wait. That last kind carries `async: true` and
 `expiresAt: 0`, and with several questions asked at once `parts`
 (`[{question, header?, options, multiple}]`, the first repeated at the
 top). It stays open between turns, after a reload and a restart.
+`details`, when the agent gave it, is what the person decides on, in
+full (markdown).
 
 ```json
 { "question": { "id": "…", "question": "claw asks for permission: exec: rm -rf /tmp/x",
@@ -3570,8 +3573,14 @@ A question that does not wait takes the same body, or `parts` with one
 `{answers?, text?}` per question. The answer is sent as the person's
 next message, the way `POST /chat/send` sends a typed one: the chosen
 labels for one question, each question with its answer for several.
-Returns `{ ok: true, sent: true, turnId, text }`; `400` when nothing
-was chosen or typed. Any message the person sends to the session with
+`400` when nothing was chosen or typed.
+
+While a turn of the session is running, usually the one that asked,
+the answer goes into that turn the way a steered message does (`POST /chat/send` with `steer:
+true`): every client gets `steer_queued`, and the response is
+`{ ok: true, sent: true, steered: true, steerId, turnId, text }` with
+the running turn's id. Otherwise it starts a turn of its own: `{ ok:
+true, sent: true, steered: false, turnId, text }`. Any message the person sends to the session with
 `POST /chat/send` answers such a question too and removes it.
 
 ## External MCP servers

@@ -7,11 +7,25 @@
 // choice as your next message, and writing anything else answers it too.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { SessionQuestion, SessionQuestionAnswer } from '../../../web/src/lib/api';
 import { answersOnClick, buildAnswer, questionParts } from '../../../web/src/lib/question';
 import type { TurnQueueEvent } from '../hooks/useChatStream';
 
 const POLL_MS = 1500;
+const REMARK_PLUGINS = [remarkGfm];
+
+/** What the person decides on, in full, on the card itself: the reply
+ *  around the card may be off screen or folded away (2026-11-06: posts
+ *  approved on the phone whose text was never shown). */
+function QuestionDetails({ text }: { text: string }) {
+  return (
+    <div className="question-card-details" data-testid="question-details">
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{text}</ReactMarkdown>
+    </div>
+  );
+}
 
 function remaining(expiresAt: number): string {
   const s = Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
@@ -109,6 +123,7 @@ function WaitingQuestionCard({ agent, session, question, onAnswered }: { agent: 
         <span className="question-card-wait" title="Without an answer the safest option is taken">waits {remaining(question.expiresAt)}</span>
       </div>
       <div className="question-card-text">{question.question}</div>
+      {question.details && <QuestionDetails text={question.details} />}
       <div className="question-card-options">
         {question.options.map((o) => {
           const on = picked.includes(o.label);
@@ -173,6 +188,7 @@ function AsyncQuestionCard({ agent, session, question, onAnswered }: { agent: st
         <span>{question.header ?? (parts.length > 1 ? `${parts.length} questions` : 'Question')}</span>
         <span className="question-card-wait">answer any time</span>
       </div>
+      {question.details && <QuestionDetails text={question.details} />}
       {parts.map((p, i) => (
         <div key={i} className="question-card-part">
           <div className="question-card-text">{p.question}</div>

@@ -12,7 +12,7 @@
 
 import { z } from 'zod';
 import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
-import { DEFAULT_QUESTION_TIMEOUT_MS, MAX_QUESTION_TIMEOUT_MS } from '../../server/builder-questions.ts';
+import { DEFAULT_QUESTION_TIMEOUT_MS, MAX_DETAILS_CHARS, MAX_QUESTION_TIMEOUT_MS } from '../../server/builder-questions.ts';
 import { CHAT_QUESTION_TIMEOUT_MS } from '../../server/ask-attended.ts';
 import type { ToolDefinition } from '../types.ts';
 
@@ -123,6 +123,11 @@ const AskInput = z
       .max(6)
       .describe('2-6 choices. A free-text answer is always possible too — do not add an "other" option.'),
     multiple: z.boolean().optional().describe('Allow choosing more than one option.'),
+    details: z
+      .string()
+      .max(MAX_DETAILS_CHARS)
+      .optional()
+      .describe('What they decide on, in full (markdown), shown on the card: the exact text to approve, the drafts to pick from, the plan.'),
     timeout_ms: z
       .number()
       .int()
@@ -147,7 +152,9 @@ export const askUser: ToolDefinition<z.infer<typeof AskInput>> = {
     'text. In a conversation with a person the call returns at once ({asked: true}): end your turn then; ' +
     'the answer arrives as their next message. When another agent system sent the task, the call waits ' +
     'and returns {answered, answers[], text?}; when unanswered, decide yourself and say what you decided. ' +
-    'If you recommend an option, put it first and add "(Recommended)" to its label.',
+    'If you recommend an option, put it first and add "(Recommended)" to its label. When they approve or pick ' +
+    'content — a text to post or send, drafts, a plan — put that content in full into details: the card may be ' +
+    'answered where your other text is not in view.',
   inputSchema: AskInput,
   jsonSchema: {
     type: 'object',
@@ -167,6 +174,7 @@ export const askUser: ToolDefinition<z.infer<typeof AskInput>> = {
         },
       },
       multiple: { type: 'boolean', description: 'Allow more than one choice.' },
+      details: { type: 'string', description: 'What they decide on, in full (markdown), shown on the card: the exact text to approve, the drafts to pick from, the plan.' },
       timeout_ms: { type: 'integer', description: 'How long a waiting question waits, in ms (default 30 min for a builder, 10 min for other agents).' },
     },
     required: ['question', 'options'],
@@ -185,6 +193,7 @@ export const askUser: ToolDefinition<z.infer<typeof AskInput>> = {
         ...(input.header ? { header: input.header } : {}),
         options: input.options,
         multiple: input.multiple === true,
+        ...(input.details ? { details: input.details } : {}),
         ...(input.timeout_ms ? { timeout_ms: input.timeout_ms } : {}),
       },
     );

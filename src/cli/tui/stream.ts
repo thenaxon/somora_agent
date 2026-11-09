@@ -323,6 +323,7 @@ export function openStream(
             expiresAt: typeof data.expiresAt === 'number' ? data.expiresAt : Date.now() + 600_000,
             ...(data.async === true ? { async: true } : {}),
             ...(Array.isArray(data.parts) ? { parts: data.parts as NonNullable<SessionQuestion['parts']> } : {}),
+            ...(typeof data.details === 'string' && data.details ? { details: data.details } : {}),
           },
         };
       case 'question_answered':

@@ -628,6 +628,9 @@ export type SseEvent =
         /** Several questions asked at once (non-waiting only); the
          *  top-level fields repeat the first. */
         parts?: Array<{ question: string; header?: string; options: Array<{ label: string; description?: string }>; multiple: boolean }>;
+        /** What the person decides on, in full (markdown): shown on the
+         *  card above the options. */
+        details?: string;
         /** Non-waiting: `codex` — Codex's own question tool; the reply
          *  text carries the question too. */
         source?: 'ask_user' | 'codex';

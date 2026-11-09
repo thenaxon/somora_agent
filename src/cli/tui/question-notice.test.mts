@@ -30,3 +30,10 @@ test('several questions at once', () => {
   };
   assert.equal(questionNotice('ada', two), '❓ Colour?\n   1 Red\n❓ Name?\n   answer in your own words (ada asks; answer any time)');
 });
+
+test('the content decided on comes first, in full', () => {
+  assert.equal(
+    questionNotice('ada', { ...q, async: true, details: 'Draft 1:\n> Hello there' }),
+    '   Draft 1:\n   > Hello there\n❓ Go on?\n   1 Yes\n   2 No\n   type the number or write your own answer (ada asks; answer any time)',
+  );
+});

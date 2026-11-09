@@ -67,6 +67,8 @@ export interface SessionQuestion {
   parts?: SessionQuestionPart[];
   /** `codex`: Codex's own question tool — the reply text has it too. */
   source?: 'ask_user' | 'codex';
+  /** What the person decides on, in full (markdown), shown on the card. */
+  details?: string;
 }
 
 export interface SessionQuestionPart {

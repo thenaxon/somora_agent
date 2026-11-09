@@ -112,13 +112,13 @@ import { sessionToolAllows } from './ask-attended.ts';
 import { configureStartTurn, startTurn } from './start-turn.ts';
 import type { TurnOrigin } from './turn-origin-kind.ts';
 import { VoiceCallManager } from '../voice/realtime/manager.ts';
-import type { VoiceCallSnapshot } from '../voice/realtime/call.ts';
+import type { SessionVoiceWork, VoiceCallSnapshot } from '../voice/realtime/call.ts';
 import type { RealtimeEvent } from '../voice/realtime/types.ts';
 import { DequeuedError, listSessionWaiters, getSessionLockStatus } from './session-queue.ts';
 import { readPersonaFiles, writePersonaFile } from '../persona/files.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import { getResolvedTeam, loadTeamFile, teamFilePath } from '../team/store.ts';
-import { configureWorkWake, markFetched, onWorkFinished, openWork, getWork, setWaiting } from './work-ledger.ts';
+import { configureWorkWake, markFetched, onWorkFinished, openWork, getWork, setWaiting, listWork, openChainMembers, wakeAnswersFor, inTreeOf } from './work-ledger.ts';
 import { sessionSlugOf as a2aSessionSlugOf } from '../engine/a2a.ts';
 import { readLockfile } from './lockfile.ts';
 import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
@@ -1104,6 +1104,10 @@ configureUnprompted({ publish });
 // One watcher per live call: the socket that is listening to it.
 export const voiceWatchers = new Map<string, (ev: RealtimeEvent, snap: VoiceCallSnapshot) => void>();
 export const voiceStateWatchers = new Map<string, (snap: VoiceCallSnapshot) => void>();
+/** Voice consults the status tool of a call looks at: the last 6 h. */
+const VOICE_WORK_WINDOW_MS = 6 * 60 * 60 * 1000;
+/** Finished work it names: reported within the last 30 min. */
+const VOICE_FINISHED_SHOWN_MS = 30 * 60 * 1000;
 export const voiceCalls = new VoiceCallManager({
   get config() {
     return config;
@@ -1202,8 +1206,55 @@ export const voiceCalls = new VoiceCallManager({
       return { state: 'pending', ...(position ? { position } : {}) };
     }
     markFetched(consultId);
-    if (it.state === 'done') return { state: 'done', text: it.result?.finalText ?? '' };
+    if (it.state === 'done') {
+      // The answer is frozen at its turn's end. What the agent reported
+      // in this session about work that finished later is the newer
+      // state (2026-11-06: "still running" re-read a minute after the
+      // work had finished, and spoken as current).
+      const at = it.finishedAt;
+      const newer: string[] = [];
+      if (at !== undefined) {
+        for (const w of listWork({ target: it.target, kinds: ['wake'], states: ['done'] })) {
+          if ((w.finishedAt ?? 0) <= at) continue;
+          const t = (w.result?.finalText ?? '').trim();
+          if (t && !newer.includes(t)) newer.push(t);
+        }
+      }
+      return {
+        state: 'done',
+        text: it.result?.finalText ?? '',
+        ...(at !== undefined ? { finishedAt: at } : {}),
+        ...(newer.length > 0 ? { newer: newer.slice(-3) } : {}),
+      };
+    }
     return { state: 'failed', error: it.error ?? 'unknown error' };
+  },
+  sessionVoiceWork: async (agent, session) => {
+    // The voice consults of this session from the last hours, any call:
+    // still running, answered with work still going, or that work
+    // finished recently (with what the agent reported about it).
+    const now = Date.now();
+    const out: SessionVoiceWork[] = [];
+    for (const it of listWork({ target: { agent, session }, kinds: ['voice'] })) {
+      if (now - it.enqueuedAt > VOICE_WORK_WINDOW_MS) continue;
+      if (it.state === 'queued' || it.state === 'running') {
+        out.push({ consultId: it.id, question: it.preview, state: 'running' });
+        continue;
+      }
+      if (it.state !== 'done') continue;
+      if (openChainMembers(it.id).length > 0) {
+        out.push({ consultId: it.id, question: it.preview, state: 'working_on' });
+        continue;
+      }
+      const reports = wakeAnswersFor(it);
+      const lastWake = listWork({ target: { agent, session }, kinds: ['wake'], states: ['done'] })
+        .filter((w) => inTreeOf(w, it.id))
+        .reduce((m, w) => Math.max(m, w.finishedAt ?? 0), 0);
+      if (reports.length > 0 && now - lastWake < VOICE_FINISHED_SHOWN_MS) {
+        out.push({ consultId: it.id, question: it.preview, state: 'finished', text: reports.join('\n\n') });
+      }
+    }
+    return out;
   },
   markConsultFetched: async (consultId) => {
     markFetched(consultId);

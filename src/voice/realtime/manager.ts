@@ -14,7 +14,16 @@ import { appendEvent } from '../../storage/sessions.ts';
 import { matchSpokenSession, normalizeSpokenName } from './session-match.ts';
 import { logger } from '../../server/logger.ts';
 import type { Config } from '../../config/types.ts';
-import { VoiceCall, type ConsultLookup, type ConsultResult, type SessionWorkStatus, type VoiceCallSnapshot } from './call.ts';
+import {
+  VoiceCall,
+  type CarriedDelivery,
+  type ConsultDelivery,
+  type ConsultLookup,
+  type ConsultResult,
+  type SessionVoiceWork,
+  type SessionWorkStatus,
+  type VoiceCallSnapshot,
+} from './call.ts';
 import { onWorkFinished, onWorkFollowUp } from '../../server/work-ledger.ts';
 import { CONSULT_TOOL_NAME } from './consult.ts';
 import { buildVoiceInstructions } from './persona.ts';
@@ -32,6 +41,8 @@ export interface VoiceManagerDeps {
   /** A handed-over consult by id (Phase 2). */
   consultResult?(consultId: string): Promise<ConsultLookup | null>;
   markConsultFetched?(consultId: string): Promise<void>;
+  /** The voice consults of a session as the work ledger sees them. */
+  sessionVoiceWork?(agent: string, session: string): Promise<SessionVoiceWork[]>;
   /** Puts an event on the live SSE stream of that session. */
   publishEvent?(agent: string, session: string, ev: NormalizedEvent): void;
   /** Every agent on this instance — filtered to the callable ones. */
@@ -57,8 +68,17 @@ export interface ActiveCall {
   persona: Persona;
 }
 
+/** How long a delivery waits for the next call on its agent and
+ *  session, and how long an ended call's questions are remembered. */
+const CARRY_TTL_MS = 24 * 60 * 60 * 1000;
+
 export class VoiceCallManager {
   private calls = new Map<string, ActiveCall>();
+  /** Questions of consults whose call has ended: a later delivery
+   *  names the question it answers (consultId → question). */
+  private endedQuestions = new Map<string, { question: string; at: number }>();
+  /** Deliveries nobody could hear yet, per `agent/session`, in order. */
+  private carried = new Map<string, Array<CarriedDelivery & { at: number }>>();
 
   constructor(private readonly deps: VoiceManagerDeps) {
     // A consult that was handed over finishes in the work ledger; the
@@ -66,19 +86,22 @@ export class VoiceCallManager {
     // that knows when, so this is the single subscription.
     onWorkFinished((it) => {
       if (!it.requester || !('voiceCall' in it.requester)) return;
+      const res: ConsultDelivery = {
+        consultId: it.id,
+        state: it.state === 'done' ? 'done' : 'failed',
+        ...(it.result?.finalText ? { text: it.result.finalText } : {}),
+        ...(it.error ? { error: it.error } : {}),
+      };
       const active = this.calls.get(it.requester.voiceCall);
       if (!active) {
-        // The call hung up before the answer landed; it stays in the chat.
-        logger.info({ msg: 'voice.consult_delivery_skipped', consultId: it.id, reason: 'call already gone' });
+        // The call hung up before the answer landed. It stays in the
+        // chat; and the next call on that agent and session hears it.
+        if (it.resultFetched) return;
+        this.reroute(it, res);
         return;
       }
       void active.call
-        .deliver({
-          consultId: it.id,
-          state: it.state === 'done' ? 'done' : 'failed',
-          ...(it.result?.finalText ? { text: it.result.finalText } : {}),
-          ...(it.error ? { error: it.error } : {}),
-        })
+        .deliver(res)
         .catch((err: unknown) => logger.warn({ msg: 'voice.consult_delivery_failed', consultId: it.id, err: (err as Error).message }));
     });
     // Work a consult started (a sub, a question to another agent) that
@@ -86,21 +109,73 @@ export class VoiceCallManager {
     // follow-up (work-ledger.ts maybeFollowUp).
     onWorkFollowUp((root, fu) => {
       if (!root.requester || !('voiceCall' in root.requester)) return;
+      const res: ConsultDelivery = {
+        consultId: root.id,
+        state: fu.failed ? 'failed' : 'done',
+        text: fu.text,
+        ...(fu.failed ? { error: fu.failed } : {}),
+        followUp: true,
+      };
       const active = this.calls.get(root.requester.voiceCall);
       if (!active) {
-        logger.info({ msg: 'voice.consult_delivery_skipped', consultId: root.id, reason: 'call already gone (follow-up)' });
+        // 2026-11-06: the call that asked had hit its time limit, the
+        // caller was already on the next call with the same agent and
+        // session, and the follow-up was dropped here.
+        this.reroute(root, res);
         return;
       }
       void active.call
-        .deliver({
-          consultId: root.id,
-          state: fu.failed ? 'failed' : 'done',
-          text: fu.text,
-          ...(fu.failed ? { error: fu.failed } : {}),
-          followUp: true,
-        })
+        .deliver(res)
         .catch((err: unknown) => logger.warn({ msg: 'voice.consult_delivery_failed', consultId: root.id, err: (err as Error).message }));
     });
+  }
+
+  /**
+   * A delivery whose call is gone: to the call that is on the same
+   * agent and session now, or kept until the next one is. Exactly one
+   * of the two, so it is read out once.
+   */
+  private reroute(item: { id: string; target: { agent: string; session: string }; preview: string }, res: ConsultDelivery): void {
+    const question = this.endedQuestions.get(item.id)?.question ?? item.preview;
+    const live = [...this.calls.values()].find((c) => {
+      const snap = c.call.snapshot();
+      return snap.state !== 'closed' && snap.target.agent === item.target.agent && snap.target.session === item.target.session;
+    });
+    if (live) {
+      logger.info({ msg: 'voice.consult_delivery_rerouted', consultId: item.id, toCall: live.call.id, followUp: res.followUp ?? false });
+      void live.call
+        .carryOver({ res, question })
+        .catch((err: unknown) => logger.warn({ msg: 'voice.consult_delivery_failed', consultId: item.id, err: (err as Error).message }));
+      return;
+    }
+    this.keep(item.target.agent, item.target.session, { res, question });
+  }
+
+  private keep(agent: string, session: string, item: CarriedDelivery): void {
+    const key = `${agent}/${session}`;
+    const now = Date.now();
+    const list = (this.carried.get(key) ?? []).filter((c) => now - c.at < CARRY_TTL_MS);
+    // A newer delivery for the same consult and kind replaces the older.
+    const rest = list.filter((c) => !(c.res.consultId === item.res.consultId && (c.res.followUp ?? false) === (item.res.followUp ?? false)));
+    rest.push({ ...item, at: now });
+    this.carried.set(key, rest);
+    logger.info({ msg: 'voice.consult_delivery_kept', consultId: item.res.consultId, agent, session, followUp: item.res.followUp ?? false, waiting: rest.length });
+  }
+
+  /** Taken once: the call that gets them reads them out. */
+  private takeCarried(agent: string, session: string): CarriedDelivery[] {
+    const key = `${agent}/${session}`;
+    const list = this.carried.get(key);
+    if (!list) return [];
+    this.carried.delete(key);
+    const now = Date.now();
+    return list.filter((c) => now - c.at < CARRY_TTL_MS).map(({ res, question }) => ({ res, question }));
+  }
+
+  /** Deliveries waiting for a call on that agent and session (tests,
+   *  diagnostics). */
+  waitingDeliveries(agent: string, session: string): number {
+    return this.carried.get(`${agent}/${session}`)?.length ?? 0;
   }
 
   private cfg() {
@@ -342,6 +417,9 @@ export class VoiceCallManager {
           : {}),
         ...(this.deps.consultResult ? { consultResult: (id: string) => this.deps.consultResult!(id) } : {}),
         ...(this.deps.markConsultFetched ? { markConsultFetched: (id: string) => this.deps.markConsultFetched!(id) } : {}),
+        ...(this.deps.sessionVoiceWork ? { sessionVoiceWork: (a: string, s: string) => this.deps.sessionVoiceWork!(a, s) } : {}),
+        takeCarried: (a, s) => this.takeCarried(a, s),
+        onUndelivered: (a, s, item) => this.keep(a, s, item),
         // Written AND published: a reload must not reveal lines the
         // live view never showed.
         appendEvent: async (a, sess, ev) => {
@@ -379,6 +457,11 @@ export class VoiceCallManager {
     const active = this.calls.get(id);
     if (!active) return;
     this.calls.delete(id);
+    // What this call asked stays known: a delivery that lands later
+    // names its question on the next call.
+    const now = Date.now();
+    for (const [k, v] of this.endedQuestions) if (now - v.at > CARRY_TTL_MS) this.endedQuestions.delete(k);
+    for (const q of active.call.consultQuestions()) this.endedQuestions.set(q.consultId, { question: q.question, at: now });
     await active.call.close(reason);
   }
 

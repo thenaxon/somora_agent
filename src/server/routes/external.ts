@@ -137,7 +137,7 @@ export function registerExternalRoutes(app: Hono, routeDeps: ExternalRoutesDeps)
         : c.json({ error: 'no open question with that id on this session' }, 404);
     }
     await publish(agent, session, { event: 'question_answered', data: { questionId: id, answered: true, choice: r.choice } });
-    const turnId = sendAsPerson(agent, session, r.text);
-    return c.json({ ok: true, sent: true, turnId, text: r.text });
+    const sent = sendAsPerson(agent, session, r.text);
+    return c.json({ ok: true, sent: true, ...sent, text: r.text });
   });
 }

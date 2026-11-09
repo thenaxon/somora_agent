@@ -12,7 +12,7 @@ import { checkWriteAllowed, expandHome } from '../../tools/file/policy.ts';
 import { checkWriteAllow } from '../../tools/file/write-scope.ts';
 import { registerAskCall } from '../ask-calls.ts';
 import { claimOfSession, describeClaim, listWorkdirClaims, workdirClaimedBy } from '../builder-busy.ts';
-import { answerQuestion, askQuestion, pendingQuestion } from '../builder-questions.ts';
+import { MAX_DETAILS_CHARS, answerQuestion, askQuestion, pendingQuestion } from '../builder-questions.ts';
 import { CHAT_QUESTION_TIMEOUT_MS, TURN_ATTENDED_KEY, asksWithoutWaiting } from '../ask-attended.ts';
 import { askWithoutWaiting } from '../async-questions.ts';
 import { type BuilderMode, type BuilderPhase, DEFAULT_PLAN_FILE, type TodoItem, archiveNameFor, patchBuilderState, readBuilderState } from '../builder-session.ts';
@@ -413,10 +413,12 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
       options?: unknown;
       multiple?: unknown;
       timeout_ms?: unknown;
+      details?: unknown;
     } | null;
     if (!body || typeof body.question !== 'string' || !Array.isArray(body.options)) {
-      return c.json({ error: 'body must be { question, options: [{label, description?}], multiple?, timeout_ms? }' }, 400);
+      return c.json({ error: 'body must be { question, options: [{label, description?}], multiple?, timeout_ms?, details? }' }, 400);
     }
+    const details = typeof body.details === 'string' && body.details.trim() ? body.details.trim().slice(0, MAX_DETAILS_CHARS) : undefined;
     const options = (body.options as unknown[])
       .map((o) => {
         if (!o || typeof o !== 'object') return null;
@@ -442,6 +444,7 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
           agent: r.agent,
           session: r.session,
           source: 'ask_user',
+          ...(details ? { details } : {}),
           parts: [
             {
               question: body.question.trim().slice(0, 2000),
@@ -466,6 +469,7 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
         ...(typeof body.header === 'string' && body.header.trim() ? { header: body.header.trim().slice(0, 40) } : {}),
         options,
         multiple: body.multiple === true,
+        ...(details ? { details } : {}),
         // A builder's question may wait 30 minutes; a chat agent's turn
         // holds the conversation, so 10 unless it asks for another time.
         ...(typeof body.timeout_ms === 'number' ? { timeoutMs: body.timeout_ms } : r.persona.kind !== 'builder' ? { timeoutMs: CHAT_QUESTION_TIMEOUT_MS } : {}),
@@ -473,7 +477,7 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
       (q) => {
         void publish(r.agent, r.session, {
           event: 'question_asked',
-          data: { questionId: q.id, question: q.question, ...(q.header ? { header: q.header } : {}), options: q.options, multiple: q.multiple, expiresAt: q.expiresAt },
+          data: { questionId: q.id, question: q.question, ...(q.header ? { header: q.header } : {}), options: q.options, multiple: q.multiple, expiresAt: q.expiresAt, ...(q.details ? { details: q.details } : {}) },
         });
       },
     );

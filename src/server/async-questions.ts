@@ -16,6 +16,7 @@ import type { PendingQuestion, QuestionOption, QuestionPart } from './builder-qu
 import { logger } from './logger.ts';
 import { broadcastToSession, startTurn } from './start-turn.ts';
 import { DequeuedError } from './session-queue.ts';
+import { pushSteer, steerableTurn } from './steer-inbox.ts';
 import type { SseEvent } from '../types/events.ts';
 import type { TurnOrigin } from './turn-origin-kind.ts';
 import { openWork } from './work-ledger.ts';
@@ -92,11 +93,12 @@ export function questionAskedData(q: PendingQuestion): Extract<SseEvent, { event
     ...(q.async ? { async: true as const } : {}),
     ...(q.parts ? { parts: q.parts } : {}),
     ...(q.source ? { source: q.source } : {}),
+    ...(q.details ? { details: q.details } : {}),
   };
 }
 
 /** Open a question that does not wait. Replaces an open one. */
-export async function askWithoutWaiting(args: { agent: string; session: string; parts: QuestionPart[]; source: 'ask_user' | 'codex' }): Promise<PendingQuestion> {
+export async function askWithoutWaiting(args: { agent: string; session: string; parts: QuestionPart[]; source: 'ask_user' | 'codex'; details?: string }): Promise<PendingQuestion> {
   const { agent, session } = args;
   const parts = args.parts.slice(0, MAX_PARTS);
   const first = parts[0];
@@ -114,6 +116,7 @@ export async function askWithoutWaiting(args: { agent: string; session: string; 
     async: true,
     ...(parts.length > 1 ? { parts } : {}),
     source: args.source,
+    ...(args.details ? { details: args.details } : {}),
   };
   let prior: PendingQuestion | null = null;
   await sessionMetaStore.update(agent, session, (m) => {
@@ -207,11 +210,27 @@ export async function clearAsyncQuestion(agent: string, session: string): Promis
   return true;
 }
 
-/** Send `text` as the person's message — the same ledger item and turn
- *  a typed message gets (routes/chat.ts POST /chat/send). */
-export function sendAsPerson(agent: string, session: string, text: string): string {
-  const turnId = randomUUID();
+/** Send `text` as the person's message. With a turn running that can
+ *  read its letterbox, the answer goes INTO that turn (steering, the way
+ *  a typed message with `steer: true` does): the turn that asked is
+ *  usually still working — a Codex question does not stop it — and the
+ *  answer must reach it now, not after it ends. Otherwise it is the same
+ *  ledger item and turn a typed message gets (routes/chat.ts POST
+ *  /chat/send). */
+export function sendAsPerson(
+  agent: string,
+  session: string,
+  text: string,
+): { steered: true; steerId: string; turnId: string } | { steered: false; turnId: string } {
   const origin: TurnOrigin = { kind: 'human', via: 'chat' };
+  const running = steerableTurn(agent, session);
+  if (running) {
+    const m = pushSteer(agent, session, { text, origin });
+    logger.info({ msg: 'chat.steer', steerId: m.id, agent, session, turnId: running.turnId, engine: running.engine, via: 'question_answer' });
+    void broadcastToSession(agent, session, { event: 'steer_queued', data: { steerId: m.id, text, ts: m.ts, turnId: running.turnId, origin } });
+    return { steered: true, steerId: m.id, turnId: running.turnId };
+  }
+  const turnId = randomUUID();
   openWork({ id: turnId, origin, target: { agent, session }, requester: { human: true }, text, wake: 'never' });
   logger.info({ msg: 'chat.send', turnId, agent, session, ref: session, len: text.length, via: 'question_answer' });
   void startTurn({ agent, session, text, turnId, workId: turnId, origin }).catch((err: unknown) => {
@@ -219,5 +238,5 @@ export function sendAsPerson(agent: string, session: string, text: string): stri
     logger.error({ msg: 'chat.send.run_failed', turnId, agent, session, err: (err as Error).message });
     void broadcastToSession(agent, session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
   });
-  return turnId;
+  return { steered: false, turnId };
 }

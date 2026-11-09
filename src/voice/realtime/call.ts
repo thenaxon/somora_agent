@@ -34,6 +34,8 @@ import type { RealtimeEvent, RealtimeProvider, RealtimeSession } from './types.t
 const ANNOUNCE_PAUSE_MS = 1_500;
 /** … but not forever. */
 const ANNOUNCE_MAX_WAIT_MS = 60_000;
+/** A stored answer older than this is fetched with its time. */
+const STALE_ANSWER_MS = 60_000;
 const TRANSCRIPT_MEMORY = 24;
 /** How much of it travels with a question to the agent. Six lines is
  *  about two exchanges: enough for "and how long does that take", short
@@ -82,6 +84,32 @@ export interface ConsultLookup {
   text?: string;
   error?: string;
   position?: number;
+  /** When the consult's turn ended (ms). */
+  finishedAt?: number;
+  /** What the agent reported in this session about work that finished
+   *  AFTER this consult did (its wake turns, oldest first). The answer
+   *  itself is frozen at `finishedAt`; these are the newer state. */
+  newer?: string[];
+}
+
+/** A consult of this session's voice calls, as the work ledger sees it
+ *  now — from this call or an earlier one. */
+export interface SessionVoiceWork {
+  consultId: string;
+  question: string;
+  /** `running`: the consult itself is not answered yet. `working_on`:
+   *  answered, but work it started (a sub, a question to another
+   *  agent) is still running. `finished`: that work has finished since;
+   *  `text` is what the agent reported about it. */
+  state: 'running' | 'working_on' | 'finished';
+  text?: string;
+}
+
+/** A delivery whose call is gone, handed to the next call that is on
+ *  the same agent and session (manager.ts). */
+export interface CarriedDelivery {
+  res: ConsultDelivery;
+  question: string;
 }
 
 /** A finished consult, brought to the call by the work ledger. */
@@ -130,6 +158,14 @@ export interface VoiceCallDeps {
   consultResult?(consultId: string): Promise<ConsultLookup | null>;
   /** The call read (or announced) a consult; no second delivery. */
   markConsultFetched?(consultId: string): Promise<void>;
+  /** The voice consults of a session, from any call (the status tool). */
+  sessionVoiceWork?(agent: string, session: string): Promise<SessionVoiceWork[]>;
+  /** Deliveries from earlier calls waiting for this agent and session —
+   *  taken (and so removed) whenever the call opens on a target. */
+  takeCarried?(agent: string, session: string): CarriedDelivery[];
+  /** A delivery this call could not read out (moved to another agent,
+   *  closed): kept for the next call on that agent and session. */
+  onUndelivered?(agent: string, session: string, item: CarriedDelivery): void;
   /** Agents this call may be handed over to. Empty = switching off. */
   callableAgents?: readonly string[];
   /** Everything a call needs to continue as another agent. Rejects with
@@ -259,7 +295,7 @@ export class VoiceCall {
   /** Consults that came back handed over: what was asked, when, and
    *  for whom — a result for a previous agent is not read out as this
    *  one's after a switch. */
-  private openConsults = new Map<string, { question: string; startedAt: number; agent: string; fetched: boolean }>();
+  private openConsults = new Map<string, { question: string; startedAt: number; agent: string; session: string; fetched: boolean; earlier?: boolean }>();
   /** A result that landed before the hand-over was recorded (the turn
    *  finished in the same tick the patience ran out). */
   private earlyDeliveries = new Map<string, ConsultDelivery>();
@@ -417,7 +453,44 @@ export class VoiceCall {
       budgetLeft,
     );
     this.deadlineTimer.unref?.();
+    // What finished while no call was on this agent and session (an
+    // earlier call hit its time limit, was hung up, or moved away):
+    // read out now, once (the 2026-11-06 report: the follow-up of a
+    // call that had ended was dropped while the next call ran).
+    for (const item of this.deps.takeCarried?.(this.target.agent, this.target.session) ?? []) {
+      void this.carryOver(item).catch((err: unknown) => this.log({ msg: 'voice.consult_delivery_failed', consultId: item.res.consultId, err: (err as Error).message }));
+    }
     return this.session;
+  }
+
+  /** The consults this call knows, for the manager to remember when the
+   *  call ends: a later delivery for one of them goes to the next call. */
+  consultQuestions(): Array<{ consultId: string; question: string }> {
+    return [...this.openConsults].map(([consultId, c]) => ({ consultId, question: c.question }));
+  }
+
+  /**
+   * A delivery for a consult an EARLIER call made, on this call's agent
+   * and session: the call takes the consult over and reads it out as
+   * one from that earlier call.
+   */
+  async carryOver(item: CarriedDelivery): Promise<void> {
+    const { res, question } = item;
+    const known = this.openConsults.get(res.consultId);
+    if (!known) {
+      this.openConsults.set(res.consultId, {
+        question,
+        startedAt: this.now(),
+        agent: this.target.agent,
+        session: this.target.session,
+        fetched: false,
+        earlier: true,
+      });
+    } else if (!res.followUp) {
+      known.fetched = false;
+    }
+    this.log({ msg: 'voice.consult_carried_over', consultId: res.consultId, followUp: res.followUp ?? false });
+    await this.deliver(res);
   }
 
   /** Drive the call. Ends when the provider session ends. */
@@ -716,6 +789,43 @@ export class VoiceCall {
     );
   }
 
+  /**
+   * A stored answer fetched by id. It is frozen at the moment its turn
+   * ended: "still running" in it may long be over. Fetched a second time
+   * on 2026-11-06, a minute after the work had finished, it was spoken
+   * as the current state. Newer reports from the session win; an old or
+   * re-read answer carries its time.
+   */
+  private frameStored(text: string, look: ConsultLookup, readBefore: boolean): string {
+    const at = look.finishedAt;
+    const clock = at ? new Date(at).toTimeString().slice(0, 5) : undefined;
+    if (look.newer && look.newer.length > 0) {
+      // The newer reports are the session's, not only this consult's:
+      // on 2026-11-06 the stale answer was a status check that started
+      // nothing, and the report that made it stale belonged to another
+      // request. So they correct the old answer where they speak about
+      // the same work, and do not replace it where they do not.
+      return (
+        `This answer is from ${clock ?? 'earlier'}. Since then, the agent has reported FINISHED work in this session ` +
+        '(below the old answer; it may be about this or about other requests). Where a newer report says work that the ' +
+        'old answer calls running or pending has finished, that is the current state: say so, and do not repeat the ' +
+        'old "still running". Otherwise give the old answer and say when it is from. Answer in ' +
+        `${languageName(this.cfg.language)}, at most ${this.persona.voice?.maxSpokenSentences ?? 4} sentences.\n` +
+        `Old answer (${clock ?? 'earlier'}):\n${text}\n\nNewer reports:\n${look.newer.join('\n\n')}`
+      );
+    }
+    const age = at ? this.now() - at : 0;
+    if (readBefore || age > STALE_ANSWER_MS) {
+      const minutes = Math.max(1, Math.round(age / 60_000));
+      return (
+        `This answer is from ${clock ?? 'earlier'}${at ? ` (${minutes} min ago)` : ''} and was already given. Anything in it about ` +
+        `work still running may be out of date: say when it is from, and check with ${STATUS_TOOL_NAME} before saying it is still running.\n` +
+        this.frameAnswer(text)
+      );
+    }
+    return this.frameAnswer(text);
+  }
+
   private async note(agent: string, session: string, text: string): Promise<void> {
     await this.deps.appendEvent(agent, session, {
       kind: 'engine_meta',
@@ -742,6 +852,21 @@ export class VoiceCall {
           own.push(`your request "${c.question.slice(0, 80)}" is still ${look.position ? `waiting (position ${look.position})` : 'running'}`);
         }
       }
+      // The ledger's view of this session's voice consults, this call's
+      // and earlier calls': the open consults above only know this
+      // call, and an answered consult whose sub still runs (or has
+      // finished since) is not "open" at all (the 2026-11-06 report:
+      // the next call said "still running" about finished work).
+      const ledger = (await this.deps.sessionVoiceWork?.(this.target.agent, this.target.session).catch(() => [])) ?? [];
+      for (const w of ledger) {
+        const mine = this.openConsults.get(w.consultId);
+        if (w.state === 'running' && mine && !mine.fetched) continue; // said above
+        const where = mine && !mine.earlier ? '' : ' (asked in an earlier call)';
+        const q = `"${w.question.slice(0, 80)}"${where}`;
+        if (w.state === 'running') own.push(`${q} is still running`);
+        else if (w.state === 'working_on') own.push(`${q} was answered, but the work it started is still running`);
+        else own.push(`the work started for ${q} has FINISHED — what the agent reported: ${w.text ?? ''}`);
+      }
       const base = status.busy
         ? `still working on something you started ${minutes} minute(s) ago${status.queued ? `, ${status.queued} waiting behind it` : ''} — say so, and offer to look again in a moment`
         : 'nothing running right now';
@@ -764,12 +889,13 @@ export class VoiceCall {
         await session.sendToolResult(callId, `still working on it${look.position ? ` (position ${look.position} in the queue)` : ''} — say so, do not invent an answer`);
         return;
       }
+      const readBefore = open?.fetched === true;
       if (open) open.fetched = true;
-      this.log({ msg: 'voice.consult_fetched', consultId: parsed.consultId, state: look.state });
+      this.log({ msg: 'voice.consult_fetched', consultId: parsed.consultId, state: look.state, ...(readBefore ? { again: true } : {}), ...(look.newer?.length ? { newer: look.newer.length } : {}) });
       await session.sendToolResult(
         callId,
         look.state === 'done'
-          ? (look.text?.trim() ? this.frameAnswer(look.text.trim()) : 'no answer this time — say so, do not invent one')
+          ? (look.text?.trim() ? this.frameStored(look.text.trim(), look, readBefore) : 'no answer this time — say so, do not invent one')
           : `the agent could not answer: ${look.error ?? 'unknown error'}`,
       );
       return;
@@ -863,7 +989,7 @@ export class VoiceCall {
       });
       if (result.state === 'handed_over' && result.consultId) {
         const id = result.consultId;
-        this.openConsults.set(id, { question: parsed.args.question, startedAt, agent: this.target.agent, fetched: false });
+        this.openConsults.set(id, { question: parsed.args.question, startedAt, agent: this.target.agent, session: this.target.session, fetched: false });
         this.log({ msg: 'voice.consult_handed_over', consultId: id, position: result.position ?? 0, ms: this.now() - startedAt });
         this.recordLine('event', `${this.target.agent} is still working on it; the answer follows`);
         if (this.state !== 'closed' && session === this.session) {
@@ -880,6 +1006,11 @@ export class VoiceCall {
           void this.deliver(early);
         }
         return;
+      }
+      // Answered at once, but it may have started work (a sub) whose
+      // follow-up comes later: remember the question, already read.
+      if (result.consultId && !this.openConsults.has(result.consultId)) {
+        this.openConsults.set(result.consultId, { question: parsed.args.question, startedAt, agent: this.target.agent, session: this.target.session, fetched: true });
       }
       const answer = result.text.trim();
       this.log({
@@ -927,14 +1058,14 @@ export class VoiceCall {
         return;
       }
       if (this.state === 'closed' || !this.session) {
-        this.log({ msg: 'voice.consult_delivery_skipped', consultId: res.consultId, reason: 'call closed' });
+        this.park(open, res, 'call closed');
         return;
       }
       if (open.agent !== this.target.agent) {
-        this.log({ msg: 'voice.consult_delivery_skipped', consultId: res.consultId, reason: 'call moved to another agent' });
+        this.park(open, res, 'call moved to another agent');
         return;
       }
-      await this.announce(open.question, res);
+      if (!(await this.announce(open.question, res, open.earlier))) this.park(open, res, 'call ended before it was read out');
       return;
     }
     if (!open) {
@@ -945,42 +1076,60 @@ export class VoiceCall {
     }
     if (open.fetched) return;
     if (this.state === 'closed' || !this.session) {
-      this.log({ msg: 'voice.consult_delivery_skipped', consultId: res.consultId, reason: 'call closed' });
+      this.park(open, res, 'call closed');
       return;
     }
     if (open.agent !== this.target.agent) {
-      this.log({ msg: 'voice.consult_delivery_skipped', consultId: res.consultId, reason: 'call moved to another agent' });
+      this.park(open, res, 'call moved to another agent');
       return;
     }
     open.fetched = true;
     await this.deps.markConsultFetched?.(res.consultId).catch(() => {});
-    await this.announce(open.question, res);
+    if (!(await this.announce(open.question, res, open.earlier))) {
+      // Closed while waiting for a pause: kept for the next call, not lost
+      // (a carried answer was already taken from the manager).
+      open.fetched = false;
+      this.park(open, res, 'call ended before it was read out');
+    }
+  }
+
+  /** Not readable on this line: kept for the next call on the agent and
+   *  session the consult was asked in, or dropped when nobody keeps it. */
+  private park(open: { question: string; agent: string; session: string }, res: ConsultDelivery, reason: string): void {
+    if (this.deps.onUndelivered) {
+      this.deps.onUndelivered(open.agent, open.session, { res, question: open.question });
+      this.log({ msg: 'voice.consult_delivery_parked', consultId: res.consultId, reason });
+      return;
+    }
+    this.log({ msg: 'voice.consult_delivery_skipped', consultId: res.consultId, reason });
   }
 
   /** Wait for a pause (the model not speaking, the caller quiet for a
    *  moment), then have the model read the answer. Never a fixed
    *  sentence: the instruction is English, names the call's language,
    *  and the wording is the model's (the operator, 2026-09-13). */
-  private async announce(question: string, res: ConsultDelivery): Promise<void> {
+  /** True when it was handed to the model to speak. */
+  private async announce(question: string, res: ConsultDelivery, earlier = false): Promise<boolean> {
     const deadline = this.now() + ANNOUNCE_MAX_WAIT_MS;
     while (this.now() < deadline) {
-      if (this.state === 'closed') return;
+      if (this.state === 'closed') return false;
       const quiet = this.state === 'listening' && this.now() - this.lastHeardAt >= ANNOUNCE_PAUSE_MS;
       if (quiet) break;
       await new Promise((r) => setTimeout(r, 250));
     }
-    if (this.state === 'closed' || !this.session) return;
+    if (this.state === 'closed' || !this.session) return false;
     const body = res.state === 'done'
       ? (res.text?.trim() || 'the agent had no answer')
       : `the agent could not answer: ${res.error ?? 'unknown error'}`;
+    const asked = earlier ? 'the question the user asked in an earlier call' : 'the question the user asked earlier';
     const instruction = res.followUp
-      ? `The agent has a follow-up on the question the user asked earlier about "${question.slice(0, 120)}": ` +
+      ? `The agent has a follow-up on ${asked} about "${question.slice(0, 120)}": ` +
         'work it had started for that question has now finished. ' +
         `Start by saying, in ${this.cfg.language}, that this is a follow-up to that earlier question, ` +
         'then give it as it is. Do not add anything else.\n' +
         body
-      : `Read the user the answer to the question they asked earlier about "${question.slice(0, 120)}". ` +
-        `Start by saying, in ${this.cfg.language}, that this is the answer to that earlier question, ` +
+      : `Read the user the answer to ${asked} about "${question.slice(0, 120)}". ` +
+        `Start by saying, in ${this.cfg.language}, that this is the answer to that earlier question${earlier ? ' from the earlier call' : ''}, ` +
         'then give the answer as it is. Do not add anything else.\n' +
         body;
     try {
@@ -991,8 +1140,10 @@ export class VoiceCall {
       await this.session.speak?.(instruction, { deliver: true });
       this.log({ msg: 'voice.consult_announced', consultId: res.consultId, state: res.state, chars: body.length, ...(res.followUp ? { followUp: true } : {}) });
       this.recordLine('event', `${this.target.agent} answered (${res.state})`);
+      return true;
     } catch (err) {
       this.log({ msg: 'voice.consult_announce_failed', consultId: res.consultId, err: (err as Error).message });
+      return false;
     }
   }
 

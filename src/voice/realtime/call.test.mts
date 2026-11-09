@@ -779,7 +779,10 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('and may not refuse a task itself', /never say you cannot do something/i.test(built.text));
   check('and may not announce a lookup instead of making it', /do not announce it/i.test(built.text));
   check('capabilities are not part of its self-knowledge', !/what you can or cannot do/i.test(built.text));
-  check('it stays inside the context budget', built.chars < 1950, `${built.chars} chars`);
+  check('work state comes from the status tool, not memory', built.text.includes(`what ${STATUS_TOOL_NAME} says now`) && /report back only for a request handed over/.test(built.text));
+  // +150 on 2026-11-09 for the line above (a "still running" and a "done"
+  // spoken against the facts in one call, 2026-11-06).
+  check('it stays inside the context budget', built.chars < 2100, `${built.chars} chars`);
   check('it forwards statements, not only requests', /state or correct/i.test(built.text));
 }
 
@@ -811,7 +814,7 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('and that this much needs no lookup', /yours to know — no lookup/.test(withUser.text));
   check('it knows the day and the call start time', withUser.text.includes('Monday, 2026-09-21, 14:05'), withUser.text);
   check('and that the time is the START, not now', /This call started/.test(withUser.text) && /exact time now, look it up/.test(withUser.text));
-  check('inside the context budget with both lines', withUser.chars < 2300, `${withUser.chars} chars`);
+  check('inside the context budget with both lines', withUser.chars < 2450, `${withUser.chars} chars`);
 
   const without = buildVoiceInstructions({ ...base, now, persona: persona() });
   check('no USER.md: no caller line, nothing invented', !/The person on this call/.test(without.text));
@@ -895,7 +898,7 @@ interface Harness2 extends Harness {
   setLookup: (id: string, v: ConsultLookup | ConsultLookup[]) => void;
 }
 
-function harness2(script: FakeScriptStep[], consult: (args: { text: string }) => Promise<ConsultResult>): Harness2 {
+function harness2(script: FakeScriptStep[], consult: (args: { text: string }) => Promise<ConsultResult>, extra: Partial<VoiceCallDeps> = {}): Harness2 {
   const provider = new FakeRealtimeProvider(script);
   const events: NormalizedEvent[] = [];
   const consults: Array<{ agent: string; session: string; text: string; prefix?: string }> = [];
@@ -916,6 +919,7 @@ function harness2(script: FakeScriptStep[], consult: (args: { text: string }) =>
       return v ?? null;
     },
     markConsultFetched: async (id) => { fetched.push(id); },
+    ...extra,
   };
   const call = new VoiceCall(
     { agent: 'ada', session: '20260911-120000_projektA', slug: 'projektA' },
@@ -1077,6 +1081,163 @@ function harness2(script: FakeScriptStep[], consult: (args: { text: string }) =>
   for await (const _ of h.call.run()) { /* */ }
   const status = h.provider.lastSession?.toolResults.find((r) => r.callId === 'c2')?.result ?? '';
   check('status lists the handed-over request with its position', status.includes('Mach die Doku fertig') && status.includes('position 3'), status);
+}
+
+
+// ── 2026-11-06: work that outlives the call that asked for it ─────────
+// Call A handed a request over and its consult started a sub; A hit its
+// time limit; the caller was on call B with the same agent and session
+// when the sub finished. The follow-up was dropped, and B re-read an
+// older "still running" answer and spoke it as the current state.
+import type { CarriedDelivery, SessionVoiceWork } from './call.ts';
+
+const SESSION_A = '20260911-120000_projektA';
+
+// 6. a delivery from an earlier call, carried over: read out once, as from that call
+{
+  const h = harness2(
+    [{ emit: { kind: 'ready', ts: 1 } }, { awaitToolResult: 'never' }],
+    async () => ({ text: 'x' }),
+  );
+  const run = (async () => { for await (const _ of h.call.run()) { /* */ } })();
+  await wait(30);
+  await h.call.carryOver({ res: { consultId: 'v-old', state: 'done', text: 'Die REM-Runde ist komplett erledigt.', followUp: true }, question: 'Analysiere die REM-Träume' });
+  const spoken = h.provider.lastSession?.spoken ?? [];
+  const fu = spoken.find((s) => s.includes('REM-Runde'));
+  check('a follow-up from an earlier call is read out on this one', fu !== undefined, spoken.join(' | '));
+  check('named as from the earlier call, with its question', fu?.includes('earlier call') === true && fu?.includes('Analysiere die REM-Träume') === true, fu);
+  await h.call.carryOver({ res: { consultId: 'v-old2', state: 'done', text: 'Antwort aus dem alten Anruf.' }, question: 'Wie viele Seiten?' });
+  check('a direct answer from an earlier call too, and marked fetched', (h.provider.lastSession?.spoken ?? []).some((s) => s.includes('Antwort aus dem alten Anruf')) && h.fetched.includes('v-old2'));
+  await h.call.deliver({ consultId: 'v-old2', state: 'done', text: 'Antwort aus dem alten Anruf.' });
+  check('and only once', (h.provider.lastSession?.spoken ?? []).filter((s) => s.includes('Antwort aus dem alten Anruf')).length === 1);
+  await h.call.close('test over');
+  await run;
+}
+
+// 7. deliveries kept for this agent and session are taken when the call opens
+{
+  const takes: string[] = [];
+  const kept: CarriedDelivery[] = [{ res: { consultId: 'v-kept', state: 'done', text: 'Fertig: 3 Berichte.', followUp: true }, question: 'Frag die anderen' }];
+  const h = harness2(
+    [{ emit: { kind: 'ready', ts: 1 } }, { awaitToolResult: 'never' }],
+    async () => ({ text: 'x' }),
+    { takeCarried: (a, s) => { takes.push(`${a}/${s}`); return kept.splice(0); } },
+  );
+  const run = (async () => { for await (const _ of h.call.run()) { /* */ } })();
+  await wait(1_800); // the announcement waits for a quiet moment
+  check('the call asked for what was kept for its agent and session', takes[0] === `ada/${SESSION_A}`, takes.join(','));
+  check('and read it out', (h.provider.lastSession?.spoken ?? []).some((s) => s.includes('Fertig: 3 Berichte') && s.includes('earlier call')));
+  await h.call.close('test over');
+  await run;
+}
+
+// 8. a delivery this call cannot read out is kept, not dropped
+{
+  const keptHere: Array<{ agent: string; session: string; item: CarriedDelivery }> = [];
+  const h = harness2(
+    [
+      { emit: { kind: 'ready', ts: 1 } },
+      { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: CONSULT_TOOL_NAME, args: JSON.stringify({ question: 'Starte die Recherche' }) } },
+      { awaitToolResult: 'c1' },
+      { awaitToolResult: 'never' },
+    ],
+    async () => ({ text: 'handed over', pending: true, state: 'handed_over', consultId: 'v-8', position: 0 }),
+    { onUndelivered: (agent, session, item) => keptHere.push({ agent, session, item }) },
+  );
+  const run = (async () => { for await (const _ of h.call.run()) { /* */ } })();
+  await wait(50);
+  await h.call.close('call time limit reached');
+  await run;
+  await h.call.deliver({ consultId: 'v-8', state: 'done', text: 'Recherche fertig.' });
+  check('kept for the next call on that agent and session', keptHere.length === 1 && keptHere[0]!.agent === 'ada' && keptHere[0]!.session === SESSION_A && keptHere[0]!.item.question === 'Starte die Recherche', JSON.stringify(keptHere));
+}
+
+// 9. a consult answered at once still has its follow-up read out
+{
+  const h = harness2(
+    [
+      { emit: { kind: 'ready', ts: 1 } },
+      { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: CONSULT_TOOL_NAME, args: JSON.stringify({ question: 'Lass das im Hintergrund prüfen' }) } },
+      { awaitToolResult: 'c1' },
+      { awaitToolResult: 'never' },
+    ],
+    async () => ({ text: 'Läuft im Hintergrund.', state: 'answered', consultId: 'v-9' }),
+  );
+  const run = (async () => { for await (const _ of h.call.run()) { /* */ } })();
+  await wait(50);
+  await h.call.deliver({ consultId: 'v-9', state: 'done', text: 'Prüfung fertig, alles grün.', followUp: true });
+  check('the follow-up of a quickly answered consult is read out', (h.provider.lastSession?.spoken ?? []).some((s) => s.includes('Prüfung fertig')), (h.provider.lastSession?.spoken ?? []).join(' | '));
+  await h.call.close('test over');
+  await run;
+}
+
+// 10. a stored answer fetched after newer work finished: the newer state wins
+{
+  const h = harness2(
+    [
+      { emit: { kind: 'ready', ts: 1 } },
+      { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: RESULT_TOOL_NAME, args: JSON.stringify({ consult_id: 'v-10' }) } },
+      { awaitToolResult: 'c1' },
+      { emit: { kind: 'tool_call', ts: 3, callId: 'c2', name: RESULT_TOOL_NAME, args: JSON.stringify({ consult_id: 'v-10b' }) } },
+      { awaitToolResult: 'c2' },
+      { awaitToolResult: 'never' },
+    ],
+    async () => ({ text: 'x' }),
+  );
+  const finishedAt = Date.now() - 80_000;
+  h.setLookup('v-10', { state: 'done', text: 'Der Hintergrundauftrag läuft noch.', finishedAt, newer: ['Ja, die REM-Runde ist jetzt vollständig erledigt.'] });
+  h.setLookup('v-10b', { state: 'done', text: 'Der Auftrag läuft noch.', finishedAt });
+  const run = (async () => { for await (const _ of h.call.run()) { /* */ } })();
+  await wait(80);
+  const r1 = h.provider.lastSession?.toolResults.find((r) => r.callId === 'c1')?.result ?? '';
+  check('newer reports come with the old answer and correct its "still running"', r1.includes('FINISHED') && r1.includes('vollständig erledigt') && /do not repeat the old "still running"/.test(r1), r1);
+  check('but only where they speak about the same work — they may be about other requests', /may be about this or about other requests/.test(r1) && /Otherwise give the old answer and say when it is from/.test(r1), r1);
+  const r2 = h.provider.lastSession?.toolResults.find((r) => r.callId === 'c2')?.result ?? '';
+  check('an old answer without newer reports carries its age and a pointer to the status tool', r2.includes('min ago') && r2.includes(STATUS_TOOL_NAME) && r2.endsWith('Der Auftrag läuft noch.'), r2);
+  await h.call.close('test over');
+  await run;
+}
+
+// 11. the status tool sees work from an earlier call of the same session
+{
+  const ledger: SessionVoiceWork[] = [
+    { consultId: 'v-a', question: 'Analysiere die REM-Träume', state: 'working_on' },
+    { consultId: 'v-b', question: 'Schreib das Feedback', state: 'finished', text: 'Feedback liegt in somora_feedback.' },
+  ];
+  const h = harness2(
+    [
+      { emit: { kind: 'ready', ts: 1 } },
+      { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: STATUS_TOOL_NAME, args: '{}' } },
+      { awaitToolResult: 'c1' },
+      { emit: { kind: 'closed', ts: 9, reason: 'user hung up' } },
+    ],
+    async () => ({ text: 'x' }),
+    { sessionVoiceWork: async (a, s) => (a === 'ada' && s === SESSION_A ? ledger : []) },
+  );
+  await drain(h.call);
+  const status = h.provider.lastSession?.toolResults.find((r) => r.callId === 'c1')?.result ?? '';
+  check('work still running from an earlier call is named', status.includes('Analysiere die REM-Träume') && status.includes('earlier call') && status.includes('still running'), status);
+  check('and work finished since, with what the agent reported', status.includes('FINISHED') && status.includes('Feedback liegt in somora_feedback.'), status);
+}
+
+// 12. a carried answer the next call closes on before reading it out is kept again (Codex review)
+{
+  const keptAgain: CarriedDelivery[] = [];
+  const h = harness2(
+    [{ emit: { kind: 'ready', ts: 1 } }, { awaitToolResult: 'never' }],
+    async () => ({ text: 'x' }),
+    {
+      takeCarried: () => [{ res: { consultId: 'v-12', state: 'done', text: 'Antwort, die nicht verloren gehen darf.' }, question: 'Wie viele?' }],
+      onUndelivered: (_a, _s, item) => keptAgain.push(item),
+    },
+  );
+  const run = (async () => { for await (const _ of h.call.run()) { /* */ } })();
+  await wait(100); // taken, waiting for a quiet moment
+  await h.call.close('user hung up');
+  await run;
+  await wait(400);
+  check('closed before the pause: nothing was read out', (h.provider.lastSession?.spoken ?? []).every((s) => !s.includes('nicht verloren')));
+  check('and it is kept for the next call, once', keptAgain.length === 1 && keptAgain[0]!.res.consultId === 'v-12', JSON.stringify(keptAgain));
 }
 
 console.log(`\n${pass} ok, ${fail} failed`);

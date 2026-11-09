@@ -34,6 +34,11 @@ export interface PendingQuestion {
    *  engine's own question tool (Codex) — then the reply text carries
    *  the question as well. */
   source?: 'ask_user' | 'codex';
+  /** What the person decides on, shown in full on the card (markdown):
+   *  the exact text to approve, a draft, a plan. Text the agent wrote
+   *  outside the card may not be in view where the card is answered
+   *  (2026-11-06: approving posts whose text the person never saw). */
+  details?: string;
 }
 
 /** One of several questions asked together. */
@@ -63,6 +68,8 @@ const key = (agent: string, session: string): string => `${agent}/${session}`;
 
 export const DEFAULT_QUESTION_TIMEOUT_MS = 30 * 60 * 1000;
 export const MAX_QUESTION_TIMEOUT_MS = 4 * 60 * 60 * 1000;
+/** The longest `details` a question carries: a few drafts, a short plan. */
+export const MAX_DETAILS_CHARS = 8000;
 
 /** Who else learns that a question was asked or settled on a session —
  *  the A2A side (src/a2a/server.ts), which passes it to the agent system
@@ -122,6 +129,7 @@ export function askQuestion(
     multiple: args.multiple,
     askedAt: Date.now(),
     expiresAt: Date.now() + timeoutMs,
+    ...(args.details ? { details: args.details } : {}),
   };
   return new Promise<QuestionAnswer>((resolve) => {
     const timer = setTimeout(() => {

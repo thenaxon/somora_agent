@@ -112,13 +112,22 @@ A handed-over answer reaches you in one of two ways.
 **The call reads it out.** At the next pause the voice says that this
 is the answer to your earlier question, then gives it. If the voice is
 mid-sentence at that moment, the reading is kept and spoken as soon as
-it falls silent. It is read once, only in the call that asked, and only
-while that call still talks to the same agent.
+it falls silent. It is read once, in the call that is on the agent and
+session that were asked: usually the call that asked, otherwise the
+next call there (see below).
 
 **You ask.** Ask whether it is done and the voice fetches the answer. It
-is then not read out a second time. Ask how far along the agent is and
-the voice reports the running work and each handed-over request with
-its place in the queue.
+is then not read out a second time. An answer fetched again later, or
+more than a minute after it was given, comes with its time. When the
+agent has reported finished work in the session since, the voice gives
+that newer state instead of an old "still running".
+
+Ask how far along the agent is and the voice reports the running work
+and each handed-over request with its place in the queue. It also
+names the voice requests of the session from the last hours, earlier
+calls included: still running, answered while work it started still
+runs, or that work finished in the last 30 minutes, with what the agent
+reported.
 
 Good to know:
 
@@ -129,6 +138,13 @@ Good to know:
   is read out once as a follow-up to that question.
 - If you hang up first, the answer still lands in the session's chat.
   Hanging up cancels nothing.
+- An answer or follow-up whose call has ended (hung up, time limit) or
+  moved to another agent goes to the call on the same agent and session
+  at that moment, as the answer to a question from an earlier call.
+  With no such call, it waits up to 24 hours and is read out when the
+  next one starts.
+- Waiting answers are held in memory: a restart of somora drops them.
+  The chat still has them.
 
 ## What the session records
 

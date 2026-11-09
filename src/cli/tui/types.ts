@@ -84,6 +84,8 @@ export interface SessionQuestion {
   async?: boolean;
   /** Several questions asked at once (async only). */
   parts?: Array<{ question: string; header?: string; options: Array<{ label: string; description?: string }>; multiple?: boolean }>;
+  /** What the person decides on, in full (markdown). */
+  details?: string;
 }
 
 export interface SessionSummary {

@@ -56,14 +56,16 @@ export function questionNotice(agent: string, q: SessionQuestion): string {
     options.map((o, i) => `   ${i + 1} ${o.label}${o.description && !kinds.has(o.description) ? ` — ${o.description}` : ''}`);
   // Several questions at once (async only): each with its options; the
   // answer is whatever you write next.
+  // What is decided on, in full, before the question (indented).
+  const details = q.details ? `${q.details.split('\n').map((l) => `   ${l}`).join('\n')}\n` : '';
   if (q.async && q.parts && q.parts.length > 1) {
     const blocks = q.parts.map((p) => [`❓ ${p.question}`, ...optionLines(p.options)].join('\n'));
-    return `${blocks.join('\n')}\n   answer in your own words (${agent} asks; answer any time)`;
+    return `${details}${blocks.join('\n')}\n   answer in your own words (${agent} asks; answer any time)`;
   }
   const lines = optionLines(q.options);
   const how = q.options.length === 0 ? 'answer in your own words' : q.multiple ? 'type the numbers, e.g. 1,3' : 'type the number';
   const tail = !q.async ? `(${agent} waits)` : `${lines.length > 0 ? 'or write your own answer ' : ''}(${agent} asks; answer any time)`;
-  return `❓ ${q.question}${lines.length > 0 ? `\n${lines.join('\n')}` : ''}\n   ${how} ${tail}`;
+  return `${details}❓ ${q.question}${lines.length > 0 ? `\n${lines.join('\n')}` : ''}\n   ${how} ${tail}`;
 }
 
 function fallbackNotice(fb: {

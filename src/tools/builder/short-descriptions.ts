@@ -47,7 +47,8 @@ export const BUILDER_SHORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
     'batch at the end. If blocked, keep it in_progress and add a follow-up naming the blocker.',
   ask_user:
     'Ask the person watching a question with 2-6 options (free text is always possible). Waits for the ' +
-    'answer or a timeout; returns {answered, answers, text}. Only for a real fork you cannot decide yourself.',
+    'answer or a timeout; returns {answered, answers, text}. Only for a real fork you cannot decide yourself. ' +
+    'Content they approve or pick goes in full into details.',
   plan_write: 'Write the plan file of this session (Markdown; replaces the file). The only write allowed in the plan phase.',
   acceptance_write:
     'Keep the acceptance list: one item per requirement of the order (id A01…, its words), status open | ' +

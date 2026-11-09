@@ -17,6 +17,7 @@
 // start time: asked "who am I?", the voice self had nothing to go on.
 
 import type { Persona } from '../../persona/loader.ts';
+import { STATUS_TOOL_NAME } from './consult.ts';
 
 export interface VoiceInstructionsInput {
   persona: Persona;
@@ -217,6 +218,11 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
     `What you can do is not yours to judge: never say you cannot do something, never claim a missing tool, never offer a workaround.`,
     `Call the moment something is asked of you — do not announce it, do not ask whether you should, do not wait. You are looking it up, not asking someone else. Keep the request to one short sentence.`,
     `Then answer in your own words, shortened for the ear, no lists or paths read aloud. Never invent a fact, a name or a number, and never say you did something before you have.`,
+    // 2026-11-06: asked "so the feedback is done?", the voice agreed and
+    // added that it had gone to the coding agent — the task was still
+    // running; a minute earlier it had said "still running" about work
+    // that had finished. State is what a tool says now, not a memory.
+    `Running, finished or passed on is what ${STATUS_TOOL_NAME} says now, not what you said before: check before you say it. Promise to report back only for a request handed over.`,
     input.switchTo && input.switchTo.length > 0
       ? `You are in your session "${sessionSlug}". If they ask for someone else — ${input.switchTo.join(', ')} — or for another session of yours, move the call with the switch tool, never unasked. Pass a session only when they named one.`
       : `This conversation runs in your session "${sessionSlug}". You cannot switch to another agent or session.`,

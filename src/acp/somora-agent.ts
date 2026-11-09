@@ -62,7 +62,7 @@ interface SessionRow {
 
 /** A non-waiting question as reply text: each question with its
  *  options, for the person to answer with the next prompt. */
-export function asyncQuestionText(q: { question?: unknown; options?: unknown; parts?: unknown }): string {
+export function asyncQuestionText(q: { question?: unknown; options?: unknown; parts?: unknown; details?: unknown }): string {
   type Part = { question: string; options: Array<{ label: string }> };
   const parts: Part[] = Array.isArray(q.parts) && q.parts.length > 0
     ? (q.parts as Part[])
@@ -70,7 +70,8 @@ export function asyncQuestionText(q: { question?: unknown; options?: unknown; pa
   const blocks = parts
     .filter((p) => p && typeof p.question === 'string' && p.question)
     .map((p) => [`❓ ${p.question}`, ...(p.options ?? []).map((o) => `- ${o.label}`)].join('\n'));
-  return `\n\n${blocks.join('\n\n')}`;
+  const details = typeof q.details === 'string' && q.details ? `\n\n${q.details}` : '';
+  return `${details}\n\n${blocks.join('\n\n')}`;
 }
 
 /** A question's option → the ACP option kind (the server sends the kind
@@ -427,6 +428,11 @@ export class SomoraAcpAgent implements Agent {
     const options = Array.isArray(q.options) ? (q.options as Array<{ label: string; description?: string }>) : [];
     if (!id || options.length === 0) return;
     const question = typeof q.question === 'string' ? q.question : 'The agent asks';
+    // The dialog has a title, not a body: what is decided on goes into
+    // the reply right before it.
+    if (typeof q.details === 'string' && q.details) {
+      await this.conn.sessionUpdate({ sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `\n\n${q.details}\n\n` } } });
+    }
     let r;
     try {
       r = await this.conn.requestPermission({

@@ -21,6 +21,7 @@ import { configureStartTurn } from './start-turn.ts';
 import type { RunChatTurnArgs } from './run-turn.ts';
 import type { ChatTurnResolveDeps, ChatTurnResult } from './run-turn-types.ts';
 import { createSession, sessionMetaStore } from '../storage/sessions.ts';
+import { drainSteer, markSteerable, unmarkSteerable } from './steer-inbox.ts';
 import type { SseEvent } from '../types/events.ts';
 import { loadPersona } from '../persona/loader.ts';
 import { ASK_USER_HINT, assembleSystemPrompt } from './prompt-assembly.ts';
@@ -132,6 +133,51 @@ test('a click sends the choice as the person’s next message and removes the ca
   const settled = events.find((e) => e.event.event === 'question_answered');
   assert.ok(settled && settled.event.event === 'question_answered' && settled.event.data.choice === 'Stop here');
   assert.equal((await answer(id, questionId, { answers: ['Stop here'] })).status, 404, 'answered once only');
+});
+
+test('an answer while the asking turn still runs goes into that turn (steering), not behind it', async () => {
+  // Codex asks with request_user_input_async and keeps working; the
+  // answer used to wait in the queue until the long turn ended
+  // (2026-11-08: 11 minutes), while typed messages were steered in.
+  const id = await personTurn('async-answer-steer');
+  const { questionId } = (await (await ask(id)).json()) as { questionId: string };
+  markSteerable('ada', id, 'codex-cli', 'turn-running');
+  try {
+    events.length = 0;
+    runs.length = 0;
+    const res = await answer(id, questionId, { text: '43, 24 and 25 belong to the other street' });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { sent?: boolean; steered?: boolean; steerId?: string; turnId?: string };
+    assert.equal(body.sent, true);
+    assert.equal(body.steered, true);
+    assert.equal(body.turnId, 'turn-running');
+    const pending = drainSteer('ada', id);
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0]!.text, '43, 24 and 25 belong to the other street');
+    assert.equal(pending[0]!.id, body.steerId);
+    assert.deepEqual(pending[0]!.origin, { kind: 'human', via: 'chat' });
+    const q = events.find((e) => e.event.event === 'steer_queued');
+    assert.ok(q && q.event.event === 'steer_queued' && q.event.data.steerId === body.steerId, 'every client learns of the steered answer');
+    await tick(60);
+    assert.equal(runs.length, 0, 'no turn of its own queued behind the running one');
+    assert.equal(await getQuestion(id), null);
+  } finally {
+    unmarkSteerable('ada', id, 'turn-running');
+  }
+});
+
+test('the content decided on travels with the question: stored, broadcast, shown again after a reload', async () => {
+  const id = await personTurn('async-details');
+  events.length = 0;
+  const details = 'Reply 1 to @someone:\n> Exactly this text goes out.';
+  const res = await app.request(`/agents/ada/sessions/${id}/ask`, json({ question: 'Post these as they are?', options: [{ label: 'Post' }, { label: 'Not yet' }], details }));
+  assert.equal(res.status, 200);
+  const asked = events.find((e) => e.event.event === 'question_asked');
+  assert.ok(asked && asked.event.event === 'question_asked' && asked.event.data.details === details, 'every client gets it with the card');
+  assert.equal((await getQuestion(id))?.details, details, 'and a client that loads later too');
+  const blank = await personTurn('async-details-blank');
+  await app.request(`/agents/ada/sessions/${blank}/ask`, json({ question: 'Go?', options: [{ label: 'Yes' }, { label: 'No' }], details: '   ' }));
+  assert.equal((await getQuestion(blank))?.details, undefined, 'blank details are left out');
 });
 
 test('a question answered before its turn ends still counts as asked in that turn', async () => {

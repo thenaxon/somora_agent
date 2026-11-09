@@ -1186,6 +1186,59 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .chat-msg-bubble pre {
   margin: 6px 0;
 }
+
+/* The content a question card asks about (QuestionCard.tsx): markdown
+ * like a reply, in its own scroll box. Capped in px as well as vh: the
+ * vh is the browser's, and a chat window at its default size (520x460)
+ * lost the options and the input below its edge at 40vh. The reset
+ * strips list markers, link colour and spacing, so the bubble's rules
+ * are repeated here, plus a blockquote (drafts are quoted). */
+.question-card-details {
+  max-height: min(30vh, 220px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-1);
+  line-height: 1.5;
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+.question-card-details p { margin: 6px 0; }
+.question-card-details p:first-child { margin-top: 0; }
+.question-card-details p:last-child { margin-bottom: 0; }
+.question-card-details ul,
+.question-card-details ol { margin: 6px 0; padding-left: 1.4em; }
+.question-card-details ul { list-style: disc; }
+.question-card-details ol { list-style: decimal; }
+.question-card-details li { margin: 2px 0; }
+.question-card-details a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.question-card-details blockquote {
+  margin: 6px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--line-2);
+  color: var(--text-1);
+}
+.question-card-details pre {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--bg-0);
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+}
+.question-card-details :not(pre) > code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--bg-0);
+  white-space: pre-wrap;
+}
 .chat-msg-name {
   font-size: 10px;
   font-family: 'JetBrains Mono', monospace;

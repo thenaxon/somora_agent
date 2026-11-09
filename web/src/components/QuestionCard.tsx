@@ -11,6 +11,25 @@ import { useState } from 'react';
 import { MessageCircleQuestion, ShieldQuestion } from 'lucide-react';
 import { api, type SessionQuestion } from '../lib/api';
 import { answersOnClick, buildAnswer, questionParts } from '../lib/question';
+import { AssistantMarkdown } from './AssistantMarkdown';
+
+/** What the person decides on, in full: the text to approve, the drafts
+ *  to pick from. On the card itself, because the agent's reply around it
+ *  may not be in view (2026-11-06: posts approved whose text was never
+ *  shown). Scrolls on its own when long. */
+/** In a small chat window (520x460 by default) a card with details
+ *  pushed its options and the input below the window's edge: it shrinks
+ *  to the room left and scrolls as a whole instead. The transcript above
+ *  is flex 1 and gives way first. */
+const FIT_WINDOW: React.CSSProperties = { flexShrink: 1, minHeight: 120, overflowY: 'auto', overscrollBehavior: 'contain' };
+
+function QuestionDetails({ text }: { text: string }) {
+  return (
+    <div className="question-card-details" data-testid="question-details">
+      <AssistantMarkdown content={text} />
+    </div>
+  );
+}
 
 function remaining(expiresAt: number): string {
   const s = Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
@@ -65,6 +84,7 @@ function WaitingQuestionCard({ agent, session, question, onAnswered }: { agent: 
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
+        ...FIT_WINDOW,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--warn)', fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -75,6 +95,7 @@ function WaitingQuestionCard({ agent, session, question, onAnswered }: { agent: 
         </span>
       </div>
       <div style={{ lineHeight: 1.45, wordBreak: 'break-word' }}>{question.question}</div>
+      {question.details && <QuestionDetails text={question.details} />}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {question.options.map((o) => {
           const t = tone(o.description);
@@ -193,6 +214,7 @@ function AsyncQuestionCard({ agent, session, question, onAnswered }: { agent: st
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
+        ...FIT_WINDOW,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent)', fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -200,6 +222,7 @@ function AsyncQuestionCard({ agent, session, question, onAnswered }: { agent: st
         <span style={{ flex: 1 }} />
         <span style={{ color: 'var(--text-2)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>answer any time</span>
       </div>
+      {question.details && <QuestionDetails text={question.details} />}
       {parts.map((p, i) => (
         <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ lineHeight: 1.45, wordBreak: 'break-word' }}>{p.question}</div>
