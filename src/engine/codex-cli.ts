@@ -777,6 +777,13 @@ export const codexCliEngine: AgentEngine = {
           onServerRequest,
           logCtx,
         });
+        // Stopped (or timed out) while the process was starting: onAbort
+        // saw no client and the turn is over, so nobody else will close
+        // this one (Fable review 2026-11-10 Nr. 6).
+        if (abortFired || finished) {
+          client.close();
+          return;
+        }
         void client.exited().then(({ code, signal: sig }) => {
           if (!finished) {
             logger.error({
@@ -908,8 +915,12 @@ export const codexCliEngine: AgentEngine = {
     } finally {
       if (signal) signal.removeEventListener('abort', onAbort);
       if (idleTimer) clearTimeout(idleTimer);
+      // In the finally: a consumer that stops reading (an appendEvent
+      // that throws, a closed stream) must not leave the app-server
+      // running tools whose results nobody writes.
+      client?.close();
+      finish();
     }
-    client?.close();
 
     const finalText = assistant.cumulative;
     const thinkingText = reasoning.cumulative;

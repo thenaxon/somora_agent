@@ -120,7 +120,15 @@ export class CodexAppServerClient {
       },
       { timeoutMs: opts.initTimeoutMs ?? 30_000 },
     );
-    const result = (await Promise.race([init, spawnFailed])) as { userAgent?: string; codexHome?: string };
+    let result: { userAgent?: string; codexHome?: string };
+    try {
+      result = (await Promise.race([init, spawnFailed])) as { userAgent?: string; codexHome?: string };
+    } catch (err) {
+      // No handshake (timeout, a spawn error): the caller never gets the
+      // client, so end the process here.
+      client.close();
+      throw err;
+    }
     client.notify('initialized', undefined);
     logger.debug({
       msg: 'engine.codex_app_server_initialized',
