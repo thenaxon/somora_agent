@@ -92,8 +92,15 @@ export class LspClient {
     const killer = setTimeout(() => {
       if (!this.exited) this.proc?.kill('SIGTERM');
     }, graceMs);
-    await this.exit;
+    // A server that ignores SIGTERM too: SIGKILL, and stop waiting — a
+    // hung language server held the whole somora shutdown (Fable review
+    // 2026-11-10 Nr. 20).
+    const hard = setTimeout(() => {
+      if (!this.exited) this.proc?.kill('SIGKILL');
+    }, graceMs * 2);
+    await Promise.race([this.exit, new Promise((r) => setTimeout(r, graceMs * 3).unref())]);
     clearTimeout(killer);
+    clearTimeout(hard);
   }
 
   kill(): void {

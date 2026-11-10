@@ -1,4 +1,5 @@
 import { resolveBrowserSession } from '../browser/session.ts';
+import { killRunningLocalExecs } from '../tools/exec/local.ts';
 import { readLogSince, readLogTail } from './logs.ts';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
@@ -1673,28 +1674,51 @@ logger.info({ msg: 'transport.liveness', ...liveness, keepAliveDelayMs: config.s
 
 // Best-effort cleanup on signal — keeps embedding processes from lingering
 // and SQLite handles closed cleanly. tsx watch tends to send SIGTERM on reload.
+let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
   logger.info({ msg: 'server.shutdown', signal });
+  // Bounded: a step that hangs or throws must not keep the process up
+  // until systemd's SIGKILL — or forever without systemd (Fable review
+  // 2026-11-10 Nr. 20).
+  const deadline = setTimeout(() => {
+    logger.warn({ msg: 'server.shutdown_deadline', signal, ms: SHUTDOWN_DEADLINE_MS });
+    process.exit(0);
+  }, SHUTDOWN_DEADLINE_MS);
+  deadline.unref();
+  const step = async (name: string, fn: () => unknown): Promise<void> => {
+    try {
+      await fn();
+    } catch (err) {
+      logger.warn({ msg: 'server.shutdown_step_failed', step: name, err: String(err) });
+    }
+  };
+  // Foreground exec commands of openai-compatible turns run in this
+  // process; without this they outlived the server (the MCP child of
+  // the CLI engines already did it).
+  await step('execs', () => killRunningLocalExecs());
   // Await: aborts in-flight REM runs and waits (bounded, 5s) until the
   // aborted dream lands as `paused` on disk — exiting earlier archived
   // it as empty-processed instead (report 2026-07-25, restart-kills).
-  await remWorker.shutdown();
-  await shutdownLsp();
-  deepWorker.shutdown();
-  lucidWorker.shutdown();
+  await step('rem', () => remWorker.shutdown());
+  await step('lsp', () => shutdownLsp());
+  await step('deep', () => deepWorker.shutdown());
+  await step('lucid', () => lucidWorker.shutdown());
   // A standing call is a paid connection. Exiting without closing it
   // leaves the provider to notice the dead socket in its own time, and
   // the meter runs until it does.
-  await voiceCalls.stopAll(`server ${signal}`).catch(() => {});
-  releaseLockfile();
-  stopClaudeCredentialSyncWatcher();
-  await shutdownMemoryRegistry();
-  await screencasts.shutdown().catch(() => {});
-  await browserService.shutdown().catch(() => {});
-  closeAllExternal();
-  await shutdownSshPool();
+  await step('voice', () => voiceCalls.stopAll(`server ${signal}`));
+  await step('lockfile', () => releaseLockfile());
+  await step('claude-sync', () => stopClaudeCredentialSyncWatcher());
+  await step('memory', () => shutdownMemoryRegistry());
+  await step('screencasts', () => screencasts.shutdown());
+  await step('browser', () => browserService.shutdown());
+  await step('external', () => closeAllExternal());
+  await step('ssh', () => shutdownSshPool());
   process.exit(0);
 }
+const SHUTDOWN_DEADLINE_MS = 15_000;
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 

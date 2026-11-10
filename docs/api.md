@@ -536,9 +536,11 @@ stay. Before writing, the file is saved to `~/.somora/config-backups/`
 
 #### `POST /settings/restore`
 
-Body `{name, hash}`. Writes that backup back after checking it, keeps
-the current file as a backup too, and reloads. `400` for a name that
-is not a backup or a version that does not validate, `404` for a backup
+Body `{name, hash}`, both required. Writes that backup back after the
+same checks as `apply`, keeps the current file as a backup too, and
+reloads. `400` for a missing hash, a name that is not a backup, a
+version that does not validate, or one that would change a locked
+setting or remove a model or provider still in use; `404` for a backup
 that is not there, `409` as above.
 
 ### `POST /server/restart`
