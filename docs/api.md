@@ -2848,7 +2848,8 @@ route did not use is listed in `job.warnings` as `ignored: <field>`.
 ## Voice
 
 Dictation and spoken replies. Each route answers `503` when its part,
-`stt` or `tts`, is not enabled in the config.
+`stt` or `tts`, is not enabled in the config, except `GET /stt/config`
+and `GET /tts/config`, which answer `{enabled: false}`.
 
 ### `GET /stt/config`
 

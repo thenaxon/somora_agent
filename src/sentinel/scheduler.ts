@@ -117,7 +117,11 @@ async function gcStaleTriggers(): Promise<number> {
   let removed = 0;
   for (const t of listTriggers()) {
     if (t.status !== 'completed') continue;
-    const anchor = t.lastFireAt ? new Date(t.lastFireAt).getTime() : NaN;
+    // A one-shot marked stale at boot never fired: without lastFireAt it
+    // used to be kept for good (Fable review, docs vs code). Its creation
+    // time is the anchor then.
+    const anchorIso = t.lastFireAt ?? t.createdAt;
+    const anchor = anchorIso ? new Date(anchorIso).getTime() : NaN;
     if (Number.isNaN(anchor)) continue;
     if (anchor < cutoff) {
       await deleteTrigger(t.id);

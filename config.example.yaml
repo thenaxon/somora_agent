@@ -632,6 +632,13 @@ providers:
 #                                     # the background (capped by its own
 #                                     # agentLoop.maxRounds), so this is
 #                                     # really just a per-call ceiling.
+#                                     # Raise for exceptionally slow setups
+#                                     # (CPU-only inference, huge models).
+#                                     # claudeCli.mcpToolTimeoutMs and
+#                                     # codexCli.toolTimeoutSec MUST be ≥
+#                                     # this — the CLI's MCP layer sits
+#                                     # above us and will cut us off
+#                                     # otherwise.
 #
 #   wakeGraceMs: 3000                 # 3 sec — when work an agent started and
 #                                     # walked away from finishes (a late
@@ -642,13 +649,6 @@ providers:
 #                                     # (agent_ask_result, subagent_result,
 #                                     # video_status) within this grace.
 #                                     # 0..60000.
-#                                     # Raise for exceptionally slow setups
-#                                     # (CPU-only inference, huge models).
-#                                     # claudeCli.mcpToolTimeoutMs and
-#                                     # codexCli.toolTimeoutSec MUST be ≥
-#                                     # this — the CLI's MCP layer sits
-#                                     # above us and will cut us off
-#                                     # otherwise.
 
 
 # Engine watchdog — idle-event timeout per engine. If an engine produces
