@@ -61,3 +61,16 @@ test('a Grok home of the last release (tasks only) gets cursor; a connector foun
   assert.match(readFileSync(p, 'utf8'), /__managed_gateway_connectors = \["tasks","cursor","linear-gw"\]/);
   assert.equal(ensureGatewayBlock(p, ['linear-gw']), 'present');
 });
+
+test('a list over several lines or in single quotes is merged whole, the file stays valid TOML', () => {
+  const p = file('multi.toml', `[disabled_mcp_tools]\n__managed_gateway_connectors = [\n  'gmail',\n  "tasks",\n]\nlinear = ["delete_issue"]\n`);
+  assert.equal(ensureGatewayBlock(p), 'merged');
+  assert.equal(readFileSync(p, 'utf8'), `[disabled_mcp_tools]\n__managed_gateway_connectors = ["gmail","tasks","cursor"]\nlinear = ["delete_issue"]\n`);
+});
+
+test('a value it cannot read is left alone, not broken', () => {
+  const body = `[disabled_mcp_tools]\n__managed_gateway_connectors = [\n  "gmail",\n[cli]\nuse_leader = false\n`;
+  const p = file('broken.toml', body);
+  assert.equal(ensureGatewayBlock(p), 'left');
+  assert.equal(readFileSync(p, 'utf8'), body);
+});

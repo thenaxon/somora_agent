@@ -55,7 +55,7 @@ ${GATEWAY_BLOCK}`;
  *  the missing pieces go in: the table, the key under an existing table,
  *  or names missing from the key. Names already there stay; the list
  *  only grows. `extra` adds connectors found at run time. */
-export function ensureGatewayBlock(configPath: string, extra: readonly string[] = []): 'added' | 'key-added' | 'present' | 'merged' {
+export function ensureGatewayBlock(configPath: string, extra: readonly string[] = []): 'added' | 'key-added' | 'present' | 'merged' | 'left' {
   const want = [...new Set([...BLOCKED_GATEWAY_CONNECTORS, ...extra])];
   const text = readFileSync(configPath, 'utf8');
   const lines = text.split('\n');
@@ -80,10 +80,26 @@ export function ensureGatewayBlock(configPath: string, extra: readonly string[] 
     logger.info({ msg: 'engine.grok_config_gateway_block', action: 'key-added', path: configPath });
     return 'key-added';
   }
-  const have = [...lines[keyIndex]!.matchAll(/"([^"]*)"/g)].map((m) => m[1]!);
+  // The value may span lines (Grok or a person may write it that way) and
+  // use either TOML string quote. Read up to the closing bracket; when
+  // there is none inside this table, leave the file alone rather than
+  // break it (an unreadable config.toml stops Grok from starting).
+  let last = -1;
+  for (let i = keyIndex; i < end; i++) {
+    if (lines[i]!.replace(/"[^"]*"|'[^']*'/g, '').includes(']')) {
+      last = i;
+      break;
+    }
+  }
+  const value = last === -1 ? '' : lines.slice(keyIndex, last + 1).join('\n');
+  if (last === -1 || !/=\s*\[/.test(value)) {
+    logger.warn({ msg: 'engine.grok_config_gateway_block', action: 'left', path: configPath, hint: `could not read ${GATEWAY_KEY}; add ${JSON.stringify(want)} to it by hand` });
+    return 'left';
+  }
+  const have = [...value.matchAll(/"([^"]*)"|'([^']*)'/g)].map((m) => m[1] ?? m[2]!);
   const missing = want.filter((n) => !have.includes(n));
   if (missing.length === 0) return 'present';
-  lines[keyIndex] = `${GATEWAY_KEY} = ${JSON.stringify([...have, ...missing])}`;
+  lines.splice(keyIndex, last - keyIndex + 1, `${GATEWAY_KEY} = ${JSON.stringify([...have, ...missing])}`);
   writeFileSync(configPath, lines.join('\n'), { mode: 0o600 });
   logger.info({ msg: 'engine.grok_config_gateway_block', action: 'merged', path: configPath, added: missing });
   return 'merged';
