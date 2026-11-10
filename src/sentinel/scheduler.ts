@@ -680,7 +680,7 @@ async function applyBootCatchUp(t: Trigger): Promise<void> {
   if (t.source.type !== 'time') return;
 
   const now = Date.now();
-  const next = computeNextFire(t.source.spec);
+  const next = bootNextFire(t, now);
 
   if (next === null) {
     // 'at' trigger's moment has passed. Catch-up policy: if missed
@@ -747,9 +747,32 @@ async function applyBootCatchUp(t: Trigger): Promise<void> {
     });
   }
 
-  // Refresh nextFireAt regardless.
-  const updated: Trigger = { ...t, nextFireAt: next.toISOString() };
+  // Refresh nextFireAt regardless — on the trigger as it is now: a
+  // catch-up fire above saved its own state (counters, a daily-cap
+  // pause), which the snapshot from before would overwrite.
+  const current = getTrigger(t.id) ?? t;
+  if (current.status !== 'active') return;
+  const updated: Trigger = { ...current, nextFireAt: next.toISOString() };
   await saveTrigger(updated);
+}
+
+/**
+ * The next fire of a time trigger at boot. An `every` trigger keeps a
+ * stored nextFireAt that is still ahead, and otherwise steps on from
+ * its last scheduled fire: computing `now + interval` on every start
+ * pushed it a whole interval out each time, so "every 12h" never fired
+ * on a day with more restarts than that (Fable review 2026-11-10).
+ * `daily`, `weekly` and `cron` have their own clock and `at` its moment.
+ */
+export function bootNextFire(t: Trigger, now: number): Date | null {
+  if (t.source.type !== 'time') return null;
+  const spec = t.source.spec;
+  if (spec.type !== 'every') return computeNextFire(spec, new Date(now));
+  const stored = t.nextFireAt ? Date.parse(t.nextFireAt) : NaN;
+  if (Number.isFinite(stored) && stored > now) return new Date(stored);
+  const anchorIso = t.nextFireAt ?? t.lastFireAt ?? t.createdAt;
+  const anchor = anchorIso ? new Date(anchorIso) : undefined;
+  return computeNextFire(spec, new Date(now), anchor && !Number.isNaN(anchor.getTime()) ? anchor : undefined);
 }
 
 /** Walk forward from `since` and collect every instant the trigger's
