@@ -123,6 +123,21 @@ test('cancel stops a running turn quickly, and the session keeps working', async
   assert.equal(finalText(await turn(cfg, 'slow', 's', 'remember owl', { store })), 'ok, owl');
 });
 
+test('an agent that ignores cancel: the turn still ends after the grace period, and the next turn starts it again', async () => {
+  const { setCancelGraceMsForTest } = await import('./connection.ts');
+  setCancelGraceMsForTest(500);
+  const cfg = config({ stubborn: { command: cmd('FAKE_IGNORE_CANCEL=1') } });
+  const store = memStore();
+  const ctl = new AbortController();
+  setTimeout(() => ctl.abort(), 600);
+  const t0 = Date.now();
+  const evs = await turn(cfg, 'stubborn', 's', 'be slow', { store, signal: ctl.signal });
+  assert.ok(Date.now() - t0 < 4000, `ended in ${Date.now() - t0} ms (the agent streams for 10 s)`);
+  assert.ok(evs.some((e) => e.kind === 'turn_end'));
+  assert.equal(finalText(await turn(cfg, 'stubborn', 's', 'remember owl', { store })), 'ok, owl', 'a fresh process answers');
+  setCancelGraceMsForTest(10_000);
+});
+
 test('a crash in the middle is an error with the reason, and the next turn starts the agent again', async () => {
   const cfg = config({ boom: { command: cmd() } });
   const store = memStore();

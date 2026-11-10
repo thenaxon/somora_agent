@@ -311,3 +311,13 @@ test('dry run, item by item: a script that reports final failed says so', async 
   assert.match(r.verdict, /final: "failed"/);
   assert.equal(r.items, undefined);
 });
+
+// The ring keeps every fire of the current day, so the daily cap (500)
+// can be reached at all (Fable review 2026-11-10 Nr. 15).
+test('rotation keeps today\'s fires beyond the ring size', () => {
+  const day = Date.parse('2026-11-10T00:00:00Z');
+  const lines = [...Array(450).keys()].map((i) => JSON.stringify({ firedAt: new Date(day + i * 60_000).toISOString(), outcome: 'success' }));
+  const old = [...Array(100).keys()].map((i) => JSON.stringify({ firedAt: new Date(day - 86_400_000 + i).toISOString(), outcome: 'success' }));
+  const kept = keepNewest([...old, ...lines], 200, day);
+  assert.equal(kept.length, 450, 'all of today, none of yesterday beyond the ring');
+});

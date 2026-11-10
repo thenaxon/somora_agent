@@ -39,7 +39,7 @@ window in the web client. Each tool has a switch there.
 ## The tool families
 
 Every tool carries a toolset tag. The tag groups tools for the
-per-agent switch (`toolset:<tag>`). There are 64 built-in tools, plus
+per-agent switch (`toolset:<tag>`). There are 66 built-in tools, plus
 whatever your external MCP servers bring.
 
 | Toolset | Tools | Offered when |
@@ -51,7 +51,7 @@ whatever your external MCP servers bring.
 | `web` | 2 | `web_fetch` always, `web_search` with `web.brave.apiKey` |
 | `file` | 6 | always, except `analyze_file` (see below) |
 | `exec` | 3 | always |
-| `agents` | 13 | always (`ask_user` only in a turn someone watches) |
+| `agents` | 14 | always (`ask_user` only in a turn someone watches) |
 | `skills` | 2 | always |
 | `sentinel` | 1 | always |
 | `projects` | 6 | `projects.enabled: true` |
@@ -60,7 +60,7 @@ whatever your external MCP servers bring.
 | `media` | 1 | image or video generation is set up |
 | `browser` | 1 | `browser.enabled: true` |
 | `decision` | 1 | `decisions.model` names an entry in `decisions.models` |
-| `builder` | 2 | builder agents only |
+| `builder` | 3 | builder agents only |
 | `mcp` | varies | servers listed under `mcp.servers` |
 
 ### Memory, docs and resources
@@ -145,12 +145,17 @@ Toolset `exec`.
 | `process` | Handles background jobs: `action` is `list`, `poll`, `log`, `write` or `kill`. |
 | `tmux` | Keeps terminal sessions open across turns: `action` is `create`, `send`, `capture`, `wait_idle`, `list` or `kill`, against `target: local` or an SSH resource. |
 
-Destructive command patterns are blocked. A resource can lift single
-blocks with `allowBlocked`, for a machine that belongs to the agent.
+Destructive command patterns are blocked in `exec` and in Sentinel
+check scripts. A resource can lift single blocks with `allowBlocked`,
+for a machine that belongs to the agent. `tmux send` is not filtered:
+it types into a program that is already running, often a prompt for
+another tool, where the same words are harmless text.
 
 Background jobs are detached: they survive a somora restart and are
 tracked on disk. `poll` checks the real process, never a remembered
-state.
+state. When somora runs as a systemd service, each background job, and
+a tmux server an agent starts, runs in a systemd scope of its own, so a
+restart or `somora update` does not end it.
 
 #### When a command times out
 

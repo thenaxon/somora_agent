@@ -2,6 +2,7 @@
 // (Subscription auth path). The provider config has no baseUrl/apiKey —
 // the binary at ~/.local/bin/claude already holds the user's session.
 
+import { envWithoutLoginKey } from '../server/env-file.ts';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -457,6 +458,11 @@ export const claudeCliEngine: AgentEngine = {
           model: resolvedModel.modelId,
           systemPrompt: systemPromptForTurn,
           settingSources: [],
+          // Everything Claude Code may need from somora.env
+          // (CLAUDE_CONFIG_DIR, an API key, a proxy), but not somora's
+          // login key. The MCP child's env, which rides on the command
+          // line, is secretFreeEnv (src/mcp/config.ts).
+          env: envWithoutLoginKey(),
           // claude-code 2.1.142+ surfaces MCP tools to the model only
           // when the meta-tool `ToolSearch` is among the enabled
           // built-ins — the SDK uses ToolSearch as the discovery
@@ -961,12 +967,18 @@ export const claudeCliEngine: AgentEngine = {
         // so a concurrent /sessions stats-cache write (or activity mark)
         // can't revert sdkSessionId, and our write can't revert theirs
         // (Juni-Audit 2026-06).
+        // The mark moves only when this turn was answered here (text
+        // without a provider error, or a tool ran). A turn the provider
+        // ended before any answer (quota, an auth failure) leaves it, so
+        // the fallback's answer is caught up on next time (Fable review
+        // 2026-11-10 Nr. 5; grok-cli already did this).
+        const answeredHere = sawToolUse || (!yieldedErrorEvent && Boolean(finalText || cumulative));
         await metaStore.update(agent, session, (freshMeta) => ({
           ...freshMeta,
           engine: ENGINE,
           sdkSessionId: lastSdkSessionId,
           mcpServerName: MCP_SERVER_NAME,
-          engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()),
+          ...(answeredHere ? { engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()) } : {}),
         }));
       }
     } catch (err) {
@@ -1050,6 +1062,17 @@ export const claudeCliEngine: AgentEngine = {
     } finally {
       disarmIdleTimer();
       if (steerPoll) clearInterval(steerPoll);
+      // Messages pushed into the input but never confirmed by a further
+      // SDK message (the turn stopped or failed first): neither recorded
+      // nor answered. Back to the letterbox, so the next turn has them,
+      // as codex-cli and grok-cli do (Fable review 2026-11-10 Nr. 27).
+      if (input.steer && pendingSteerEvents.length > 0) {
+        const msgs = pendingSteerEvents.splice(0).flatMap((e) => (e.kind === 'steer_applied' ? e.messages : []));
+        if (msgs.length > 0) {
+          input.steer.requeue(msgs);
+          logger.info({ msg: 'engine.claude_steer_requeued', engine: ENGINE, agent, session, count: msgs.length });
+        }
+      }
       steerInput?.close();
       if (signal) signal.removeEventListener('abort', onUpstreamAbort);
     }
@@ -1100,6 +1123,7 @@ export async function compactClaudeSession(args: {
         model: resolvedModel.modelId,
         systemPrompt: args.systemPrompt,
         settingSources: [],
+        env: envWithoutLoginKey(),
         tools: ['ToolSearch'],
         disallowedTools: KNOWN_ACCOUNT_TOOLS,
         mcpServers: {

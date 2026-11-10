@@ -418,7 +418,7 @@ fallback:
 | `compaction.builderTargetRatio` | 0.6 | Builders only: the share of the input budget a turn may start with. 0.2 to 0.9. `openai-compatible` only. See [Builder turns](#builder-turns). |
 | `compaction.workers` | unset | Models that may summarise, in the order they are tried. Unset means automatic choice. |
 | `compaction.preferSessionModel` | false | Ask the session's own model before the workers. |
-| `compaction.modelOverride` | unset | One model that is always asked first. |
+| `compaction.modelOverride` | unset | One model that is always asked first. The compaction inside a builder turn does not use it; it asks `compaction.workers` (and the session's model with `preferSessionModel`). |
 | `fallback.retryUnavailableMinutes` | 60 | How long an unreachable model is skipped by chat, REM and compaction. 1 to 1440. |
 
 Environment variables override the file:

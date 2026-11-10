@@ -1,4 +1,6 @@
 import { resolveBrowserSession } from '../browser/session.ts';
+import { fileURLToPath } from 'node:url';
+import { killRunningLocalExecs } from '../tools/exec/local.ts';
 import { readLogSince, readLogTail } from './logs.ts';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
@@ -846,7 +848,9 @@ const bindHost = process.env.SOMORA_HOST ?? configHost;
 // reach back to /chat/send-sync. When the server binds to 0.0.0.0
 // for LAN access, that's not a valid client target — substitute
 // 127.0.0.1 in the env so children loopback rather than guessing.
-if (bindHost === '0.0.0.0') {
+// `::` (all IPv6, usually all IPv4 too) is the same case: children built
+// `http://:::18737` and every call back from an MCP child failed.
+if (bindHost === '0.0.0.0' || bindHost === '::' || bindHost === '[::]') {
   process.env.SOMORA_HOST = '127.0.0.1';
 }
 
@@ -897,7 +901,10 @@ if (tlsConf?.publicHost && bindHost === '127.0.0.1') {
 // `web/dist/` (vite output, base `/web/`), so mounting them at
 // `/web/*` makes the same-origin path work in production. Dev still
 // uses vite at :5173 with a proxy to this server.
-const webDistDir = new URL('../../web/dist/', import.meta.url).pathname;
+// fileURLToPath, not .pathname: a space or umlaut in the install path
+// stays percent-encoded in .pathname and /web answered 404 (Fable review
+// Nr. 25).
+const webDistDir = fileURLToPath(new URL('../../web/dist/', import.meta.url));
 // Must be registered BEFORE the static mount: `/web/*` also matches the
 // bare `/web`, and the rewrite's optional slash turns it into `/` — so a
 // mount-first order serves index.html at `/web` with 200 and the redirect
@@ -922,7 +929,7 @@ app.use(
 // passthrough. Service-worker scope is `/mobile/`, manifest start_url
 // is `/mobile/` — both match this mount, so "add to home screen"
 // from a phone parks the user at the right entry point.
-const mobileDistDir = new URL('../../web-mobile/dist/', import.meta.url).pathname;
+const mobileDistDir = fileURLToPath(new URL('../../web-mobile/dist/', import.meta.url));
 // Same ordering requirement as `/web` above.
 app.get('/mobile', (c) => c.redirect('/mobile/'));
 app.use(
@@ -1673,28 +1680,51 @@ logger.info({ msg: 'transport.liveness', ...liveness, keepAliveDelayMs: config.s
 
 // Best-effort cleanup on signal — keeps embedding processes from lingering
 // and SQLite handles closed cleanly. tsx watch tends to send SIGTERM on reload.
+let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
   logger.info({ msg: 'server.shutdown', signal });
+  // Bounded: a step that hangs or throws must not keep the process up
+  // until systemd's SIGKILL — or forever without systemd (Fable review
+  // 2026-11-10 Nr. 20).
+  const deadline = setTimeout(() => {
+    logger.warn({ msg: 'server.shutdown_deadline', signal, ms: SHUTDOWN_DEADLINE_MS });
+    process.exit(0);
+  }, SHUTDOWN_DEADLINE_MS);
+  deadline.unref();
+  const step = async (name: string, fn: () => unknown): Promise<void> => {
+    try {
+      await fn();
+    } catch (err) {
+      logger.warn({ msg: 'server.shutdown_step_failed', step: name, err: String(err) });
+    }
+  };
+  // Foreground exec commands of openai-compatible turns run in this
+  // process; without this they outlived the server (the MCP child of
+  // the CLI engines already did it).
+  await step('execs', () => killRunningLocalExecs());
   // Await: aborts in-flight REM runs and waits (bounded, 5s) until the
   // aborted dream lands as `paused` on disk — exiting earlier archived
   // it as empty-processed instead (report 2026-07-25, restart-kills).
-  await remWorker.shutdown();
-  await shutdownLsp();
-  deepWorker.shutdown();
-  lucidWorker.shutdown();
+  await step('rem', () => remWorker.shutdown());
+  await step('lsp', () => shutdownLsp());
+  await step('deep', () => deepWorker.shutdown());
+  await step('lucid', () => lucidWorker.shutdown());
   // A standing call is a paid connection. Exiting without closing it
   // leaves the provider to notice the dead socket in its own time, and
   // the meter runs until it does.
-  await voiceCalls.stopAll(`server ${signal}`).catch(() => {});
-  releaseLockfile();
-  stopClaudeCredentialSyncWatcher();
-  await shutdownMemoryRegistry();
-  await screencasts.shutdown().catch(() => {});
-  await browserService.shutdown().catch(() => {});
-  closeAllExternal();
-  await shutdownSshPool();
+  await step('voice', () => voiceCalls.stopAll(`server ${signal}`));
+  await step('lockfile', () => releaseLockfile());
+  await step('claude-sync', () => stopClaudeCredentialSyncWatcher());
+  await step('memory', () => shutdownMemoryRegistry());
+  await step('screencasts', () => screencasts.shutdown());
+  await step('browser', () => browserService.shutdown());
+  await step('external', () => closeAllExternal());
+  await step('ssh', () => shutdownSshPool());
   process.exit(0);
 }
+const SHUTDOWN_DEADLINE_MS = 15_000;
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 

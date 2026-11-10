@@ -86,7 +86,9 @@ export function listTriggers(): Trigger[] {
 /** Return a specific trigger by id, or null. */
 export function getTrigger(id: string): Trigger | null {
   if (!cache) cache = { triggers: {} };
-  return cache.triggers[id] ?? null;
+  // Own keys only: `__proto__` read the object prototype as a trigger,
+  // and a pause on it saved a trigger "undefined" (Fable review Nr. 27).
+  return Object.hasOwn(cache.triggers, id) ? cache.triggers[id]! : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -211,8 +213,16 @@ export function countTriggersByAgent(agent: string): number {
 // History (per-trigger JSONL ring)
 // ─────────────────────────────────────────────────────────────────────
 
+/** A trigger id becomes a file name (history, check script, check
+ *  state): letters, digits, `-` and `_` only. `sentinel history` once
+ *  read any .jsonl through `../` (Fable review 2026-11-10). */
+export function assertTriggerIdSafe(id: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`invalid trigger id '${id.slice(0, 60)}'`);
+  return id;
+}
+
 function historyPath(triggerId: string): string {
-  return join(HISTORY_DIR, `${triggerId}.jsonl`);
+  return join(HISTORY_DIR, `${assertTriggerIdSafe(triggerId)}.jsonl`);
 }
 
 /** Append a fire entry to the trigger's history. Caps to ring-size
@@ -227,7 +237,9 @@ export async function recordFire(triggerId: string, entry: FireHistoryEntry): Pr
     const raw = await readFile(historyPath(triggerId), 'utf8');
     const lines = raw.split('\n').filter((l) => l.trim().length > 0);
     if (lines.length > SENTINEL_LIMITS.HISTORY_RING_SIZE * 2) {
-      const kept = keepNewest(lines, SENTINEL_LIMITS.HISTORY_RING_SIZE).join('\n') + '\n';
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+      const kept = keepNewest(lines, SENTINEL_LIMITS.HISTORY_RING_SIZE, todayStart.getTime()).join('\n') + '\n';
       const tmp = `${historyPath(triggerId)}.tmp.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}`;
       await writeFile(tmp, kept, 'utf8');
       await rename(tmp, historyPath(triggerId));
@@ -241,15 +253,24 @@ export async function recordFire(triggerId: string, entry: FireHistoryEntry): Pr
  *  order. A judged check writes an entry per check that asked the
  *  decision model; kept in one ring they would push out the fires that
  *  countFiresToday (maxFiresPerDay) reads (review 2026-10-26). */
-export function keepNewest(lines: readonly string[], size: number): string[] {
+export function keepNewest(lines: readonly string[], size: number, keepFiresSinceMs?: number): string[] {
   const judged = (l: string) => l.includes('"outcome":"judged"');
+  // Every fire of the current day stays too: the ring (200, rewritten at
+  // 400) otherwise kept the count countFiresToday reads below 400, and
+  // the daily cap of 500 never paused anything (Fable review 2026-11-10
+  // Nr. 15). The cap itself bounds how many that are.
+  const today = (l: string): boolean => {
+    if (keepFiresSinceMs === undefined) return false;
+    const m = /"firedAt":"([^"]+)"/.exec(l);
+    return m ? Date.parse(m[1]!) >= keepFiresSinceMs : false;
+  };
   const keep = new Set<number>();
   let fires = 0;
   let judgedKept = 0;
   for (let i = lines.length - 1; i >= 0; i--) {
     if (judged(lines[i]!)) {
       if (judgedKept++ < size) keep.add(i);
-    } else if (fires++ < size) keep.add(i);
+    } else if (fires++ < size || today(lines[i]!)) keep.add(i);
   }
   return lines.filter((_, i) => keep.has(i));
 }
@@ -273,7 +294,7 @@ export async function getHistory(triggerId: string, limit: number = 50): Promise
 export async function countFiresToday(triggerId: string): Promise<number> {
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
-  const history = await getHistory(triggerId, SENTINEL_LIMITS.MAX_FIRES_PER_DAY + 50);
+  const history = await getHistory(triggerId, Number.MAX_SAFE_INTEGER);
   return history.filter((h) =>
     new Date(h.firedAt).getTime() >= todayStart.getTime() && (h.outcome === 'success' || h.outcome === 'error')
   ).length;

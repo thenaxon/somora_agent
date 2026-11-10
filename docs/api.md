@@ -64,7 +64,7 @@ the turn and returns the reply in the response.
 | Base URL | `https://<your-host>.<your-tailnet>.ts.net:18737` with HTTPS set up, else `http://127.0.0.1:18737`. The web client is under `/web/`, the mobile app under `/mobile/`. |
 | Bodies | JSON in, JSON out (`Content-Type: application/json`), unless a route says otherwise. Uploads are raw bytes or `multipart/form-data`, as noted per route. |
 | Errors | A non-2xx response carries `{ "error": "<message>" }`. The message is written for a person. Some routes add fields, noted per route. |
-| Unknown agent or session | `404` on every route that takes one, except `POST /chat/abort` and `POST /server/restart`. |
+| Unknown agent or session | `404` on every route that takes one, except `POST /chat/abort`. |
 | Agent being renamed | `409` with `error: "agent '<name>' is being renamed — try again in a moment"` on every route under `/agents/:agent/` except reads (`GET`), and on `POST /chat/send` and `POST /chat/send-sync`, for the old and the new name. Retry in a moment. |
 | Times | Epoch milliseconds as numbers, or ISO 8601 strings. The examples show which. |
 | Streams | Server-Sent Events with named events. `data` is always JSON. |
@@ -214,7 +214,7 @@ the day, a `subagents.tools.deny` entry that names no tool).
 | Field | Meaning |
 |---|---|
 | `key` | Stable per thing, e.g. `update:<version>`, `news:<hash>`, `config`, `login:claude-cli`, `login:openai-compatible:<provider>`, `login:mcp:<server>`, `tls`, `rem:<agent>`, `deep:<agent>/<slug>`, `lucid`, `mcp:<server>`, `model:<provider/id>`, `sentinel:<triggerId>`, `config:subagents-deny`, `config:rem-model` (agents that dream without a REM model), `dream:switch` (the one-time rewrite to the dreams switch). |
-| `kind` | `update`, `news`, `config`, `login`, `tls`, `dream`, `mcp`, `model`, `sentinel`. |
+| `kind` | `update`, `news`, `config`, `login`, `tls`, `dream`, `mcp`, `model`, `sentinel`, `a2a`. |
 | `level` | `info`, `warning`, `important`. |
 | `title`, `text`, `url?` | Plain text. `url` is `https://` only. |
 | `firstSeen`, `lastSeen`, `count` | Epoch ms; `count` counts events, a checked state stays `1`. |
@@ -536,9 +536,11 @@ stay. Before writing, the file is saved to `~/.somora/config-backups/`
 
 #### `POST /settings/restore`
 
-Body `{name, hash}`. Writes that backup back after checking it, keeps
-the current file as a backup too, and reloads. `400` for a name that
-is not a backup or a version that does not validate, `404` for a backup
+Body `{name, hash}`, both required. Writes that backup back after the
+same checks as `apply`, keeps the current file as a backup too, and
+reloads. `400` for a missing hash, a name that is not a backup, a
+version that does not validate, or one that would change a locked
+setting or remove a model or provider still in use; `404` for a backup
 that is not there, `409` as above.
 
 ### `POST /server/restart`
@@ -1052,12 +1054,12 @@ HTTPS the connection is also pinged (`sse.h2PingIntervalMs`,
 |---|---|
 | `text` | The message as it is kept: what a person typed, what an agent asked, what a trigger's prompt says, or the one-line statement of a wake-up. |
 | `ts` | Epoch ms. |
-| `turnId` | The id from `POST /chat/send`. Match it to the bubble you drew. |
+| `turnId` | Live event only. The id from `POST /chat/send`. Match it to the bubble you drew. |
 | `origin` | Where the turn came from. See below. |
 | `input` | `{modality?: "text"\|"voice", source?: "stt"\|"realtime"}` when the turn was not typed. `stt` is dictation, `realtime` a sentence from a call. |
 | `steer`, `steer_id` | `steer: true` marks a message that went into the running turn `turnId`. `steer_id` matches the `steer_queued` event. |
 | `from_agent`, `from_session`, `agent_ask_call_id` | Older fields, derived from an `agent` origin. |
-| `attachments` | `{hash, name, mime, size}` of the files sent with the message. |
+| `attachments` | Stored row only. `{hash, name, mime, size}` of the files sent with the message. |
 | `attachment_descriptions` | Stored row only. The vision worker's description of each attachment the model could not see, one string per file. |
 | `from_system` | Older field, derived from the origin: `sentinel`, `tmux`, `browser`, `voice`, `peer`, or for a wake its `about` (`a2a`, `subagent`, `job`, `system`). The shipped clients draw these as a divider, not as a bubble. |
 
@@ -1200,7 +1202,7 @@ The sessions of one agent.
 
 | Field | Meaning |
 |---|---|
-| `dreamCoverageTs`, `dreamLagEvents` | How far REM has read this session, and how many events it has not read yet. `null` when it never ran. |
+| `dreamCoverageTs`, `dreamLagEvents` | How far REM has read this session, and how many events it has not read yet. `dreamCoverageTs` is `null` when REM never ran; `dreamLagEvents` is always a number (then all of the session's events). |
 | `unreadAt`, `seenAt` | Unread state, see `GET /activity/stream`. |
 | `archivedAt`, `archiveReason` | Present on archived sessions. |
 | `projectSlug` | Present when a project is pinned. |
@@ -2846,7 +2848,8 @@ route did not use is listed in `job.warnings` as `ignored: <field>`.
 ## Voice
 
 Dictation and spoken replies. Each route answers `503` when its part,
-`stt` or `tts`, is not enabled in the config.
+`stt` or `tts`, is not enabled in the config, except `GET /stt/config`
+and `GET /tts/config`, which answer `{enabled: false}`.
 
 ### `GET /stt/config`
 

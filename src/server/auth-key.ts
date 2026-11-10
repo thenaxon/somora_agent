@@ -113,7 +113,17 @@ export function presentedKey(headers: { authorization?: string; xKey?: string; c
     ?.split(';')
     .map((p) => p.trim())
     .find((p) => p.startsWith(`${COOKIE_NAME}=`));
-  if (cookie) return { kind: 'cookie', value: decodeURIComponent(cookie.slice(COOKIE_NAME.length + 1)) };
+  if (cookie) {
+    // A malformed escape (`somora_key=%`) is a wrong key (401), not a
+    // crash (500) (Fable review Nr. 28).
+    let value: string;
+    try {
+      value = decodeURIComponent(cookie.slice(COOKIE_NAME.length + 1));
+    } catch {
+      value = '';
+    }
+    return { kind: 'cookie', value };
+  }
   return { kind: 'none' };
 }
 

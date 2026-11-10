@@ -43,7 +43,7 @@ import {
 import { describeMedia } from '../tools/file/analyze.ts';
 import { loadAttachment } from '../multimodal/load.ts';
 import { engineRegistry } from '../engine/registry.ts';
-import { runTurnWithFallback } from './run-turn-fallback.ts';
+import { pickToolIdleTimeoutForEngine, runTurnWithFallback } from './run-turn-fallback.ts';
 import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
 import { drainSteer, frameSteerMessage, markSteerable, requeueSteer, unmarkSteerable } from './steer-inbox.ts';
 import { resolveAgentLoop } from './builder-prompt.ts';
@@ -133,32 +133,6 @@ function pickIdleTimeoutForEngine(
       return cfg.grokCliIdleMs;
     case 'openai-compatible':
       return cfg.openaiCompatibleIdleMs;
-  }
-}
-
-/**
- * Relaxed idle threshold to use while a tool call is outstanding on a CLI
- * engine — the MCP tool timeout, so a legit long tool isn't cut off by
- * the much shorter normal idle watchdog (Juni-Audit 2026-06). Returns
- * undefined for openai-compatible (it disarms the watchdog during its own
- * in-process tool loop instead).
- */
-function pickToolIdleTimeoutForEngine(
-  config: import('../config/types.ts').Config,
-  engine: import('../config/types.ts').EngineName,
-): number | undefined {
-  switch (engine) {
-    case 'claude-cli':
-      return config.claudeCli.mcpToolTimeoutMs;
-    case 'codex-cli':
-      return config.codexCli.toolTimeoutSec * 1000;
-    case 'grok-cli':
-      // No grok-specific knob (the MCP-side timeout is grok's own); the
-      // question here is only "how long may a tool run before the
-      // engine counts as wedged", so borrow the larger sibling budget.
-      return Math.max(config.claudeCli.mcpToolTimeoutMs, config.codexCli.toolTimeoutSec * 1000);
-    case 'openai-compatible':
-      return undefined;
   }
 }
 

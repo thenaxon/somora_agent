@@ -19,6 +19,7 @@
 //
 // See `private/dream-system-v2.md`.
 
+import { wikiFile } from './wiki-file.ts';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import matter from 'gray-matter';
@@ -437,7 +438,7 @@ export async function processCandidate(args: {
     if (check.kind === 'subTopic') {
       // Ask once more with the entity page in full: merge as a detail
       // of it, or — when it really is a thing of its own — promote.
-      const entity = await readWithMtime(join(ctx.wikiAbs, `${check.target}.md`));
+      const entity = await readWithMtime(wikiFile(ctx.wikiAbs, check.target));
       if (entity) {
         logger.info({ msg: 'dream.deep.sub_topic_reask', agent: candidate.agent, memorySlug: candidate.slug, wanted: decision.slug, entity: check.target, prefix: check.prefix });
         const again = await dispatcher.decideMemoryFate({
@@ -599,7 +600,7 @@ function normalizeWikiPath(p: string): string {
 /** The page's text when it is over `maxPageChars`, else null. */
 async function pageTooBig(ctx: ActionContext, wikiPath: string): Promise<{ text: string } | null> {
   if (!ctx.maxPageChars) return null;
-  const page = await readWithMtime(join(ctx.wikiAbs, `${wikiPath}.md`));
+  const page = await readWithMtime(wikiFile(ctx.wikiAbs, wikiPath));
   if (!page || page.text.length <= ctx.maxPageChars) return null;
   return { text: page.text };
 }
@@ -647,7 +648,7 @@ NOTE: the page ${target} is ${kb} KB and takes no more content (limit ${Math.rou
   if (decision.kind === 'merge') {
     const sub = normalizeWikiPath(decision.wikiPath);
     if (sub.startsWith(target + '/')) {
-      const page = await readWithMtime(join(ctx.wikiAbs, `${sub}.md`));
+      const page = await readWithMtime(wikiFile(ctx.wikiAbs, sub));
       if (page && page.text.length <= (ctx.maxPageChars ?? Infinity)) return applyMerge({ candidate, decision: { ...decision, wikiPath: sub }, ctx, wikiPageMtimeMs: page.mtimeMs });
     }
     return { kind: 'skipped', agent: candidate.agent, memorySlug: candidate.slug, reason: `refused: ${target} is over the size limit (${kb} KB) and the model still wanted to merge into ${sub}`, transient: true };
@@ -692,7 +693,7 @@ async function mergeCollidingPage(args: {
   thinking?: ThinkingLevel;
 }): Promise<CandidateOutcome> {
   const { candidate, ctx, mgr, workerModel, dispatcher, wikiPath, timeoutMs, signal, thinking } = args;
-  const wikiFileAbs = join(ctx.wikiAbs, `${wikiPath}.md`);
+  const wikiFileAbs = wikiFile(ctx.wikiAbs, wikiPath);
   const existing = await readWithMtime(wikiFileAbs);
   if (existing && args.wiki && ctx.maxPageChars && existing.text.length > ctx.maxPageChars) {
     return subPageInstead({ candidate, ctx, workerModel, dispatcher, wiki: args.wiki, target: normalizeWikiPath(wikiPath), targetText: existing.text, timeoutMs, ...(signal ? { signal } : {}), ...(thinking ? { thinking } : {}) });

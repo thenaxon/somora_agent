@@ -74,14 +74,29 @@ function parseField(field: string, min: number, max: number): CronField {
       isWildcard: false,
     };
   }
-  const values = field.split(',').map((s) => {
-    const n = parseInt(s, 10);
-    if (!Number.isInteger(n) || n < min || n > max) {
-      throw new Error(`bad value '${s}' for cron field (range ${min}-${max})`);
-    }
+  // A list of single values and ranges: `1,15`, `1-5`, `9-17/2`. Each
+  // piece must be exactly that — parseInt read `1-5` as 1, so
+  // `0 9 * * 1-5` was accepted and fired on Mondays only (Fable review
+  // 2026-11-10 Nr. 14).
+  const set = new Set<number>();
+  const num = (s: string): number => {
+    if (!/^\d+$/.test(s)) throw new Error(`bad value '${s}' in cron field '${field}' (range ${min}-${max})`);
+    const n = Number(s);
+    if (n < min || n > max) throw new Error(`bad value '${s}' in cron field '${field}' (range ${min}-${max})`);
     return n;
-  });
-  const set = new Set(values);
+  };
+  for (const piece of field.split(',')) {
+    const m = /^(\d+)-(\d+)(?:\/(\d+))?$/.exec(piece);
+    if (m) {
+      const a = num(m[1]!);
+      const b = num(m[2]!);
+      const step = m[3] !== undefined ? Number(m[3]) : 1;
+      if (a > b || !Number.isInteger(step) || step <= 0) throw new Error(`bad range '${piece}' in cron field '${field}'`);
+      for (let v = a; v <= b; v += step) set.add(v);
+    } else {
+      set.add(num(piece));
+    }
+  }
   return { match: (v) => set.has(v), isWildcard: false };
 }
 

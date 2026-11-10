@@ -109,7 +109,11 @@ export function registerAttachmentRoutes(app: Hono): void {
           headers: {
             'Content-Type': sniffed.mimeType,
             // Long-cache: content is content-addressed, hash never re-issues different bytes.
-            'Cache-Control': 'public, max-age=31536000, immutable',
+            // private: the route is behind the login key, so no shared
+            // cache may keep a copy; nosniff: served as the sniffed type
+            // only (Fable review Nr. 28).
+            'Cache-Control': 'private, max-age=31536000, immutable',
+            'X-Content-Type-Options': 'nosniff',
           },
         });
       }

@@ -53,7 +53,7 @@ import { formatSampling, isSamplingParamError, samplingBody } from './sampling.t
 import { insideOpenThink, splitInlineThink } from './inline-think.ts';
 import { imageOriginalNotes } from '../multimodal/attachment-note.ts';
 import { DEFAULT_ALWAYS_VISIBLE } from '../tools/catalog.ts';
-import { explainInvalidInput, planCatalog, routeCall, runToolSearch, TOOL_CALL, TOOL_SEARCH } from './openai-tool-catalog.ts';
+import { explainInvalidInput, planCatalog, routeCall, runToolSearch, TOOL_CALL, TOOL_SEARCH, type CallRoute } from './openai-tool-catalog.ts';
 import { createLimiter, runsConcurrently } from './tool-concurrency.ts';
 
 const ENGINE = 'openai-compatible';
@@ -2292,6 +2292,11 @@ export const openAiCompatibleEngine: AgentEngine = {
             loopMessages.push(r.out.message);
           }
         }
+        // The per-turn budget is a hard limit: a reply with several calls
+        // used to run all of them and pass maxToolCallsPerTurn by the
+        // rest of the round (Fable review 2026-11-10 Nr. 27). Calls past
+        // the budget are answered as refused, not run.
+        let budgetLeft = Math.max(0, maxToolCallsPerTurn - totalToolCalls);
         for (const { call, args: parsedArgs, fault, why } of calls) {
           // Which tool really runs: tool_call unwraps to it, a deferred
           // name called directly runs as is (hydrated), a name the turn
@@ -2299,7 +2304,13 @@ export const openAiCompatibleEngine: AgentEngine = {
           // its arguments, so the chat and a rebuilt history read like a
           // direct call; only the model's own messages of this turn keep
           // the tool_call wrapper it wrote.
-          const route = fault ? null : routeCall(catalogPlan, offeredNames, call.function.name, parsedArgs);
+          const overBudget = !fault && budgetLeft <= 0;
+          if (!fault) budgetLeft -= 1;
+          const route: CallRoute | null = fault
+            ? null
+            : overBudget
+              ? { kind: 'reject', error: `tool budget of this turn (${maxToolCallsPerTurn} calls) is used up — answer from what you have` }
+              : routeCall(catalogPlan, offeredNames, call.function.name, parsedArgs);
           const runName = route?.kind === 'run' ? route.name : call.function.name;
           const runArgs = route?.kind === 'run' ? route.args : parsedArgs;
           const toolDef = toolByName.get(runName);

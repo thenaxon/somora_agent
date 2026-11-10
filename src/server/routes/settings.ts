@@ -386,16 +386,31 @@ export function registerSettingsRoutes(app: Hono, deps: SettingsRoutesDeps): voi
     const body = (await c.req.json().catch(() => null)) as { name?: unknown; hash?: unknown } | null;
     return oneAtATime(async () => {
       const name = typeof body?.name === 'string' ? basename(body.name) : '';
-      if (!name.startsWith('config.yaml.')) return c.json({ error: 'body must be { name, hash }' }, 400);
+      // hash is required, as for apply: a restore without it could
+      // overwrite an edit made since the settings were opened.
+      if (!name.startsWith('config.yaml.') || typeof body?.hash !== 'string') return c.json({ error: 'body must be { name, hash }' }, 400);
       const file = configPath();
       const text = await readFile(file, 'utf8');
-      if (typeof body?.hash === 'string' && hashOf(text) !== body.hash) {
+      if (hashOf(text) !== body.hash) {
         return c.json({ error: 'config.yaml changed since you opened it — reload the settings first', hash: hashOf(text) }, 409);
       }
       const old = await readFile(join(backupDir(), name), 'utf8').catch(() => null);
       if (old === null) return c.json({ error: `no backup '${name}'` }, 404);
       const checked = validateConfigText(old);
       if (!checked.ok) return c.json({ error: 'that version does not validate against this somora; nothing was written', issues: checked.issues }, 400);
+      // The same guards as apply (Fable review 2026-11-10 Nr. 19): an old
+      // backup may lack a model agents use now, or carry another
+      // embedding model, after which memory does not start.
+      const was = validateConfigText(text);
+      if (was.ok) {
+        const lockedChanged = Object.entries(SETTINGS_CATALOG)
+          .filter(([p, e]) => e.locked && !p.includes('*'))
+          .filter(([p]) => JSON.stringify(valueAt(was.config, p)) !== JSON.stringify(valueAt(checked.config, p)))
+          .map(([p, e]) => ({ path: p, message: e.locked! }));
+        if (lockedChanged.length > 0) return c.json({ error: 'that version changes settings that cannot change here; nothing was written', issues: lockedChanged }, 400);
+        const broken = brokenRefs(was.config, checked.config, await agentModels());
+        if (broken.length > 0) return c.json({ error: 'that version would remove something still in use; nothing was written', issues: broken }, 400);
+      }
       const saved = await backup(text);
       await writeAtomic(file, old);
       logger.info({ msg: 'settings.restored', from: name, backup: saved });

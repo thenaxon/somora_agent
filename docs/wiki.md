@@ -480,8 +480,9 @@ wiki:
 
 ## Commands
 
-The commands talk to the running server. They never touch the wiki
-themselves.
+The commands talk to the running server and leave the wiki to it,
+with one exception: `migrate undo` moves the current wiki aside and
+copies the backup back itself.
 
 | Command | What it does |
 |---|---|

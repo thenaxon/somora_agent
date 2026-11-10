@@ -19,7 +19,7 @@ import type { MemoryManager } from '../memory/manager.ts';
 import { logger } from '../server/logger.ts';
 import { runDreamB, type RunDreamBResult } from './deep-runner.ts';
 import type { PromotionDispatcher } from '../wiki/types.ts';
-import {
+import { timerFor,
   interruptedRetryDelay,
   MAX_INTERRUPTED_RETRIES,
   nextDelayMs,
@@ -94,7 +94,7 @@ export class DeepWorker {
     logger.info({ msg: 'dream.deep.shutdown' });
   }
 
-  private async scheduleNext(after: 'startup' | 'fire-completed' | 'fire-failed'): Promise<void> {
+  private async scheduleNext(after: 'startup' | 'fire-completed' | 'fire-failed' | 'recheck'): Promise<void> {
     if (this.shuttingDown) return;
     if (this.timer) {
       clearTimeout(this.timer);
@@ -141,9 +141,14 @@ export class DeepWorker {
       return;
     }
     const { delayMs, nextDueAt, reason } = nextDelayMs(state, intervalMs);
+    // setTimeout holds at most 2^31-1 ms (24.8 days); a longer delay
+    // fires after 1 ms, so `intervalDays: 30` ran in a loop (Fable review
+    // 2026-11-10 Nr. 3). Wait a day at most and look again.
+    const plan = timerFor(delayMs);
     this.timer = setTimeout(() => {
-      void this.fire('scheduled');
-    }, delayMs);
+      if (plan.recheck) void this.scheduleNext('recheck');
+      else void this.fire('scheduled');
+    }, plan.ms);
     logger.info({
       msg: 'dream.deep.scheduled',
       intervalHours: this.deps.config.wiki.deep.intervalHours,

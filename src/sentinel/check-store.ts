@@ -10,6 +10,7 @@
 // and hit exactly that). Every run first compares the copy with the
 // fingerprint taken at creation.
 
+import { assertTriggerIdSafe } from './store.ts';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { chmod, copyFile, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -21,13 +22,13 @@ function sentinelDir(): string {
   return join(process.env.SOMORA_HOME ?? join(homedir(), '.somora'), 'sentinel');
 }
 export function checkScriptDir(id: string): string {
-  return join(sentinelDir(), 'scripts', id);
+  return join(sentinelDir(), 'scripts', assertTriggerIdSafe(id));
 }
 export function checkStateDir(id: string): string {
-  return join(sentinelDir(), 'state', id);
+  return join(sentinelDir(), 'state', assertTriggerIdSafe(id));
 }
 function checkStatePath(id: string): string {
-  return join(sentinelDir(), 'check-state', `${id}.json`);
+  return join(sentinelDir(), 'check-state', `${assertTriggerIdSafe(id)}.json`);
 }
 
 /** The language by file extension. The first line (shebang) is not

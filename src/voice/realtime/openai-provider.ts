@@ -18,6 +18,7 @@
 // model that thinks for hundreds of milliseconds, that is the cheaper
 // trade than an ambiguous tool path.
 
+import { expandHome } from '../../server/workspace.ts';
 import { readFileSync } from 'node:fs';
 import WebSocket from 'ws';
 import { logger } from '../../server/logger.ts';
@@ -83,7 +84,9 @@ export interface WebSocketLike {
 function loadKey(opts: OpenAiRealtimeOptions): string | undefined {
   if (opts.apiKey) return opts.apiKey;
   if (opts.apiKeyFile) {
-    const key = readFileSync(opts.apiKeyFile, 'utf8').trim();
+    // `~/…` as docs/realtime-voice.md shows it (readFileSync does not
+    // expand the tilde).
+    const key = readFileSync(expandHome(opts.apiKeyFile), 'utf8').trim();
     if (key.length === 0) throw new Error(`realtime key file ${opts.apiKeyFile} is empty`);
     return key;
   }

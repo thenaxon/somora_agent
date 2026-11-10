@@ -116,6 +116,16 @@ export function lastRelevantRunAt(state: SchedulerState): number | null {
  */
 export const STARTUP_GRACE_MS = 60_000;
 
+/** Longest single timer a dream scheduler sets; a later due time is
+ *  reached by waking once a day and computing again. */
+export const MAX_TIMER_MS = 24 * 60 * 60 * 1000;
+
+/** The timer to set for a delay: the delay itself, or a day and a
+ *  recheck when it is longer than that. */
+export function timerFor(delayMs: number): { ms: number; recheck: boolean } {
+  return delayMs > MAX_TIMER_MS ? { ms: MAX_TIMER_MS, recheck: true } : { ms: Math.max(0, delayMs), recheck: false };
+}
+
 export function nextDelayMs(
   state: SchedulerState,
   intervalMs: number,

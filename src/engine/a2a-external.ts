@@ -101,6 +101,7 @@ export async function* runA2ATurn(input: A2ATurnInput): AsyncGenerator<Normalize
   let outcome: TaskOutcome | null = null;
   let error: A2AError | Error | null = null;
   let streamed = '';
+  let shown = '';
   let sentText = '';
   let done = false;
   try {
@@ -124,14 +125,15 @@ export async function* runA2ATurn(input: A2ATurnInput): AsyncGenerator<Normalize
       maxMs: cfg.maxTaskMinutes * 60_000,
       pollMaxMs: cfg.pollMaxSeconds * 1000,
       onText: (t) => {
-        // Streamed text grows; the chat gets the new piece.
-        if (t.startsWith(streamed)) {
-          const piece = t.slice(streamed.length);
-          if (piece) push({ kind: 'assistant_delta', ts: ts(), engine: A2A_ENGINE, text: piece });
-        } else {
-          push({ kind: 'assistant_delta', ts: ts(), engine: A2A_ENGINE, text: `\n${t}` });
-        }
+        // assistant_delta is cumulative for the turn (types/events.ts),
+        // as every engine sends it: the whole text so far, not the new
+        // piece — pieces made the bubble show only the latest one (Fable
+        // review 2026-11-10 Nr. 27). A text that does not continue the
+        // last one starts a new paragraph.
+        if (t === streamed) return;
+        shown = t.startsWith(streamed) ? shown + t.slice(streamed.length) : `${shown}${shown ? '\n' : ''}${t}`;
         streamed = t;
+        push({ kind: 'assistant_delta', ts: ts(), engine: A2A_ENGINE, text: shown });
       },
       onStatus: (state, said, taskId) => {
         const label = STATE_TEXT[state] ?? state;

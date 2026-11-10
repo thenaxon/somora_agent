@@ -50,7 +50,18 @@ export function jobsDir(agent: string): string {
   return join(SOMORA_HOME, 'agents', agent, 'exec-jobs');
 }
 
+/** What newJobId makes. A job id reaches file paths and, for a job on
+ *  an SSH resource, a remote shell line (`/tmp/somora-exec-<id>.exit`);
+ *  anything else is refused (Fable review 2026-11-10: `../` reached
+ *  another agent's jobs). */
+export const JOB_ID_RE = /^job_\d+_[a-z0-9]{4}$/;
+
+export function isJobId(jobId: string): boolean {
+  return JOB_ID_RE.test(jobId);
+}
+
 export function jobDir(agent: string, jobId: string): string {
+  if (!isJobId(jobId)) throw new Error(`invalid job id '${jobId.slice(0, 40)}' (expected job_<digits>_<4 chars>)`);
   return join(jobsDir(agent), jobId);
 }
 
@@ -89,7 +100,13 @@ export async function writeMeta(agent: string, meta: JobMeta): Promise<void> {
 export async function readMeta(agent: string, jobId: string): Promise<JobMeta | null> {
   try {
     const raw = await readFile(join(jobDir(agent, jobId), 'meta.json'), 'utf8');
-    return JSON.parse(raw) as JobMeta;
+    const meta = JSON.parse(raw) as JobMeta;
+    // meta.json sits in the agent's own folder, where its file tools can
+    // write: a pid goes into a remote shell line and a signal, so only a
+    // record that is this job's own, with a numeric pid, counts.
+    if (meta.job_id !== jobId || meta.agent !== agent) return null;
+    if (meta.pid !== null && !(Number.isInteger(meta.pid) && meta.pid > 0)) return null;
+    return meta;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
@@ -195,7 +212,7 @@ export async function listJobsForAgent(agent: string): Promise<JobMeta[]> {
   }
   const out: JobMeta[] = [];
   for (const e of entries) {
-    if (!e.startsWith('job_')) continue;
+    if (!isJobId(e)) continue;
     const meta = await readMeta(agent, e);
     if (meta) out.push(meta);
   }

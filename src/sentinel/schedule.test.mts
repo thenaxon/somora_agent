@@ -121,3 +121,19 @@ const every = (interval: string): TimeSpec => ({ type: 'every', interval } as Ti
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
 assert.ok(true);
+
+// Ranges and stepped ranges (Fable review 2026-11-10 Nr. 14): `1-5` was
+// read as 1 and fired on Mondays only.
+{
+  const { parseCron } = await import('./schedule.ts');
+  const weekdays = parseCron('0 9 * * 1-5');
+  for (const d of [1, 2, 3, 4, 5]) assert.ok(weekdays.dayOfWeek.match(d), `weekday ${d}`);
+  for (const d of [0, 6]) assert.ok(!weekdays.dayOfWeek.match(d), `weekend ${d}`);
+  const hours = parseCron('0 9-17/2 * * *');
+  assert.deepEqual([...Array(24).keys()].filter((h) => hours.hour.match(h)), [9, 11, 13, 15, 17]);
+  const mixed = parseCron('0,30 8,12-13 * * *');
+  assert.deepEqual([...Array(24).keys()].filter((h) => mixed.hour.match(h)), [8, 12, 13]);
+  for (const bad of ['0 9 * * 5-1', '0 9 * * 1-8', '0 9 * * 1x', '0 9 * * 1-5/0', '0 9 * * -1']) {
+    assert.throws(() => parseCron(bad), /bad/, bad);
+  }
+}

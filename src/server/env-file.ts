@@ -37,6 +37,41 @@ export interface LoadEnvFileResult {
   permissionWarning?: string;
 }
 
+/** Names this process took from somora.env — secrets by intent. A child
+ *  somora spawns with an `env` that ends up visible (the MCP tool child
+ *  of a claude-cli turn: its env rides on the Claude Code command line)
+ *  leaves them out and loads the file itself (secretFreeEnv below). */
+export const ENV_FILE_KEYS = new Set<string>();
+
+/**
+ * This process's environment without its secrets: the login key
+ * (SOMORA_KEY, set at run time from server.key) and every variable that
+ * came from somora.env. For a child whose environment is not private —
+ * Claude Code puts the MCP server config, env included, on its command
+ * line (`--mcp-config`), readable by anyone with `ps` (Fable review
+ * 2026-11-10). The child reads the key file and somora.env itself.
+ */
+export function secretFreeEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (typeof v !== 'string') continue;
+    if (k === 'SOMORA_KEY' || ENV_FILE_KEYS.has(k)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/** This process's environment without the login key only — for a
+ *  program that may need what somora.env configures for it (Claude Code:
+ *  CLAUDE_CONFIG_DIR, an API key, a proxy) but has no use for somora's
+ *  own key. Its environment is private to this user; its command line
+ *  is not, which is why the MCP child gets secretFreeEnv instead. */
+export function envWithoutLoginKey(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) if (typeof v === 'string' && k !== 'SOMORA_KEY') out[k] = v;
+  return out;
+}
+
 export function loadSomoraEnvFile(path: string = DEFAULT_ENV_FILE): LoadEnvFileResult {
   let stat;
   try {
@@ -87,6 +122,7 @@ export function loadSomoraEnvFile(path: string = DEFAULT_ENV_FILE): LoadEnvFileR
       continue;
     }
     process.env[key] = value;
+    ENV_FILE_KEYS.add(key);
     loaded += 1;
   }
 

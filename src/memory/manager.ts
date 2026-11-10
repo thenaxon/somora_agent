@@ -469,8 +469,11 @@ export class MemoryManager {
     if (!this.indexVault) return null;
     // Wiki check goes BEFORE vault since the wiki subfolder lives
     // inside the vault. Order matters: vaultPath would also match.
-    if (this.wiki && path.startsWith(this.wiki.absPath)) return 'wiki';
-    if (this.obsidian && path.startsWith(this.obsidian.vaultPath)) {
+    // With a separator: `<vault>/somora-ideas.md` is not inside a wiki
+    // folder `<vault>/somora` (Fable review Nr. 27).
+    const inside = (root: string): boolean => path === root || path.startsWith(root.endsWith('/') ? root : `${root}/`);
+    if (this.wiki && inside(this.wiki.absPath)) return 'wiki';
+    if (this.obsidian && inside(this.obsidian.vaultPath)) {
       return 'vault';
     }
     return null;

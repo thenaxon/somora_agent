@@ -99,10 +99,17 @@ class SessionLock {
         callId: opts.callId,
         turnId: opts.turnId,
         workId: opts.workId,
-        resolve: (release) => resolve(release),
+        resolve: (release) => {
+          // Promoted: the abort listener has done its job. Left on the
+          // signal it held the waiter (and this queue) for the signal's
+          // lifetime (Fable review 2026-11-10 Nr. 26).
+          detach();
+          resolve(release);
+        },
         reject: (err) => reject(err),
         cancelled: false,
       };
+      let detach = (): void => {};
       // First come, first served, whoever it is.
       //
       // Human turns used to jump ahead of agent turns. With a voice call
@@ -137,6 +144,8 @@ class SessionLock {
           reject(new DOMException('aborted', 'AbortError'));
         };
         opts.signal.addEventListener('abort', onAbort, { once: true });
+        const sig = opts.signal;
+        detach = () => sig.removeEventListener('abort', onAbort);
       }
     }).then((release) => release);
   }

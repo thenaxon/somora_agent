@@ -95,7 +95,11 @@ export class OAuthRefreshProvider implements CredentialProvider {
     private staticHeaders: Record<string, string>,
   ) {
     this.file = expandHome(
-      auth.credentialFile ?? join(homedir(), '.somora', 'claude-home', '.credentials.json'),
+      // This instance's Claude home (CLAUDE_CONFIG_DIR, set at start from
+      // SOMORA_HOME): a scratch instance refreshed the live one's token
+      // through the hard-coded ~/.somora path (Fable review Nr. 24).
+      auth.credentialFile ??
+        join(process.env.CLAUDE_CONFIG_DIR ?? join(process.env.SOMORA_HOME ?? join(homedir(), '.somora'), 'claude-home'), '.credentials.json'),
     );
     // The lock is per FILE, not per key: two keys in one file are
     // rewritten through the same read-modify-write.

@@ -259,7 +259,12 @@ export function grokCliReasoningArgs(
   if (!thinking || !modelSupportsReasoning(model)) return [];
   // Same per-model mapping as codex/openai-compatible; `off` → `low`
   // (grok has no lower value) unless the model maps it.
-  const configured = model.reasoning?.levels?.[thinking];
+  const levels = model.reasoning?.levels as Record<string, string | null | undefined> | undefined;
+  // `null` in reasoning.levels means "leave the parameter out" on every
+  // engine (docs/thinking.md); `??` used to send the default anyway
+  // (Fable review, docs vs code 12).
+  if (levels && Object.hasOwn(levels, thinking) && levels[thinking] === null) return [];
+  const configured = levels?.[thinking];
   const effort = configured ?? (thinking === 'off' ? 'low' : thinking);
   return ['--reasoning-effort', effort];
 }

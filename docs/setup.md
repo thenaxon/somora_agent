@@ -376,7 +376,8 @@ Cmd+Shift+R on a Mac, so the browser drops the old script.
 ## The daily update check
 
 Once a day the server asks somora.ai whether a newer version exists.
-It is the only request somora makes on its own. The answer shows up in
+Apart from downloading the embedding model on the first start (see
+[Memory](memory.md)), it is the only request somora makes on its own. The answer shows up in
 the web client's inbox, in `somora server status` and in the server
 log as `update.available`. `somora update` itself asks npm.
 
@@ -861,7 +862,7 @@ service's environment.
 | `SOMORA_HOST` | `server.host` | Overrides the listen address. Prefer the config. With HTTPS on, the server sets it to `server.tls.publicHost` for its own child processes. |
 | `SOMORA_KEY` | `~/.somora/server.key` | The key a client sends. Only useful for the terminal client on another machine. On the server it has no effect: the server always reads the key file, sets it for its own child processes and keeps it out of agents' shells. |
 | `SOMORA_TLS` | unset | Set to `1` by the server when it serves HTTPS, for its child processes. Do not set it yourself. |
-| `SOMORA_LOG_LEVEL` | `info` | Log level. |
+| `SOMORA_LOG_LEVEL` | `info` | Log level. Set it in the service's environment: the logger starts before `somora.env` is read, so a value there does not apply. |
 | `SOMORA_ENV_FILE` | `~/.somora/somora.env` | Another env file to load at start. |
 | `DO_NOT_TRACK` | unset | `1` turns the daily update check off. A set `CI` does the same. |
 | `SOMORA_CLAUDE_BIN` | `~/.local/bin/claude`, else the bundled one | Path of the Claude Code binary. |

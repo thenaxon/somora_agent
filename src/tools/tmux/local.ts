@@ -21,6 +21,7 @@
 // without it we'd need a long-lived child process and a way to
 // re-attach which is exactly what tmux already solves.
 
+import { scopeArgv, scopeUnitName } from '../exec/systemd-scope.ts';
 import { localExecSync } from '../exec/local.ts';
 import { SOMORA_INTERNAL_ENV_NAMES, somoraInternalEnvPresent } from '../exec/internal-env.ts';
 import { logger } from '../../server/logger.ts';
@@ -179,11 +180,17 @@ export async function tmuxLocalCreate(opts: TmuxLocalCreateOptions): Promise<Tmu
   // Also strip on the spawn-env path in case this call boots a fresh
   // tmux server (whose subsequent sessions would otherwise inherit
   // the dirty env too). Cheap belt-and-braces.
+  // The first session boots the tmux server, which forks from this
+  // call: under systemd it would live in somora's cgroup and die with
+  // every restart. A scope of its own keeps it (systemd-scope.ts).
+  const scope = scopeArgv(scopeUnitName('tmux', opts.name));
+  if (scope.length > 0) cmd = `${scope.map((a) => shQuote(a)).join(' ')} ${cmd}`;
   logger.info({
     msg: 'tmux.local.create',
     name: opts.name,
     cwd: opts.cwd,
     inheritAgentEnv: opts.inheritAgentEnv === true,
+    scope: scope.length > 0,
   });
   return runTmux(cmd, 10_000, !opts.inheritAgentEnv);
 }

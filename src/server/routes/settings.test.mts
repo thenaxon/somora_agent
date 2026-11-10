@@ -279,6 +279,8 @@ test('restore: an earlier version comes back, the current one is kept too; only 
   assert.equal(list.body.backups.length, KEEP_BACKUPS);
   assert.equal((await call('POST', '/settings/restore', { name: '../config.yaml', hash })).status, 400, 'a path outside the backups is refused');
   assert.equal((await call('POST', '/settings/restore', { name: 'config.yaml.nope', hash })).status, 404);
+  // hash is required, as for apply (Fable review 2026-11-10 Nr. 19)
+  assert.equal((await call('POST', '/settings/restore', { name: list.body.backups[0].name })).status, 400, 'no hash, no restore');
 });
 
 test('redaction: a secret under a key with no value of its own, and one written in a comment', async () => {

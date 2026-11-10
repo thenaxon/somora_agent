@@ -244,7 +244,9 @@ name that changes its answer is refused too.
 Redirects are followed one hop at a time, each checked before anything
 is sent to it, at most five. To let agents read an internal page, list its host, IP or IPv4 range in
 `web.fetchAllowPrivate`. A `*.example.lan` entry covers every name
-under that domain.
+under that domain. The names `localhost`, `*.localhost` and the Docker
+host names stay blocked even when listed; list `127.0.0.1` to allow this
+machine.
 
 The browser tools are off by default (`browser.enabled`). When on, they
 block private networks unless a host or range is listed in

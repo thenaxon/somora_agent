@@ -13,8 +13,8 @@ export interface McpRoutesDeps {
 export function registerMcpRoutes(app: Hono, routeDeps: McpRoutesDeps): void {
   const { mcpHub } = routeDeps;
   // --- External MCP servers (hub) — design private/mcp-hub-design.md §4.5.
-  // Loopback-only posture like /tools (DECISION #31): no auth header, the
-  // network boundary is the trust boundary.
+  // Behind the login key like every route (auth-key middleware); callers
+  // on this machine send it through loopbackFetch.
 
   function mcpDisabled(c: Context) {
     return c.json(

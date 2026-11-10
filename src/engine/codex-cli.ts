@@ -342,6 +342,8 @@ export const codexCliEngine: AgentEngine = {
     let pendingToolCalls = 0;
     let abortFired = false;
     let watchdogFired = false;
+    /** A tool ran: the turn had effects, Codex's thread holds it. */
+    let sawToolCall = false;
     let finished = false;
     let client: CodexAppServerClient | undefined;
 
@@ -702,6 +704,7 @@ export const codexCliEngine: AgentEngine = {
         const toolRaw = typeof params.tool === 'string' ? params.tool : '';
         const registryName = catalog.resolve(nsRaw, toolRaw);
         const args = params.arguments ?? {};
+        sawToolCall = true;
         queue.push({
           kind: 'tool_call',
           ts: ts(),
@@ -719,19 +722,24 @@ export const codexCliEngine: AgentEngine = {
         armIdleTimer();
         const started = Date.now();
         let result;
+        // Cleared when the tool returns: left standing, each call's timer
+        // held its closure for the full timeout (Fable review Nr. 26).
+        let toolTimer: NodeJS.Timeout | undefined;
         try {
           result = await Promise.race([
             input.tools.invoke(registryName, args),
-            new Promise<never>((_, reject) =>
-              setTimeout(
+            new Promise<never>((_, reject) => {
+              toolTimer = setTimeout(
                 () => reject(new Error(`tool '${registryName}' timed out after ${toolTimeoutMs / 1000}s`)),
                 toolTimeoutMs,
-              ).unref(),
-            ),
+              );
+              toolTimer.unref();
+            }),
           ]);
         } catch (err) {
           result = { ok: false, error: (err as Error).message };
         } finally {
+          if (toolTimer) clearTimeout(toolTimer);
           if (pendingToolCalls > 0) pendingToolCalls--;
           armIdleTimer();
         }
@@ -774,6 +782,13 @@ export const codexCliEngine: AgentEngine = {
           onServerRequest,
           logCtx,
         });
+        // Stopped (or timed out) while the process was starting: onAbort
+        // saw no client and the turn is over, so nobody else will close
+        // this one (Fable review 2026-11-10 Nr. 6).
+        if (abortFired || finished) {
+          client.close();
+          return;
+        }
         void client.exited().then(({ code, signal: sig }) => {
           if (!finished) {
             logger.error({
@@ -905,8 +920,12 @@ export const codexCliEngine: AgentEngine = {
     } finally {
       if (signal) signal.removeEventListener('abort', onAbort);
       if (idleTimer) clearTimeout(idleTimer);
+      // In the finally: a consumer that stops reading (an appendEvent
+      // that throws, a closed stream) must not leave the app-server
+      // running tools whose results nobody writes.
+      client?.close();
+      finish();
     }
-    client?.close();
 
     const finalText = assistant.cumulative;
     const thinkingText = reasoning.cumulative;
@@ -931,7 +950,7 @@ export const codexCliEngine: AgentEngine = {
       const message = `codex app-server timed out (${IDLE_TIMEOUT_MS / 1000}s idle)${streamErrors.length ? `: ${streamErrors.join('; ').slice(0, 400)}` : ''}`;
       yield { kind: 'error', ts: ts(), engine: ENGINE, message, providerError: true };
       yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId, ...usageOut };
-      await persistMeta();
+      await persistMeta(Boolean(finalText) || sawToolCall);
       return;
     }
     if (abortFired) {
@@ -961,7 +980,7 @@ export const codexCliEngine: AgentEngine = {
       }
       yield { kind: 'error', ts: ts(), engine: ENGINE, message: `codex turn failed: ${reason}`, providerError: true };
       yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId, ...usageOut };
-      await persistMeta();
+      await persistMeta(Boolean(finalText) || sawToolCall);
       return;
     }
 
@@ -986,7 +1005,13 @@ export const codexCliEngine: AgentEngine = {
     yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId, ...usageOut };
     await persistMeta();
 
-    async function persistMeta(): Promise<void> {
+    /** `advance`: this engine has now heard the conversation up to here.
+     *  A turn that failed before any answer or tool (quota, watchdog)
+     *  keeps the old mark: the fallback model answers it, and the next
+     *  turn here must catch up on that message and that answer — moving
+     *  the mark dropped both (Fable review 2026-11-10 Nr. 5; grok-cli
+     *  already did this). */
+    async function persistMeta(advance = true): Promise<void> {
       if (!threadId) return;
       const id = threadId;
       try {
@@ -998,7 +1023,7 @@ export const codexCliEngine: AgentEngine = {
             codexSessionId: id,
             codexRecordedModel: resolvedModel.modelId,
             codexToolsFingerprint: toolsFingerprint,
-            engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()),
+            ...(advance ? { engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()) } : {}),
           };
         });
       } catch (err) {

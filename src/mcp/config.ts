@@ -5,6 +5,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { secretFreeEnv } from '../server/env-file.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // .../src/mcp -> .../src -> .../somora
@@ -56,7 +57,7 @@ export function somoraMemoryServerSpawn(args: {
     command: useLocalTsx ? TSX_BIN_REPO : 'npx',
     args: useLocalTsx ? [MCP_SERVER_TS] : ['tsx', MCP_SERVER_TS],
     env: {
-      ...filterEnv(process.env),
+      ...secretFreeEnv(),
       SOMORA_AGENT: args.agent,
       ...(args.session ? { SOMORA_SESSION: args.session } : {}),
       ...(args.subagentDepth !== undefined && args.subagentDepth > 0
@@ -64,7 +65,7 @@ export function somoraMemoryServerSpawn(args: {
         : {}),
       ...(args.activeModelRef ? { SOMORA_ACTIVE_MODEL: args.activeModelRef } : {}),
       ...(args.alwaysVisibleTools ? { SOMORA_ALWAYS_VISIBLE_TOOLS: JSON.stringify(args.alwaysVisibleTools) } : {}),
-      // SOMORA_HOST/PORT/TLS are inherited via filterEnv (the parent
+      // SOMORA_HOST/PORT/TLS are inherited via secretFreeEnv (the parent
       // server process has them), so spawn_subagent's HTTP-fallback can
       // find the endpoint and pick the right scheme. Belt-and-suspenders
       // explicit:
@@ -75,14 +76,6 @@ export function somoraMemoryServerSpawn(args: {
   };
 }
 
-function filterEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  // Forward only string-valued vars (TS env can have undefineds).
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(env)) {
-    if (typeof v === 'string') out[k] = v;
-  }
-  return out;
-}
 
 /**
  * External-MCP proxy children (design: private/mcp-hub-design.md §4.4).
@@ -110,9 +103,9 @@ export function somoraMcpProxySpawn(args: {
     command: useLocalTsx ? TSX_BIN_REPO : 'npx',
     args: useLocalTsx ? [MCP_SERVER_TS] : ['tsx', MCP_SERVER_TS],
     env: {
-      // filterEnv carries SOMORA_HOME (catalog path) and SOMORA_HOST/
+      // secretFreeEnv carries SOMORA_HOME (catalog path) and SOMORA_HOST/
       // PORT/TLS (HTTP-forward endpoint) from the parent server.
-      ...filterEnv(process.env),
+      ...secretFreeEnv(),
       SOMORA_AGENT: args.agent,
       SOMORA_MCP_PROXY_SERVER: args.server,
       ...(args.session ? { SOMORA_SESSION: args.session } : {}),

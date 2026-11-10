@@ -5,6 +5,7 @@
 // Mtime-aware writes: a wiki page that changed since the Lucid run
 // gets the apply skipped — user is told to re-run Lucid.
 
+import { WikiPathError, wikiFile } from './wiki-file.ts';
 import { mkdir, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -70,6 +71,17 @@ export async function applyLucidFinding(
   finding: LucidFinding,
   ctx: LucidActionContext,
 ): Promise<LucidApplyOutcome> {
+  try {
+    return await applyLucidFix(finding, ctx);
+  } catch (err) {
+    // A path from the model that leaves the wiki fails this finding
+    // only; the rest of the run goes on.
+    if (err instanceof WikiPathError) return { kind: 'failed', error: err.message };
+    throw err;
+  }
+}
+
+async function applyLucidFix(finding: LucidFinding, ctx: LucidActionContext): Promise<LucidApplyOutcome> {
   const fix = finding.fix;
   switch (fix.kind) {
     case 'update_page':
@@ -129,8 +141,8 @@ export function addLinkToBody(body: string, phrase: string, target: string): str
 }
 
 async function applyAddLink(fix: Extract<LucidFinding['fix'], { kind: 'add_link' }>, ctx: LucidActionContext): Promise<LucidApplyOutcome> {
-  const file = join(ctx.wikiAbs, `${fix.wikiPath}.md`);
-  const targetExists = await stat(join(ctx.wikiAbs, `${fix.target}.md`)).then((s) => s.isFile(), () => false);
+  const file = wikiFile(ctx.wikiAbs, fix.wikiPath);
+  const targetExists = await stat(wikiFile(ctx.wikiAbs, fix.target)).then((s) => s.isFile(), () => false);
   if (!targetExists) return { kind: 'skipped', reason: `target page ${fix.target} does not exist` };
   const existing = await readWithMtime(file);
   if (!existing) return { kind: 'skipped', reason: `page ${fix.wikiPath} does not exist` };
@@ -156,13 +168,13 @@ async function applyUnitePages(fix: Extract<LucidFinding['fix'], { kind: 'unite_
     ? async (a: { system: string; user: string }) => callOneShotLLM({ workerModel: ctx.model!, systemPrompt: a.system, userMessage: a.user, timeoutMs: 240_000, logCtx: { op: 'lucid-unite', keep: fix.keep }, ...(ctx.thinking ? { thinking: ctx.thinking } : {}) })
     : null);
   if (!ask) return { kind: 'failed', error: 'unite_pages needs a model (wiki.lucid.model)' };
-  const keepFile = join(ctx.wikiAbs, `${fix.keep}.md`);
+  const keepFile = wikiFile(ctx.wikiAbs, fix.keep);
   const keepRaw = await readWithMtime(keepFile);
   if (!keepRaw) return { kind: 'skipped', reason: `surviving page ${fix.keep} does not exist` };
   const drops: Array<{ path: string; raw: string }> = [];
   for (const d of fix.drop) {
     try {
-      drops.push({ path: d, raw: await readFile(join(ctx.wikiAbs, `${d}.md`), 'utf8') });
+      drops.push({ path: d, raw: await readFile(wikiFile(ctx.wikiAbs, d), 'utf8') });
     } catch {
       /* already gone */
     }
@@ -182,7 +194,7 @@ async function applyUnitePages(fix: Extract<LucidFinding['fix'], { kind: 'unite_
   const vanished = new Map<string, string>();
   for (const d of drops) {
     await archivePage(ctx.wikiAbs, reportsFolder(language), d.path, d.raw, fix.keep, isoDate());
-    await unlink(join(ctx.wikiAbs, `${d.path}.md`));
+    await unlink(wikiFile(ctx.wikiAbs, d.path));
     renames.set(d.path, fix.keep);
     vanished.set(d.path.split('/').pop()!.toLowerCase(), fix.keep);
   }
@@ -211,7 +223,7 @@ async function applyUpdatePage(
   logSummary: string,
   ctx: LucidActionContext,
 ): Promise<LucidApplyOutcome> {
-  const fileAbs = join(ctx.wikiAbs, `${wikiPath}.md`);
+  const fileAbs = wikiFile(ctx.wikiAbs, wikiPath);
   const existing = await readWithMtime(fileAbs);
   if (!existing) {
     return {
@@ -251,7 +263,7 @@ async function applyCreatePage(
   fix: Extract<LucidFinding['fix'], { kind: 'create_page' }>,
   ctx: LucidActionContext,
 ): Promise<LucidApplyOutcome> {
-  const fileAbs = join(ctx.wikiAbs, `${fix.wikiPath}.md`);
+  const fileAbs = wikiFile(ctx.wikiAbs, fix.wikiPath);
   await mkdir(dirname(fileAbs), { recursive: true });
   const cleanBody = stripLeadingFrontmatter(fix.body);
   const pageContent = buildInitialWikiPage({
@@ -278,7 +290,7 @@ async function applyDeletePage(
   wikiPath: string,
   ctx: LucidActionContext,
 ): Promise<LucidApplyOutcome> {
-  const fileAbs = join(ctx.wikiAbs, `${wikiPath}.md`);
+  const fileAbs = wikiFile(ctx.wikiAbs, wikiPath);
   try {
     await unlink(fileAbs);
     logger.info({ msg: 'lucid.applied.delete_page', wikiPath });
