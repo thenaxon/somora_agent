@@ -642,6 +642,7 @@ Use `cron` for the rest, such as monthly jobs or several times a day.
 "0 9 1 * *"      # 1st of each month, 9:00
 "*/15 * * * *"   # every 15 minutes
 "0 9,17 * * *"   # 9:00 and 17:00 daily
+"0 9 * * 1-5"    # weekdays at 9:00
 "0 0 * * 0"      # Sundays at midnight
 ```
 
@@ -651,7 +652,7 @@ purpose:
 
 | Supported | Not supported |
 |---|---|
-| `*`, a number `N`, a step `*/N`, a list `a,b,c` | Ranges like `1-5` (write `1,2,3,4,5`), names like `MON` or `JAN`, macros like `@daily` or `@hourly` |
+| `*`, a number `N`, a step `*/N`, a range `a-b`, a stepped range `a-b/N`, and lists of these (`1-5`, `8,12-14`) | Names like `MON` or `JAN`, macros like `@daily` or `@hourly` |
 
 When both day of month and day of week are set, the trigger fires when
 either one matches.
