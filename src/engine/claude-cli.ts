@@ -616,8 +616,10 @@ export const claudeCliEngine: AgentEngine = {
           // leaks — they're expected and add intentional surface. Proxy
           // children for external MCP servers register as
           // somora-<name>, so `mcp__somora-` covers the proxies.
+          // ToolSearch is enabled on purpose (the `tools` option above):
+          // it is how the model reaches somora's MCP tools, not a leak.
           const unexpectedTools = msg.tools.filter(
-            (t: string) => !t.startsWith(MCP_TOOL_PREFIX) && !t.startsWith('mcp__somora-'),
+            (t: string) => t !== 'ToolSearch' && !t.startsWith(MCP_TOOL_PREFIX) && !t.startsWith('mcp__somora-'),
           );
           if (unexpectedTools.length > 0 && !toolsLeakWarned) {
             logger.warn({

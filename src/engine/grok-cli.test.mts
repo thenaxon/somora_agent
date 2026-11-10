@@ -157,3 +157,20 @@ test("Grok's session record is found under any working folder", () => {
   assert.equal(grokUpdatesFile(home, 'sid-1'), join(home, 'sessions', '%2Fwork', 'sid-1', 'updates.jsonl'));
   rmSync(home, { recursive: true, force: true });
 });
+
+// An MCP server somora did not hand over is Grok's own: an xAI account
+// connector. Blocked ones are listed with status unknown (Grok 1.0.80).
+test('foreign MCP servers: active ones count, blocked connectors and ours do not', async () => {
+  const { foreignMcpServers, mcpStatuses } = await import('./grok-cli.ts');
+  const statuses = mcpStatuses({
+    result: {
+      servers: [
+        { name: 'somora', session: { status: 'ready' } },
+        { name: 'managed_gateway:cursor', session: { status: 'ready' } },
+        { name: 'managed_gateway:tasks' },
+      ],
+    },
+  });
+  assert.deepEqual(foreignMcpServers(statuses, new Set(['somora'])), ['managed_gateway:cursor']);
+  assert.deepEqual(foreignMcpServers(mcpStatuses({ servers: [{ name: 'somora', session: { status: 'ready' } }] }), new Set(['somora'])), []);
+});

@@ -32,7 +32,7 @@ import {
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import { grokCliReasoningArgs } from './thinking-params.ts';
-import { grokChildEnv, somoraGrokHome, syncGrokHome } from './grok-home.ts';
+import { ensureGatewayBlock, grokChildEnv, somoraGrokHome, syncGrokHome } from './grok-home.ts';
 import { resolveGrokLaunch } from './grok-bin.ts';
 import { buildCodexAttachments } from '../multimodal/user-content.ts';
 import { capReplayDelta, computeReplayDelta, getLastSeenTs, renderReplayPrefix, withLastSeenTs } from './replay.ts';
@@ -363,6 +363,16 @@ const ABORT_GRACE_MS = 3_000;
 /** How long a turn waits for somora's MCP servers to report ready. */
 const MCP_READY_TIMEOUT_MS = 30_000;
 const MCP_READY_POLL_MS = 250;
+
+const GATEWAY_PREFIX = 'managed_gateway:';
+
+/** Servers in an `_x.ai/mcp/list` answer that are active but not
+ *  somora's. A blocked xAI account connector is listed too, as
+ *  `managed_gateway:<name>` with status `unknown` (no session); an
+ *  active one is `ready` (measured with Grok 1.0.80). */
+export function foreignMcpServers(statuses: ReadonlyMap<string, string>, ours: ReadonlySet<string>): string[] {
+  return [...statuses.entries()].filter(([n, st]) => !ours.has(n) && st !== 'unknown').map(([n]) => n);
+}
 
 /** Server name → session status from an `_x.ai/mcp/list` answer. */
 export function mcpStatuses(result: unknown): Map<string, string> {
@@ -847,6 +857,26 @@ export const grokCliEngine: AgentEngine = {
         await new Promise((r) => setTimeout(r, MCP_READY_POLL_MS));
       }
       const notReady = [...mcpServerNames].filter((n) => statuses.get(n) !== 'ready');
+      // A server somora did not hand over is Grok's own: an xAI account
+      // connector (1.0.80 brought `cursor`, 101 tools on the person's X
+      // account). It is reachable through use_tool in this turn already,
+      // so say so loudly and block it in the Grok home for every later
+      // turn (grok-home.ts BLOCKED_GATEWAY_CONNECTORS is the known list).
+      const foreign = foreignMcpServers(statuses, mcpServerNames);
+      if (foreign.length > 0) {
+        const gateway = foreign.filter((n) => n.startsWith(GATEWAY_PREFIX)).map((n) => n.slice(GATEWAY_PREFIX.length));
+        const action = gateway.length > 0 ? ensureGatewayBlock(join(somoraGrokHome(), 'config.toml'), gateway) : 'none';
+        logger.warn({
+          msg: 'engine.grok_foreign_mcp',
+          engine: ENGINE,
+          agent: input.agent,
+          session: input.session,
+          servers: foreign,
+          blocked: gateway,
+          action,
+          hint: 'Grok offered MCP servers somora did not hand over (reachable through use_tool in this turn). xAI account connectors are now blocked in the Grok home for later turns; add them to BLOCKED_GATEWAY_CONNECTORS in grok-home.ts.',
+        });
+      }
       logger.info({
         msg: 'engine.grok_mcp_ready',
         engine: ENGINE,

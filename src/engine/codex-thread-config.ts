@@ -54,6 +54,10 @@ export function buildCodexThreadConfig(opts: CodexThreadConfigOptions = {}): Rec
     'features.fast_mode': false,
     'features.view_image': false,
     'features.skill_search': false,
+    // Codex's own `clock` and `sleep` tools (stable, on by default since
+    // before 0.161; first visible in `codex debug prompt-input` with
+    // 0.167). somora has time_now; a model must not idle on a timer.
+    'features.sleep_tool': false,
     'tools.update_plan.enabled': false,
     'tools.experimental_request_user_input.enabled': false,
     web_search: 'disabled',

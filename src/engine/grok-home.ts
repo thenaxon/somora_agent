@@ -24,13 +24,17 @@ export function somoraGrokHome(): string {
 }
 
 /** The settings somora pins in its Grok home. Rewritten when missing. */
-/** xAI account connectors Grok offers through its tool search. "tasks"
- *  creates automations in the person's xAI account (schedules, Gmail
- *  triggers) that never reach a somora session — a reminder belongs in
- *  Sentinel. 2026-10-26: a live grok-cli turn picked tasks__create over
- *  sentinel. `disabled_mcp_servers` does not reach gateway connectors;
- *  this key does (measured: the search no longer lists them). */
-export const BLOCKED_GATEWAY_CONNECTORS = ['tasks'];
+/** xAI account connectors Grok offers through its tool search. A somora
+ *  agent has somora's tools only. "tasks" creates automations in the
+ *  person's xAI account (schedules, Gmail triggers) that never reach a
+ *  somora session — a reminder belongs in Sentinel (2026-10-26: a live
+ *  grok-cli turn picked tasks__create over sentinel). "cursor" came with
+ *  Grok 1.0.80: 101 tools on the person's X account (posts, scheduled
+ *  broadcasts and calls). `disabled_mcp_servers` does not reach gateway
+ *  connectors; this key does (measured both times: the search no longer
+ *  lists them). A connector a later Grok adds is caught at run time
+ *  (grok-cli.ts, engine.grok_foreign_mcp) and added here. */
+export const BLOCKED_GATEWAY_CONNECTORS = ['tasks', 'cursor'];
 const GATEWAY_KEY = '__managed_gateway_connectors';
 const GATEWAY_BLOCK = `# xAI account connectors stay out of somora agents (Sentinel does reminders).
 [disabled_mcp_tools]
@@ -48,15 +52,17 @@ ${GATEWAY_BLOCK}`;
 
 /** A Grok home from before the block gets it added, without touching
  *  the rest of the file (Grok writes its own sections into it). Only
- *  the missing pieces go in: the table, or the key under an existing
- *  table. A key that is there but lists other names is left alone and
- *  logged — that is someone's edit. Returns what it did. */
-export function ensureGatewayBlock(configPath: string): 'added' | 'key-added' | 'present' | 'left' {
+ *  the missing pieces go in: the table, the key under an existing table,
+ *  or names missing from the key. Names already there stay; the list
+ *  only grows. `extra` adds connectors found at run time. */
+export function ensureGatewayBlock(configPath: string, extra: readonly string[] = []): 'added' | 'key-added' | 'present' | 'merged' {
+  const want = [...new Set([...BLOCKED_GATEWAY_CONNECTORS, ...extra])];
   const text = readFileSync(configPath, 'utf8');
   const lines = text.split('\n');
   const header = lines.findIndex((l) => l.trim() === '[disabled_mcp_tools]');
   if (header === -1) {
-    writeFileSync(configPath, `${text.replace(/\n*$/, '\n')}\n${GATEWAY_BLOCK}`, { mode: 0o600 });
+    const block = GATEWAY_BLOCK.replace(JSON.stringify(BLOCKED_GATEWAY_CONNECTORS), JSON.stringify(want));
+    writeFileSync(configPath, `${text.replace(/\n*$/, '\n')}\n${block}`, { mode: 0o600 });
     logger.info({ msg: 'engine.grok_config_gateway_block', action: 'added', path: configPath });
     return 'added';
   }
@@ -67,16 +73,20 @@ export function ensureGatewayBlock(configPath: string): 'added' | 'key-added' | 
       break;
     }
   }
-  const keyLine = lines.slice(header + 1, end).find((l) => l.trim().startsWith(GATEWAY_KEY));
-  if (!keyLine) {
-    lines.splice(header + 1, 0, `${GATEWAY_KEY} = ${JSON.stringify(BLOCKED_GATEWAY_CONNECTORS)}`);
+  const keyIndex = lines.findIndex((l, i) => i > header && i < end && l.trim().startsWith(GATEWAY_KEY));
+  if (keyIndex === -1) {
+    lines.splice(header + 1, 0, `${GATEWAY_KEY} = ${JSON.stringify(want)}`);
     writeFileSync(configPath, lines.join('\n'), { mode: 0o600 });
     logger.info({ msg: 'engine.grok_config_gateway_block', action: 'key-added', path: configPath });
     return 'key-added';
   }
-  if (BLOCKED_GATEWAY_CONNECTORS.every((n) => keyLine.includes(`"${n}"`))) return 'present';
-  logger.warn({ msg: 'engine.grok_config_gateway_block', action: 'left', path: configPath, line: keyLine.trim(), hint: `add ${JSON.stringify(BLOCKED_GATEWAY_CONNECTORS)} to it by hand to keep xAI automations out of somora agents` });
-  return 'left';
+  const have = [...lines[keyIndex]!.matchAll(/"([^"]*)"/g)].map((m) => m[1]!);
+  const missing = want.filter((n) => !have.includes(n));
+  if (missing.length === 0) return 'present';
+  lines[keyIndex] = `${GATEWAY_KEY} = ${JSON.stringify([...have, ...missing])}`;
+  writeFileSync(configPath, lines.join('\n'), { mode: 0o600 });
+  logger.info({ msg: 'engine.grok_config_gateway_block', action: 'merged', path: configPath, added: missing });
+  return 'merged';
 }
 
 /** Latest token expiry in a Grok auth.json, or -1 when unreadable. */

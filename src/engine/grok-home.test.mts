@@ -33,7 +33,7 @@ test('a Grok home from before gets the table at the end, the rest stays byte for
   assert.equal(ensureGatewayBlock(p), 'added');
   const text = readFileSync(p, 'utf8');
   assert.ok(text.startsWith(OLD), 'nothing before it changed');
-  assert.match(text, /\n\[disabled_mcp_tools\]\n__managed_gateway_connectors = \["tasks"\]\n$/);
+  assert.match(text, /\n\[disabled_mcp_tools\]\n__managed_gateway_connectors = \["tasks","cursor"\]\n$/);
   assert.equal(ensureGatewayBlock(p), 'present', 'a second run changes nothing');
   assert.equal(readFileSync(p, 'utf8'), text);
 });
@@ -43,13 +43,21 @@ test('an existing table without the key gets the key, other keys stay', () => {
   assert.equal(ensureGatewayBlock(p), 'key-added');
   assert.equal(
     readFileSync(p, 'utf8'),
-    `[disabled_mcp_tools]\n__managed_gateway_connectors = ["tasks"]\nlinear = ["delete_issue"]\n\n[cli]\nauto_update = false\n`,
+    `[disabled_mcp_tools]\n__managed_gateway_connectors = ["tasks","cursor"]\nlinear = ["delete_issue"]\n\n[cli]\nauto_update = false\n`,
   );
 });
 
-test("a key someone set to other names is left alone (and logged)", () => {
-  const body = `[disabled_mcp_tools]\n__managed_gateway_connectors = ["gmail"]\n`;
-  const p = file('own.toml', body);
-  assert.equal(ensureGatewayBlock(p), 'left');
-  assert.equal(readFileSync(p, 'utf8'), body);
+test('a key with other names keeps them and gets the missing ones', () => {
+  const p = file('own.toml', `[disabled_mcp_tools]\n__managed_gateway_connectors = ["gmail"]\n`);
+  assert.equal(ensureGatewayBlock(p), 'merged');
+  assert.equal(readFileSync(p, 'utf8'), `[disabled_mcp_tools]\n__managed_gateway_connectors = ["gmail","tasks","cursor"]\n`);
+});
+
+test('a Grok home of the last release (tasks only) gets cursor; a connector found at run time is added', () => {
+  const p = file('release.toml', `[cli]\nuse_leader = false\n\n[disabled_mcp_tools]\n__managed_gateway_connectors = ["tasks"]\n`);
+  assert.equal(ensureGatewayBlock(p), 'merged');
+  assert.match(readFileSync(p, 'utf8'), /__managed_gateway_connectors = \["tasks","cursor"\]/);
+  assert.equal(ensureGatewayBlock(p, ['linear-gw']), 'merged');
+  assert.match(readFileSync(p, 'utf8'), /__managed_gateway_connectors = \["tasks","cursor","linear-gw"\]/);
+  assert.equal(ensureGatewayBlock(p, ['linear-gw']), 'present');
 });
