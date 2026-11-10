@@ -124,6 +124,21 @@ export const ModelSchema = z.object({
    * on claude-cli / codex-cli. See docs/setup.md → Local OpenAI-compatible.
    */
   parallelToolCalls: z.boolean().optional(),
+  /**
+   * What a builder (agent.yaml `kind: builder`) gets on this model
+   * instead; chat agents keep the values above. `maxTokens` replaces the
+   * output cap, `thinking` the default thinking level (`reasoning.default`).
+   * A build writes whole files and thinks before each, so it wants a
+   * larger cap and more thinking than a chat answer (measured 2026-11-10,
+   * private/builder-research/2026-11-09_dsh-vs-somora).
+   */
+  builder: z
+    .object({
+      maxTokens: z.number().int().positive().optional(),
+      thinking: z.enum(['off', 'low', 'medium', 'high']).optional(),
+    })
+    .strict()
+    .optional(),
 });
 export type Model = z.infer<typeof ModelSchema>;
 
@@ -2832,6 +2847,23 @@ export interface ResolvedModel {
   provider: Provider;
   modelId: string;
   model: Model;
+}
+
+/**
+ * The model as an agent of this kind sees it: for a builder, the
+ * model's `builder:` values over its own. A chat agent, or a model
+ * without the block, gets it as is.
+ */
+export function modelForKind(resolved: ResolvedModel, kind: string | undefined): ResolvedModel {
+  const b = resolved.model.builder;
+  if (kind !== 'builder' || !b) return resolved;
+  const m = resolved.model;
+  const model: Model = {
+    ...m,
+    ...(b.maxTokens !== undefined ? { maxTokens: b.maxTokens } : {}),
+    ...(b.thinking ? { reasoning: { ...m.reasoning, default: b.thinking } } : {}),
+  };
+  return { ...resolved, model };
 }
 
 export function resolveModelRef(config: Config, ref: string): ResolvedModel | null {

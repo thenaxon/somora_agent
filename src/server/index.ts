@@ -22,7 +22,7 @@ import { resolve as resolvePath } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, currentConfigProblem, getFreshConfig, loadConfig, primeFreshConfig } from '../config/loader.ts';
 import { stat as statFile } from 'node:fs/promises';
-import { workerChain, type Config, resolveAnyRef, describeModelRefs } from '../config/types.ts';
+import { workerChain, type Config, resolveAnyRef, modelForKind, describeModelRefs } from '../config/types.ts';
 import { storeAttachment } from '../attachments/store.ts';
 import { videoRequestFromBody, VideoRequestError } from '../videogen/request.ts';
 import { checkSlot as checkVideoSlot, listJobs as listVideoJobs } from '../videogen/jobs.ts';
@@ -356,7 +356,8 @@ export function resolveEffectiveModel(
   const override = sessionMeta.modelOverride;
   const ref = (typeof override === 'string' && override.length > 0 ? override : persona.model);
   if (!ref) return null;
-  return resolveAnyRef(config, ref);
+  const resolved = resolveAnyRef(config, ref);
+  return resolved ? modelForKind(resolved, persona.kind) : null;
 }
 
 // Runs the primary engine. If the primary fails before yielding any

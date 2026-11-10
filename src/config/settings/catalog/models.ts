@@ -61,6 +61,28 @@ export const MODELS: Catalog = {
     unit: 'tokens',
     docs: 'models.md#model-fields',
   },
+  'providers.*.models.*.builder': {
+    label: 'For builders',
+    help: 'What builder agents get on this model instead: a longer answer limit and their own default thinking level.',
+    more: 'A builder writes whole files and thinks before each one, so it needs more room per reply than a chat answer. Chat agents on the same model keep the values above. An agent or a session that sets its own thinking level still wins.',
+    level: 'advanced',
+    docs: 'models.md#model-fields',
+  },
+  'providers.*.models.*.builder.maxTokens': {
+    label: 'Longest answer for builders',
+    help: 'Replaces the longest answer when a builder runs on this model; openai-compatible only.',
+    more: 'Measured with deepseek-v4.1-flash: 65536 for builders, 16384 for chat agents.',
+    level: 'advanced',
+    unit: 'tokens',
+    docs: 'models.md#model-fields',
+  },
+  'providers.*.models.*.builder.thinking': {
+    label: 'Default thinking level for builders',
+    help: 'The thinking level a builder uses on this model when neither the session nor the agent sets one.',
+    more: 'Replaces the default thinking level for builders only. Measured with deepseek-v4.1-flash: medium.',
+    level: 'advanced',
+    docs: 'thinking.md#where-the-level-comes-from',
+  },
   'providers.*.models.*.reasoning': {
     label: 'Thinking',
     help: 'How hard this model thinks by default, and which words it understands for thinking levels.',

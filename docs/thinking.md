@@ -46,7 +46,7 @@ The first source that has a value wins.
 |---|---|---|
 | 1 | The session | `/thinking <level>`, or the THINKING section of the `•••` session menu in the web client |
 | 2 | The agent | `thinking:` in `agent.yaml` |
-| 3 | The model | `reasoning.default` of the model in `config.yaml` |
+| 3 | The model | `reasoning.default` of the model in `config.yaml`; for a [builder](builder.md), `builder.thinking` of the model when set |
 | 4 | Nothing set | somora sends no level and the model uses its own default |
 
 In the TUI, `/thinking -` does the same as `/thinking default`: it

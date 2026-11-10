@@ -74,15 +74,16 @@ them any time in the task panel.
 |---|---|---|---|
 | Mode | **attended** | a person opened the session | `ask_user` is offered. The builder asks at a real fork in the road. |
 | Mode | **unattended** | an agent handed over an order | `ask_user` is hidden. The builder decides itself, notes each decision in its report and never waits. |
-| Phase | **plan** | a person opened the session | The builder reads, searches, runs read-only commands and asks. The only file it writes is the plan. |
-| Phase | **build** | an agent handed over an order | The builder edits, runs, tests and reports. A plan file, if there is one, counts as approved. |
+| Phase | **build** | always, unless a plan is asked for | The builder edits, runs, tests and reports. A plan file, if there is one, counts as approved. |
+| Phase | **plan** | you switch it on in the task panel, or an order asks for it (`phase: "plan"`) | The builder reads, searches, runs read-only commands and asks. The only file it writes is the plan. |
 
 In the plan phase these tools are hidden: `file_write`, `file_patch`,
 `process`, `spawn_subagent` and `subagent_result`. The builder ends the
 phase by saying "Plan ready" and stopping.
 
 **Go** switches the phase to build and sends the builder a message: the
-plan is approved, execute it, keep the task list, end with the report.
+plan is approved, execute it, end with the report. A reply in the chat
+does not end the plan phase; press Go.
 So a project can start directly with the builder, with no other agent
 in between.
 
@@ -438,17 +439,25 @@ byte. In order:
 1. **Identity and environment.** One line who it is, then working
    directory, whether that is a git repository, platform, model, date
    and language servers.
-2. **Harness rules.** How to work: everything through tools, read
-   before patching, search before assuming, verify after every change
-   with the repository's own build and test commands, the smallest
-   correct change, git only when asked, no secrets. A fix covers the
-   cause and the sibling code paths. Every response either makes
-   progress with a tool call or is the final report.
-3. **Done and messages.** Done means every requirement checked, test
-   output read, the diff looked at, nothing still running, nothing
-   invented. A `[somora]` message is a notice from the harness, or a
-   message someone sent during the turn. Then what the final report
+2. **Harness rules.** Short rules for the tools: everything through
+   tools, read a file before changing it (unless the builder just wrote
+   it), file tools instead of shell commands for files, check every exit
+   code, do not repeat a failing call. Git only when asked, no secrets.
+   Every response either makes progress or is the final report.
+
+   The builder verifies by running its work: the project's own tests
+   and build, and for a web page or a game a screenshot it looks at.
+   Background jobs are not polled.
+3. **Done and messages.** Done means every requirement checked and
+   nothing invented. A `[somora]` message is a notice from the harness,
+   or a message someone sent during the turn. Then what the final report
    contains.
+
+The rules are kept short on purpose. On the same model a prompt of
+tool rules alone did every task of a five-task comparison at least as
+well as an earlier, much longer prompt that also prescribed a method
+(tests as proof, evidence for every claim, a task list kept every few
+rounds), and better on the hardest task.
 4. **Team, compact.** The principal and the colleagues it can consult
    with `agent_ask`, one line each, plus the team rules.
 5. **Rules for this builder.** The body of its `AGENTS.md`.
@@ -498,14 +507,6 @@ off.
 The session file keeps every record, and the chat shows an
 `engine_meta` row `context_compacted`. When no compaction worker
 answers, old tool results are shortened as for chat agents.
-
-**A stale task list.** After twelve tool rounds without `todo_write`
-while items are open, the builder gets one line asking for an update.
-The list is what you watch.
-
-**Checkpoints.** Every 100 tool rounds the builder is told to refresh
-its task list and append a short status to its report file, so a crash
-late in a long build loses minutes.
 
 **No round cap.** A builder has no `maxRounds` unless its `agent.yaml`
 sets one. A round count says nothing about progress. The brakes are the tool-call

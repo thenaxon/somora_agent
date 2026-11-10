@@ -218,8 +218,8 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
     const state = await patchBuilderState(sessionMetaStore, r.agent, r.session, { phase: 'build' });
     await publish(r.agent, r.session, { event: 'builder_state', data: { mode: state.mode, phase: state.phase, planPath: state.planPath } });
     const text =
-      `The plan${state.planPath ? ` at ${state.planPath}` : ''} is approved — GO. Execute it now: read the plan first, keep the task list with todo_write, ` +
-      `verify each step, and end with the report.${body.note ? `\n\n${body.note.trim()}` : ''}`;
+      `The plan${state.planPath ? ` at ${state.planPath}` : ''} is approved — GO. Execute it now: read the plan first, ` +
+      `check your work as you go, and end with the report.${body.note ? `\n\n${body.note.trim()}` : ''}`;
     const turnId = randomUUID();
     // An order that came from another agent (builder_dispatch with
     // phase: plan) has an orderer waiting for the result. The Go turn

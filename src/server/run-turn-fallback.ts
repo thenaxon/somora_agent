@@ -16,7 +16,7 @@
 // safely re-runnable — the next candidate would execute the tools a
 // second time. Better a visible error than a silent double-execution.
 
-import { resolveAnyRef, type Config, type ResolvedModel } from '../config/types.ts';
+import { resolveAnyRef, modelForKind, type Config, type ResolvedModel } from '../config/types.ts';
 import { isAvailabilityMessage } from '../engine/availability.ts';
 import { markModelAvailable, markModelUnavailable, modelRef, modelUnavailable, unavailableReason } from '../engine/model-availability.ts';
 import { engineRegistry } from '../engine/registry.ts';
@@ -30,6 +30,10 @@ interface Args {
   fallbackRefs: readonly string[];
   baseInput: Omit<TurnInput, 'resolvedModel'>;
   config?: Config;
+  /** The turn's thinking level came from the primary model's default
+   *  (neither the session nor the agent set one): a backup then runs
+   *  with its own default, not the primary's. */
+  thinkingFromModel?: boolean;
 }
 
 const REASON_MAX = 300;
@@ -171,7 +175,9 @@ export async function* runTurnWithFallback(args: Args): AsyncGenerator<Normalize
   const tried = new Set<string>([label(primary)]);
   for (let hop = 0; hop < fallbackRefs.length; hop++) {
     const ref = fallbackRefs[hop]!;
-    const candidate = resolveAnyRef(config, ref);
+    const found = resolveAnyRef(config, ref);
+    // A builder's backup runs with the backup's builder values too.
+    const candidate = found ? modelForKind(found, baseInput.agentKind) : null;
     if (!candidate) {
       logger.warn({ msg: 'engine.fallback_unresolved', hop: hop + 1, ref, after: label(current) });
       hops.push({ model: ref, reason: `fallback '${ref}' could not be resolved` });
@@ -241,6 +247,11 @@ export async function* runTurnWithFallback(args: Args): AsyncGenerator<Normalize
       resolvedModel: candidate,
       idleTimeoutMs: pickIdleTimeoutForEngine(config.engineWatchdog, candidate.provider.engine),
     };
+    if (args.thinkingFromModel) {
+      const own = candidate.model.reasoning?.default;
+      if (own) input.thinking = own;
+      else delete input.thinking;
+    }
     current = candidate;
     failed.message = null;
     for await (const ev of attempt(current, input, onFail)) {

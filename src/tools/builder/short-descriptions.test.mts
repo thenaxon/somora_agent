@@ -16,7 +16,7 @@ assert.equal(builderToolDescription('browser', 'LONG'), 'LONG');
 assert.notEqual(builderToolDescription('file_read', 'LONG'), 'LONG');
 
 // the full harness mentions every section
-for (const must of ['# Task list', 'ask_user', '# Helpers and colleagues', 'file_patch', 'Git:']) {
+for (const must of ['# Task list', 'ask_user', '# Helpers and colleagues', 'file_patch', 'Git:', 'screenshot']) {
   assert.ok(BUILDER_HARNESS_PROMPT.includes(must), must);
 }
 // hidden tools drop their sections
@@ -30,7 +30,6 @@ const unattended = buildBuilderHarnessPrompt(new Set(['file_read', 'file_patch',
 assert.ok(unattended.includes('# Task list'));
 assert.ok(unattended.includes('agent_ask reaches a colleague'));
 assert.ok(!unattended.includes('spawn_subagent starts'));
-// todo_write's short text carries the rules that keep the panel honest (nova, 2026-09-26)
-assert.ok(/never a batch/.test(BUILDER_SHORT_DESCRIPTIONS.todo_write!), 'todo_write short description forbids batch completions');
-assert.ok(/in the round it is verified/.test(BUILDER_SHORT_DESCRIPTIONS.todo_write!));
+// todo_write is offered, not enforced: no per-round duties (dsh comparison 2026-11-10)
+assert.ok(/done and checked/.test(BUILDER_SHORT_DESCRIPTIONS.todo_write!));
 console.log('short-descriptions.test: ok');

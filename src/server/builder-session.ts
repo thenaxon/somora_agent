@@ -11,10 +11,12 @@
 //                       plan): edit, run, test, report.
 //
 // Defaults are set on the first turn of a session from where that turn
-// came from: a person opening the session gets attended + plan (they
-// are about to describe a project), an agent handing over a brief gets
-// unattended + build (the plan is in the brief). Both are switches in
-// the task panel and fields of PATCH …/builder.
+// came from: a person opening the session gets attended, an agent
+// handing over a brief gets unattended. Both start in build: a plan
+// phase only when someone asks for it (the panel switch, PATCH
+// …/builder, builder_dispatch phase: plan). A plan phase by default
+// left a builder without write tools when the person said "ok go" in
+// the chat instead of pressing Go (2026-11-09, dsh comparison).
 
 import { access, mkdir, rename } from 'node:fs/promises';
 import { basename, dirname, extname } from 'node:path';
@@ -77,7 +79,7 @@ export function defaultBuilderState(origin: TurnOrigin, workdir: string): Builde
   const human = origin.kind === 'human';
   return {
     mode: human ? 'attended' : 'unattended',
-    phase: human ? 'plan' : 'build',
+    phase: 'build',
     planPath: `${workdir.replace(/\/+$/, '')}/${DEFAULT_PLAN_FILE}`,
     todos: [],
     initializedAt: Date.now(),
@@ -178,7 +180,7 @@ export function renderBuilderSessionBlock(
     );
   } else {
     lines.push(
-      `- Phase: BUILD. ${state.planPath ? `If a plan exists at ${state.planPath}, it is approved: read it first and execute it.` : 'Execute the task you were given.'} Keep the task list current with todo_write, verify as you go, and end with the report.`,
+      `- Phase: BUILD. ${state.planPath ? `If a plan exists at ${state.planPath}, it is approved: read it first and execute it.` : 'Execute the task you were given.'}`,
     );
   }
   if (opts.projectFolder !== false && opts.writeAllow && opts.writeAllow.length > 0) {

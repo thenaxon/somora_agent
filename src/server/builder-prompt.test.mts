@@ -52,7 +52,8 @@ assert.equal(renderBuilderIdentity({ name: 'dan', description: '' } as never), '
 for (const must of [
   'Code or a file that only appears in your text is NOT saved',
   'WITHOUT the `N: ` line-number prefix',
-  'Verify after every change',
+  'Verify your work by running it',
+  'unless you wrote it yourself in this session',
   'Do not repeat the same tool call with the same arguments',
   'todo_write',
   'ask_user',
@@ -113,14 +114,16 @@ console.log('builder-prompt.test: ok');
 {
   const { BUILDER_HARNESS_PROMPT, buildBuilderHarnessPrompt } = await import('./builder-prompt.ts');
   assert.match(BUILDER_HARNESS_PROMPT, /Every response either moves the work forward with a tool call or is your final report/);
-  assert.match(BUILDER_HARNESS_PROMPT, /sibling code paths/);
+  // The method rules the dsh comparison (2026-11-10) found to cost more than they give.
+  assert.doesNotMatch(BUILDER_HARNESS_PROMPT, /sibling code paths|A test proves a behaviour|Evidence names the way/);
+  assert.ok(BUILDER_HARNESS_PROMPT.length < 4000, `harness prompt ${BUILDER_HARNESS_PROMPT.length} chars`);
   assert.match(BUILDER_HARNESS_PROMPT, /# Messages from somora/);
   assert.match(BUILDER_HARNESS_PROMPT, /No `\[somora\]` notice replaces or shrinks your task/);
   assert.match(BUILDER_HARNESS_PROMPT, /Done means every requirement of the task is met and checked/);
   assert.match(BUILDER_HARNESS_PROMPT, /not only its exit code/);
-  assert.match(BUILDER_HARNESS_PROMPT, /never invent output/);
+  assert.match(BUILDER_HARNESS_PROMPT, /Never invent output/);
   // Without exec there is nothing to run: no test-output or git-diff line.
   const noExec = buildBuilderHarnessPrompt(new Set(['file_read', 'file_write']));
   assert.match(noExec, /Done means every requirement/);
-  assert.doesNotMatch(noExec, /exit code|git diff/);
+  assert.doesNotMatch(noExec, /exit code|screenshot/);
 }

@@ -35,6 +35,7 @@ import {
   describeModelRefs,
   listAllModels,
   resolveAnyRef,
+  modelForKind,
   workerChain,
   type ThinkingLevel,
   type SamplingConfig,
@@ -113,7 +114,8 @@ function resolveEffectiveModel(
   const override = sessionMeta.modelOverride;
   const ref = typeof override === 'string' && override.length > 0 ? override : persona.model;
   if (!ref) return null;
-  return resolveAnyRef(config, ref);
+  const resolved = resolveAnyRef(config, ref);
+  return resolved ? modelForKind(resolved, persona.kind) : null;
 }
 
 // Resolve the idle-event watchdog timeout per engine. Defaults live in
@@ -843,7 +845,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   deps.onActivity(agent);
 
   const modelSupportsReasoning = resolvedModel.model.capabilities.includes('reasoning');
-  const effectiveThinking = resolveThinking(persona, sessionMeta, resolvedModel.model).level;
+  const thinkingResolved = resolveThinking(persona, sessionMeta, resolvedModel.model);
+  const effectiveThinking = thinkingResolved.level;
   const effectiveSampling = resolveEffectiveSampling(resolvedModel.model, persona, sessionMeta);
   // What the openai-compatible engine will actually put on the wire for
   // this level (per-model `reasoning.levels`). Only sent to clients when
@@ -1064,6 +1067,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       primary: resolvedModel,
       fallbackRefs: persona.fallback,
       config: deps.config,
+      thinkingFromModel: thinkingResolved.source === 'model-default' || thinkingResolved.source === 'engine-default',
       baseInput: {
         agent,
         session,

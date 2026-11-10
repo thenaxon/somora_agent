@@ -42,9 +42,7 @@ export const BUILDER_SHORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
   process: 'Manage background exec jobs: list, poll, log (tail), write (stdin), kill.',
   todo_write:
     'Replace the task list of this session (the person sees it live). Items: content, status (pending | ' +
-    'in_progress | completed | cancelled), priority. Exactly one in_progress at a time: set it the moment ' +
-    'you start an item, mark the item completed in the round it is verified — one at a time, never a ' +
-    'batch at the end. If blocked, keep it in_progress and add a follow-up naming the blocker.',
+    'in_progress | completed | cancelled), priority. Mark an item completed when it is done and checked.',
   ask_user:
     'Ask the person watching a question with 2-6 options (free text is always possible). Waits for the ' +
     'answer or a timeout; returns {answered, answers, text}. Only for a real fork you cannot decide yourself. ' +

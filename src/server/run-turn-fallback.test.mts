@@ -260,3 +260,57 @@ test('an ordinary failure still falls back to a smaller model', async () => {
   const out = await run(['small']);
   assert.equal(out.filter((e) => e.kind === 'model_fallback')[0]?.actual, 'a/small');
 });
+
+// A level that came from the primary's model default does not ride into
+// the backup: the backup uses its own default (builder.thinking included).
+// A level the session or agent set stays.
+test('backup runs with its own default thinking, and a builder with its builder value', async () => {
+  resetModelAvailability();
+  const seen = new Map<string, unknown>();
+  const cfg: any = {
+    ...config,
+    providers: {
+      a: {
+        ...config.providers.a,
+        models: [
+          { ...mk('p1'), reasoning: { default: 'low' } },
+          { ...mk('b1'), reasoning: { default: 'high' }, builder: { thinking: 'medium' } },
+          mk('b2'),
+        ],
+      },
+    },
+  };
+  const orig = (engineRegistry as any)['openai-compatible'].runTurn;
+  (engineRegistry as any)['openai-compatible'].runTurn = async function* (input: any) {
+    seen.set(input.resolvedModel.modelId, input.thinking);
+    yield* orig(input);
+  };
+  try {
+    const p1 = { providerName: 'a', modelId: 'p1', model: cfg.providers.a.models[0], provider: cfg.providers.a };
+    behaviour.set('p1', 'die');
+    behaviour.set('b1', 'die');
+    const run = async (agentKind: string, thinkingFromModel: boolean) => {
+      seen.clear();
+      for await (const _ of runTurnWithFallback({
+        primary: p1 as any,
+        fallbackRefs: ['b1', 'b2'],
+        config: cfg,
+        thinkingFromModel,
+        baseInput: { agent: 'x', session: 's', thinking: 'low', agentKind } as any,
+      })) {
+        /* drain */
+      }
+    };
+    await run('chat', true);
+    assert.equal(seen.get('b1'), 'high', 'chat backup: its own reasoning.default');
+    assert.equal(seen.get('b2'), undefined, 'backup without a default: nothing sent');
+    await run('builder', true);
+    assert.equal(seen.get('b1'), 'medium', 'builder backup: builder.thinking');
+    await run('builder', false);
+    assert.equal(seen.get('b1'), 'low', 'a level the session or agent set stays');
+  } finally {
+    (engineRegistry as any)['openai-compatible'].runTurn = orig;
+    behaviour.delete('p1');
+    behaviour.delete('b1');
+  }
+});
