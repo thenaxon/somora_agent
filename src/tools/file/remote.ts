@@ -314,6 +314,8 @@ export async function remoteFetch(args: {
   const remoteHome = await getResourceHome(args.resourceName, args.resource);
   const policy = checkRemoteReadAllowed(remotePath, remoteHome);
   if (!policy.ok) throw new Error(policy.reason);
+  const realPolicy = checkRemoteReadAllowed(await remoteRealpath(client, remotePath), remoteHome);
+  if (!realPolicy.ok) throw new Error(realPolicy.reason);
   const buf = await withSftp(client, async (sftp) => {
     const st = await new Promise<Stats>((resolve, reject) =>
       sftp.stat(remotePath, (err, s) =>
@@ -454,19 +456,24 @@ export async function remoteSearch(args: {
   // `resource.workspace ?? '.'` literal is fine here even with a
   // tilde, no SFTP-resolution needed. Only relative path-args go
   // through resolveRemotePath for absolute disambiguation.
-  const remotePath = args.path
-    ? await resolveRemotePath(args.path, args.resourceName, args.resource)
-    : (args.resource.workspace ?? '.');
+  // The workspace default goes through the same resolution: quoted for
+  // the shell below, a literal `~/proj` was never expanded and rg found
+  // nothing (exit 2).
+  const remotePath = await resolveRemotePath(args.path ?? args.resource.workspace ?? '.', args.resourceName, args.resource);
   // Block searching inside remote credential stores — file_search reads
   // and returns file contents (match lines), so it's a read path. Only
   // the model-supplied explicit path is checked; the workspace default
   // is operator-configured. The path is already SFTP-resolved to an
   // absolute when args.path is set. (Juni-Audit 2026-06.)
-  if (args.path) {
-    const remoteHome = await getResourceHome(args.resourceName, args.resource);
-    const policy = checkRemoteReadAllowed(remotePath, remoteHome);
+  const remoteHome = await getResourceHome(args.resourceName, args.resource);
+  for (const p of [remotePath, await remoteRealpath(client, remotePath)]) {
+    const policy = checkRemoteReadAllowed(p, remoteHome);
     if (!policy.ok) throw new Error(policy.reason);
   }
+  // The start was allowed; a hit below it may still not be (a search
+  // from /etc reaching /etc/shadow, from ~ reaching ~/.aws). Drop those
+  // hits, as the local search does.
+  const allowed = (path: string): boolean => checkRemoteReadAllowed(path.startsWith('/') ? path : `${remotePath.replace(/\/+$/, '')}/${path}`, remoteHome).ok;
   const cmd = `rg ${rgArgs(args.pattern, limit, args).map(shQ).join(' ')} -- ${shQ(remotePath)}`;
   const result = await remoteExec(client, cmd, { timeoutMs: 30_000 });
   if (result.code !== 0 && result.stdout === '') {
@@ -488,12 +495,12 @@ export async function remoteSearch(args: {
     throw new Error(`file_search on '${args.resourceName}': rg exited ${result.code}: ${result.stderr.slice(0, 300)}`);
   }
   if (args.filesOnly) {
-    const all = result.stdout.split('\n').filter((l) => l.trim() !== '');
+    const all = result.stdout.split('\n').filter((l) => l.trim() !== '' && allowed(l.trim()));
     const files = all.slice(0, limit);
     return { count: files.length, truncated: result.truncated || all.length > limit, hits: [], files };
   }
   const parsed = parseRgJson(result.stdout, limit);
-  const budgeted = applyTextBudget(parsed.hits);
+  const budgeted = applyTextBudget(parsed.hits.filter((h) => allowed(h.path)));
   return {
     count: budgeted.hits.length,
     truncated: result.truncated || parsed.hitLimitReached || budgeted.truncated,
@@ -504,6 +511,19 @@ export async function remoteSearch(args: {
 /** Single-quote a value for sh — escape any embedded single quotes. */
 function shQ(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/** The path with symlinks resolved on the remote (SFTP realpath), or the
+ *  path itself when it does not exist yet. The read policy is checked on
+ *  this one too: locally symlinks are resolved before the check, and
+ *  `~/k -> ~/.ssh/id_ed25519` was readable remotely (Fable review
+ *  2026-11-10 Nr. 11). */
+async function remoteRealpath(client: Client, path: string): Promise<string> {
+  try {
+    return await withSftp(client, (sftp) => new Promise<string>((res, rej) => sftp.realpath(path, (err, p) => (err ? rej(err) : res(p)))));
+  } catch {
+    return path;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -544,6 +564,9 @@ export async function remoteList(args: {
     const realRoot = await new Promise<string>((res, rej) => {
       sftp.realpath(fullPath, (err, p) => (err ? rej(err) : res(p)));
     });
+    // A symlink to a blocked folder is listed as that folder.
+    const realPolicy = checkRemoteReadAllowed(realRoot, remoteHome);
+    if (!realPolicy.ok) throw new Error(realPolicy.reason);
     if (recursive && args.respectGitignore !== false) {
       const files = await remoteRgFiles(conn, realRoot);
       if (files !== null) {
