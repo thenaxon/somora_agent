@@ -1,4 +1,5 @@
 import { resolveBrowserSession } from '../browser/session.ts';
+import { fileURLToPath } from 'node:url';
 import { killRunningLocalExecs } from '../tools/exec/local.ts';
 import { readLogSince, readLogTail } from './logs.ts';
 import { serve } from '@hono/node-server';
@@ -847,7 +848,9 @@ const bindHost = process.env.SOMORA_HOST ?? configHost;
 // reach back to /chat/send-sync. When the server binds to 0.0.0.0
 // for LAN access, that's not a valid client target — substitute
 // 127.0.0.1 in the env so children loopback rather than guessing.
-if (bindHost === '0.0.0.0') {
+// `::` (all IPv6, usually all IPv4 too) is the same case: children built
+// `http://:::18737` and every call back from an MCP child failed.
+if (bindHost === '0.0.0.0' || bindHost === '::' || bindHost === '[::]') {
   process.env.SOMORA_HOST = '127.0.0.1';
 }
 
@@ -898,7 +901,10 @@ if (tlsConf?.publicHost && bindHost === '127.0.0.1') {
 // `web/dist/` (vite output, base `/web/`), so mounting them at
 // `/web/*` makes the same-origin path work in production. Dev still
 // uses vite at :5173 with a proxy to this server.
-const webDistDir = new URL('../../web/dist/', import.meta.url).pathname;
+// fileURLToPath, not .pathname: a space or umlaut in the install path
+// stays percent-encoded in .pathname and /web answered 404 (Fable review
+// Nr. 25).
+const webDistDir = fileURLToPath(new URL('../../web/dist/', import.meta.url));
 // Must be registered BEFORE the static mount: `/web/*` also matches the
 // bare `/web`, and the rewrite's optional slash turns it into `/` — so a
 // mount-first order serves index.html at `/web` with 200 and the redirect
@@ -923,7 +929,7 @@ app.use(
 // passthrough. Service-worker scope is `/mobile/`, manifest start_url
 // is `/mobile/` — both match this mount, so "add to home screen"
 // from a phone parks the user at the right entry point.
-const mobileDistDir = new URL('../../web-mobile/dist/', import.meta.url).pathname;
+const mobileDistDir = fileURLToPath(new URL('../../web-mobile/dist/', import.meta.url));
 // Same ordering requirement as `/web` above.
 app.get('/mobile', (c) => c.redirect('/mobile/'));
 app.use(
