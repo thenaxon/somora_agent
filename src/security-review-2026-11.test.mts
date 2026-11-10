@@ -26,6 +26,12 @@ test('Nr. 1: the MCP child config (on the Claude Code command line) carries no k
   assert.equal(env.SOMORA_KEY, undefined);
   assert.equal(env.FAKE_SKILL_SECRET, undefined);
   assert.equal(env.PATH, process.env.PATH);
+  // Claude Code itself keeps what somora.env configures for it (codex
+  // review: CLAUDE_CONFIG_DIR set there must reach it), minus the key.
+  const { envWithoutLoginKey } = await import('./server/env-file.ts');
+  const cli = envWithoutLoginKey();
+  assert.equal(cli.SOMORA_KEY, undefined);
+  assert.equal(cli.FAKE_SKILL_SECRET, 'hunter2');
 });
 
 test('Nr. 10: a local external agent starts without the key, the secrets and somora plumbing', async () => {

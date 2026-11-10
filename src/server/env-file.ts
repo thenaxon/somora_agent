@@ -61,6 +61,17 @@ export function secretFreeEnv(env: NodeJS.ProcessEnv = process.env): Record<stri
   return out;
 }
 
+/** This process's environment without the login key only — for a
+ *  program that may need what somora.env configures for it (Claude Code:
+ *  CLAUDE_CONFIG_DIR, an API key, a proxy) but has no use for somora's
+ *  own key. Its environment is private to this user; its command line
+ *  is not, which is why the MCP child gets secretFreeEnv instead. */
+export function envWithoutLoginKey(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) if (typeof v === 'string' && k !== 'SOMORA_KEY') out[k] = v;
+  return out;
+}
+
 export function loadSomoraEnvFile(path: string = DEFAULT_ENV_FILE): LoadEnvFileResult {
   let stat;
   try {
