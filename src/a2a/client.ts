@@ -76,6 +76,17 @@ export async function getCard(baseUrl: string, opts: { token?: string; maxAgeMs:
   }
   const ep = cardEndpoint(card);
   if (!ep) throw new A2AError(`agent card at ${url} names no JSON-RPC endpoint`, 'protocol');
+  // The peer token goes to this endpoint, so it must be where the card
+  // was fetched from (the configured a2a.url): a card served from a
+  // tampered or foreign system could otherwise point somora, token and
+  // all, at another host or at 127.0.0.1 (Fable review 2026-11-10 Nr. 22).
+  let sameOrigin = false;
+  try {
+    sameOrigin = new URL(ep.url, url).origin === new URL(url).origin;
+  } catch {
+    sameOrigin = false;
+  }
+  if (!sameOrigin) throw new A2AError(`agent card at ${url} names an endpoint on another host (${ep.url}); somora sends its token only to the configured one`, 'protocol');
   const resolved: ResolvedCard = { card, endpoint: ep.url, version: ep.version, streaming: card.capabilities?.streaming === true, fetchedAt: Date.now() };
   cards.set(key, resolved);
   return resolved;
