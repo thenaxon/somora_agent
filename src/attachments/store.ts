@@ -9,6 +9,8 @@
 // existing magic-bytes sniffer (multimodal/mime.ts) — extensions are
 // untrusted (a `screenshot.txt` could be a renamed PNG).
 
+import { Transform } from 'node:stream';
+import { IMAGE_SOURCE_BYTES } from '../multimodal/model-image.ts';
 import { fitImageFileForModel, imageSourceCap } from '../multimodal/model-image.ts';
 import { createHash } from 'node:crypto';
 import {
@@ -95,9 +97,24 @@ export async function storeAttachment(args: {
       : Readable.fromWeb(
           args.body as unknown as import('node:stream/web').ReadableStream,
         );
-  source.on('data', (chunk: Buffer) => hasher.update(chunk));
+  // The per-kind caps are checked after the sniff; the stream itself
+  // stops at the largest of them, so a broken or hostile client cannot
+  // fill the disk first (Fable review 2026-11-10 Nr. 23).
+  const ceiling = Math.max(IMAGE_SOURCE_BYTES, args.config.maxPdfBytes, args.config.maxTextBytes, args.config.maxImageBytes);
+  let seen = 0;
+  const limiter = new Transform({
+    transform(chunk: Buffer, _enc, done) {
+      seen += chunk.length;
+      if (seen > ceiling) {
+        done(new Error(`upload exceeds ${ceiling} bytes, the largest attachment somora accepts`));
+        return;
+      }
+      hasher.update(chunk);
+      done(null, chunk);
+    },
+  });
   try {
-    await pipeline(source, sink);
+    await pipeline(source, limiter, sink);
   } catch (err) {
     try {
       rmSync(tmpPath);
