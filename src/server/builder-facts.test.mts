@@ -128,8 +128,8 @@ test('a background job still running is listed only for the session that started
   const job = (id: string, session: string) => ({ job_id: id, agent: 'factsj', session, target: 'local', command: `serve ${session}`, started_at: Date.now(), state: 'running' as const, pid: process.pid });
   await ensureJobDir('factsj', 'job_1_mine');
   await writeMeta('factsj', job('job_1_mine', 'mine'));
-  await ensureJobDir('factsj', 'job_2_other');
-  await writeMeta('factsj', job('job_2_other', 'other'));
+  await ensureJobDir('factsj', 'job_2_othr');
+  await writeMeta('factsj', job('job_2_othr', 'other'));
   const block = (await collectBuilderFacts({ agent: 'factsj', session: 'mine', workdir: dir, since }))!;
   assert.match(block, /Still running in the background: `serve mine`/);
   assert.doesNotMatch(block, /serve other/);

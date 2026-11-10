@@ -29,6 +29,7 @@ import {
   probeLocalJob,
   readJobLog,
   readMeta,
+  JOB_ID_RE,
   type JobMeta,
 } from './job-store.ts';
 import { skillEnvScopeForCommand, skillEnvStripHint } from '../../skills/env-scope.ts';
@@ -622,7 +623,7 @@ const ProcessInput = z
       .describe(PROCESS_FIELD.action),
     job_id: z
       .string()
-      .min(1)
+      .regex(JOB_ID_RE, 'a job id as returned by exec background:true (job_<digits>_<4 chars>)')
       .optional()
       .describe(PROCESS_FIELD.job_id),
     text: z
@@ -726,7 +727,7 @@ export const processTool: ToolDefinition<z.infer<typeof ProcessInput>, ProcessRe
     type: 'object',
     properties: {
       action: { type: 'string', enum: ['list', 'poll', 'log', 'write', 'kill'], description: PROCESS_FIELD.action },
-      job_id: { type: 'string', description: PROCESS_FIELD.job_id },
+      job_id: { type: 'string', pattern: '^job_\\d+_[a-z0-9]{4}$', description: PROCESS_FIELD.job_id },
       text: { type: 'string', description: PROCESS_FIELD.text },
       tail_lines: { type: 'integer', minimum: 1, maximum: 2000, default: 50, description: PROCESS_FIELD.tail_lines },
       signal: {

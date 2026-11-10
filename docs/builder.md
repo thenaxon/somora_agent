@@ -1,15 +1,15 @@
 # Builder agents
 
 A builder is an agent made for writing software. It works in a
-repository on the machine somora runs on: it reads the code, makes a
-plan, waits for your Go, then edits, runs and tests until the job is
-done. You talk to it in the chat like to any other agent, and another
+repository on the machine somora runs on: it reads the code, edits,
+runs and tests until the job is done, and looks at what it built. You talk to it in the chat like to any other agent, and another
 agent can hand it an order.
 
 ## What you get
 
-- **Plan first, then build.** The builder writes a plan file and stops.
-  Nothing in the repository changes until you press Go.
+- **Builds straight away, plans when you ask.** A new session starts
+  building. Switch on the plan phase in the task panel and the builder
+  writes a plan file and waits for your Go.
 - **A task panel beside the chat.** You see the task list, how long the
   turn has been running and what it is doing right now.
 - **Questions with buttons.** At a real fork the builder asks you and

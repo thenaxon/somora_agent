@@ -2,6 +2,7 @@
 // (Subscription auth path). The provider config has no baseUrl/apiKey —
 // the binary at ~/.local/bin/claude already holds the user's session.
 
+import { secretFreeEnv } from '../server/env-file.ts';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -457,6 +458,9 @@ export const claudeCliEngine: AgentEngine = {
           model: resolvedModel.modelId,
           systemPrompt: systemPromptForTurn,
           settingSources: [],
+          // Without the login key and somora.env's secrets: Claude Code's
+          // own environment is readable by every process of this user.
+          env: secretFreeEnv(),
           // claude-code 2.1.142+ surfaces MCP tools to the model only
           // when the meta-tool `ToolSearch` is among the enabled
           // built-ins — the SDK uses ToolSearch as the discovery
@@ -1098,6 +1102,7 @@ export async function compactClaudeSession(args: {
         model: resolvedModel.modelId,
         systemPrompt: args.systemPrompt,
         settingSources: [],
+        env: secretFreeEnv(),
         tools: ['ToolSearch'],
         disallowedTools: KNOWN_ACCOUNT_TOOLS,
         mcpServers: {

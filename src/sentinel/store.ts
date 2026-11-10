@@ -211,8 +211,16 @@ export function countTriggersByAgent(agent: string): number {
 // History (per-trigger JSONL ring)
 // ─────────────────────────────────────────────────────────────────────
 
+/** A trigger id becomes a file name (history, check script, check
+ *  state): letters, digits, `-` and `_` only. `sentinel history` once
+ *  read any .jsonl through `../` (Fable review 2026-11-10). */
+export function assertTriggerIdSafe(id: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`invalid trigger id '${id.slice(0, 60)}'`);
+  return id;
+}
+
 function historyPath(triggerId: string): string {
-  return join(HISTORY_DIR, `${triggerId}.jsonl`);
+  return join(HISTORY_DIR, `${assertTriggerIdSafe(triggerId)}.jsonl`);
 }
 
 /** Append a fire entry to the trigger's history. Caps to ring-size

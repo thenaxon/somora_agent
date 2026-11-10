@@ -4,6 +4,8 @@
 // SSH resources, whose channel then carries stdin/stdout across the LAN.
 // On the agent's machine nothing has to be exposed or unlocked.
 
+import { secretFreeEnv } from '../server/env-file.ts';
+import { stripSomoraInternalEnv } from '../tools/exec/internal-env.ts';
 import { spawn } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import type { Config } from '../config/types.ts';
@@ -49,8 +51,18 @@ export async function startAgentProcess(
   return startOnResource(transport.resource, resource, command);
 }
 
+/** What a local external agent starts with: the server's environment
+ *  without the login key, somora.env's secrets and somora's own plumbing
+ *  (the same strip `exec` applies). It is another program with its own
+ *  model provider; docs/security.md promises it no access to somora. */
+export function externalAgentEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = secretFreeEnv(env);
+  stripSomoraInternalEnv(out);
+  return out;
+}
+
 function startLocal(command: string): AgentProcess {
-  const child = spawn('bash', ['-lc', command], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn('bash', ['-lc', command], { stdio: ['pipe', 'pipe', 'pipe'], env: externalAgentEnv() });
   let tail = '';
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (d: string) => (tail = keepTail(tail, d)));

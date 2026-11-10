@@ -857,6 +857,8 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
 
       case 'history': {
         if (!input.id) return { action: 'history', ok: false, id: '', error: 'history: id required' };
+        // Only a trigger that exists (as GET /sentinel/triggers/:id/history checks).
+        if (!getTrigger(input.id)) return { action: 'history', ok: false, id: input.id, error: `trigger '${input.id}' not found` };
         const entries = await getHistory(input.id, input.limit ?? 50);
         return {
           action: 'history',
