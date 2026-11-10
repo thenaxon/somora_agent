@@ -1710,8 +1710,19 @@ process.on('unhandledRejection', (reason) => {
     stack: reason instanceof Error ? reason.stack : undefined,
   });
 });
+// A log call that fails inside this handler must not throw again:
+// re-entry would loop (2026-11-10, see fileLogStopped in logger.ts).
+let reportingUncaught = false;
 process.on('uncaughtException', (err) => {
-  logger.error({ msg: 'process.uncaught_exception', err: err.message, stack: err.stack });
+  if (reportingUncaught) return;
+  reportingUncaught = true;
+  try {
+    logger.error({ msg: 'process.uncaught_exception', err: err.message, stack: err.stack });
+  } catch {
+    /* the log itself is broken — nothing more to do here */
+  } finally {
+    reportingUncaught = false;
+  }
 });
 
 // SOMORA_DUMP_ROUTES=<file>: write every registered route (method, path,

@@ -84,6 +84,41 @@ if (isTty) {
 }
 const transport = pino.transport({ targets });
 
+// When the log worker dies (a full disk, 2026-11-10) every later write
+// emits 'error' on the transport. Without a listener that became an
+// uncaught exception, whose handler logged it, which emitted the next
+// 'error' — an endless loop that kept the server at ~80 % CPU and made
+// every tool call ~20 s slow. Now the first error is reported once on
+// stderr and every later line goes to stderr instead of the dead worker.
+let fileLogBroken = false;
+transport.on('error', (err: Error) => {
+  if (fileLogBroken) return;
+  fileLogBroken = true;
+  try {
+    process.stderr.write(
+      `[somora] server log stopped (${err.message}); log lines go to stderr until the server restarts\n`,
+    );
+  } catch {
+    /* nowhere left to report */
+  }
+});
+export function fileLogStopped(): boolean {
+  return fileLogBroken;
+}
+const LEVEL_NAMES: Record<number, string> = { 10: 'trace', 20: 'debug', 30: 'info', 40: 'warn', 50: 'error', 60: 'fatal' };
+function writeToStderr(lvl: number, args: unknown[]): void {
+  try {
+    const first = args[0];
+    const line =
+      first && typeof first === 'object'
+        ? { level: lvl, time: Date.now(), ...(first as Record<string, unknown>), ...(typeof args[1] === 'string' ? { msg: args[1] } : {}) }
+        : { level: lvl, time: Date.now(), msg: String(first) };
+    process.stderr.write(`${LEVEL_NAMES[lvl] ?? lvl} ${JSON.stringify(line)}\n`);
+  } catch {
+    /* a log line never throws */
+  }
+}
+
 // Listeners that read structured log lines as they are written — the
 // inbox (src/server/inbox-sources.ts) turns some of them into notices.
 // A listener must be cheap and must not throw; it never changes the line.
@@ -108,6 +143,10 @@ export const logger: Logger = pino(
               /* a listener never breaks logging */
             }
           }
+        }
+        if (fileLogBroken) {
+          writeToStderr(lvl, args);
+          return;
         }
         return method.apply(this, args as Parameters<typeof method>);
       },
