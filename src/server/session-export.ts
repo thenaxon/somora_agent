@@ -44,7 +44,9 @@ interface JsonlEvent {
 }
 
 export function sessionJsonlPath(agent: string, session: string): string {
-  return path.join(homedir(), '.somora', 'agents', agent, 'sessions', `${session}.jsonl`);
+  // SOMORA_HOME, not ~/.somora: a second instance exported the live
+  // installation's session of the same name (Fable review Nr. 24).
+  return path.join(process.env.SOMORA_HOME ?? path.join(homedir(), '.somora'), 'agents', agent, 'sessions', `${session}.jsonl`);
 }
 
 export function readSessionJsonlRaw(agent: string, session: string): string | null {
