@@ -314,3 +314,31 @@ test('backup runs with its own default thinking, and a builder with its builder 
     behaviour.delete('b1');
   }
 });
+
+// The tool-time idle limit follows the engine of each hop (Fable review
+// 2026-11-10 Nr. 16): a CLI primary's limit does not ride along to an
+// openai-compatible backup (which has none), and the reverse.
+test('toolIdleTimeoutMs is recomputed for the backup engine', async () => {
+  resetModelAvailability();
+  const seen = new Map<string, unknown>();
+  const orig = (engineRegistry as any)['openai-compatible'].runTurn;
+  (engineRegistry as any)['openai-compatible'].runTurn = async function* (input: any) {
+    seen.set(input.resolvedModel.modelId, input.toolIdleTimeoutMs);
+    yield* orig(input);
+  };
+  try {
+    behaviour.set('m1', 'die');
+    for await (const _ of runTurnWithFallback({
+      primary: rm('m1') as any,
+      fallbackRefs: ['m2'],
+      config: { ...config, claudeCli: { mcpToolTimeoutMs: 1 }, codexCli: { toolTimeoutSec: 1 } },
+      baseInput: { agent: 'x', session: 's', toolIdleTimeoutMs: 1_800_000 } as any,
+    })) {
+      /* drain */
+    }
+    assert.equal(seen.get('m2'), undefined, 'openai-compatible backup: no tool-time limit');
+  } finally {
+    (engineRegistry as any)['openai-compatible'].runTurn = orig;
+    behaviour.delete('m1');
+  }
+});
