@@ -456,10 +456,11 @@ export async function remoteSearch(args: {
   // `resource.workspace ?? '.'` literal is fine here even with a
   // tilde, no SFTP-resolution needed. Only relative path-args go
   // through resolveRemotePath for absolute disambiguation.
-  // The workspace default goes through the same resolution: quoted for
-  // the shell below, a literal `~/proj` was never expanded and rg found
-  // nothing (exit 2).
-  const remotePath = await resolveRemotePath(args.path ?? args.resource.workspace ?? '.', args.resourceName, args.resource);
+  // No path: '.' — the resolver puts the workspace in front itself
+  // (also a `~/proj` one, which quoted for the shell below was never
+  // expanded and rg found nothing). Passing the workspace here applied a
+  // relative one twice (codex review).
+  const remotePath = await resolveRemotePath(args.path ?? '.', args.resourceName, args.resource);
   // Block searching inside remote credential stores — file_search reads
   // and returns file contents (match lines), so it's a read path. Only
   // the model-supplied explicit path is checked; the workspace default
