@@ -77,7 +77,7 @@
     "@openai/codex": "0.167.0",
     "adm-zip": "^0.6.0",
     "better-sqlite3": "^13.0.3",
-    "chokidar": "^5.0.0",
+    "chokidar": "^6.0.0",
     "gray-matter": "^4.0.3",
     "hono": "4.13.17",
     "ink": "^8.0.0",
