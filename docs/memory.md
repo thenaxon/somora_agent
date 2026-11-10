@@ -391,7 +391,7 @@ Ask the index directly. Replace `<name>` with the agent.
 curl -H "Authorization: Bearer $(somora key)" 'http://127.0.0.1:18737/agents/<name>/memory/notes' | jq '.count'
 
 # State of the shared vault and wiki index: building | ready
-curl -H "Authorization: Bearer $(somora key)" 'http://127.0.0.1:18737/health' | jq '.sharedIndex'
+curl -H "Authorization: Bearer $(somora key)" 'http://127.0.0.1:18737/health' | jq '.sharedIndex.state'
 
 # Is the embedding model loaded? "failed" means words-only search
 curl -H "Authorization: Bearer $(somora key)" 'http://127.0.0.1:18737/health' | jq '.memoryEmbedder'

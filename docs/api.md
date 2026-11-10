@@ -214,7 +214,7 @@ the day, a `subagents.tools.deny` entry that names no tool).
 | Field | Meaning |
 |---|---|
 | `key` | Stable per thing, e.g. `update:<version>`, `news:<hash>`, `config`, `login:claude-cli`, `login:openai-compatible:<provider>`, `login:mcp:<server>`, `tls`, `rem:<agent>`, `deep:<agent>/<slug>`, `lucid`, `mcp:<server>`, `model:<provider/id>`, `sentinel:<triggerId>`, `config:subagents-deny`, `config:rem-model` (agents that dream without a REM model), `dream:switch` (the one-time rewrite to the dreams switch). |
-| `kind` | `update`, `news`, `config`, `login`, `tls`, `dream`, `mcp`, `model`, `sentinel`. |
+| `kind` | `update`, `news`, `config`, `login`, `tls`, `dream`, `mcp`, `model`, `sentinel`, `a2a`. |
 | `level` | `info`, `warning`, `important`. |
 | `title`, `text`, `url?` | Plain text. `url` is `https://` only. |
 | `firstSeen`, `lastSeen`, `count` | Epoch ms; `count` counts events, a checked state stays `1`. |
@@ -1202,7 +1202,7 @@ The sessions of one agent.
 
 | Field | Meaning |
 |---|---|
-| `dreamCoverageTs`, `dreamLagEvents` | How far REM has read this session, and how many events it has not read yet. `null` when it never ran. |
+| `dreamCoverageTs`, `dreamLagEvents` | How far REM has read this session, and how many events it has not read yet. `dreamCoverageTs` is `null` when REM never ran; `dreamLagEvents` is always a number (then all of the session's events). |
 | `unreadAt`, `seenAt` | Unread state, see `GET /activity/stream`. |
 | `archivedAt`, `archiveReason` | Present on archived sessions. |
 | `projectSlug` | Present when a project is pinned. |
