@@ -145,8 +145,11 @@ Toolset `exec`.
 | `process` | Handles background jobs: `action` is `list`, `poll`, `log`, `write` or `kill`. |
 | `tmux` | Keeps terminal sessions open across turns: `action` is `create`, `send`, `capture`, `wait_idle`, `list` or `kill`, against `target: local` or an SSH resource. |
 
-Destructive command patterns are blocked. A resource can lift single
-blocks with `allowBlocked`, for a machine that belongs to the agent.
+Destructive command patterns are blocked in `exec` and in Sentinel
+check scripts. A resource can lift single blocks with `allowBlocked`,
+for a machine that belongs to the agent. `tmux send` is not filtered:
+it types into a program that is already running, often a prompt for
+another tool, where the same words are harmless text.
 
 Background jobs are detached: they survive a somora restart and are
 tracked on disk. `poll` checks the real process, never a remembered
