@@ -64,7 +64,7 @@ the turn and returns the reply in the response.
 | Base URL | `https://<your-host>.<your-tailnet>.ts.net:18737` with HTTPS set up, else `http://127.0.0.1:18737`. The web client is under `/web/`, the mobile app under `/mobile/`. |
 | Bodies | JSON in, JSON out (`Content-Type: application/json`), unless a route says otherwise. Uploads are raw bytes or `multipart/form-data`, as noted per route. |
 | Errors | A non-2xx response carries `{ "error": "<message>" }`. The message is written for a person. Some routes add fields, noted per route. |
-| Unknown agent or session | `404` on every route that takes one, except `POST /chat/abort` and `POST /server/restart`. |
+| Unknown agent or session | `404` on every route that takes one, except `POST /chat/abort`. |
 | Agent being renamed | `409` with `error: "agent '<name>' is being renamed — try again in a moment"` on every route under `/agents/:agent/` except reads (`GET`), and on `POST /chat/send` and `POST /chat/send-sync`, for the old and the new name. Retry in a moment. |
 | Times | Epoch milliseconds as numbers, or ISO 8601 strings. The examples show which. |
 | Streams | Server-Sent Events with named events. `data` is always JSON. |
