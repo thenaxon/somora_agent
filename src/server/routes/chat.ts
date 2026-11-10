@@ -688,8 +688,8 @@ export function registerChatRoutes(app: Hono, routeDeps: ChatRoutesDeps): void {
   // back to the localhost server (the in-process runChatTurn isn't
   // reachable from the MCP child process).
   //
-  // 127.0.0.1-only by virtue of how the server is bound; same trust
-  // posture as the existing debug endpoints.
+  // Behind the login key like every route; the MCP child sends it
+  // through loopbackFetch.
   // /a2a/ask-result — outcome of an agent_ask call by call_id. Backs the
   // agent_ask_result tool. Primary source is the in-memory registry fed
   // by /chat/send-sync below; after a restart the target session's JSONL

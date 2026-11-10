@@ -8,7 +8,7 @@ import { getLspManager } from '../../lsp/index.ts';
 import { LSP_SERVERS, findBinary } from '../../lsp/registry.ts';
 import { type Persona, listAgents, loadPersona } from '../../persona/loader.ts';
 import { resolveSessionId, sessionMetaStore } from '../../storage/sessions.ts';
-import { checkWriteAllowed, expandHome } from '../../tools/file/policy.ts';
+import { checkWriteAllowed, realpathSafeAncestor, expandHome } from '../../tools/file/policy.ts';
 import { checkWriteAllow } from '../../tools/file/write-scope.ts';
 import { registerAskCall } from '../ask-calls.ts';
 import { claimOfSession, describeClaim, listWorkdirClaims, workdirClaimedBy } from '../builder-busy.ts';
@@ -365,6 +365,11 @@ export function registerBuilderRoutes(app: Hono, routeDeps: BuilderRoutesDeps): 
     const planPath = state?.planPath ?? joinPath(workdirFromMeta(meta as Record<string, unknown>, r.persona, config).path, DEFAULT_PLAN_FILE);
     const policy = checkWriteAllowed(planPath, r.agent);
     if (!policy.ok) return c.json({ error: policy.reason }, 400);
+    // Checked again on the real path, as the file tools do: a symlinked
+    // folder must not carry the plan somewhere the policy blocks (Fable
+    // review Nr. 28).
+    const realPolicy = checkWriteAllowed(await realpathSafeAncestor(planPath), r.agent);
+    if (!realPolicy.ok) return c.json({ error: realPolicy.reason }, 400);
     await mkdirFs(dirname(planPath), { recursive: true });
     // A plan file that is already there and was not written by this
     // session (an earlier build's plan, a person's own) is history, not a
