@@ -126,17 +126,20 @@ test('Stop while the connection is still being opened: the turn ends as stopped 
 
 test('Stop while the agent sets up its session: the turn ends as stopped and no prompt is sent', async () => {
   // FAKE_SESSION_DELAY_MS holds the answer to session/new.
-  const cfg = config({ slowsession: { command: cmd('FAKE_SESSION_DELAY_MS=1500') } });
+  // A setup of 5 s against a limit of 3 s: the stop must not wait for it,
+  // with room for a busy machine (the old 1.5 s / 1.2 s pair failed
+  // under load).
+  const cfg = config({ slowsession: { command: cmd('FAKE_SESSION_DELAY_MS=5000') } });
   const store = memStore();
   const ctl = new AbortController();
   setTimeout(() => ctl.abort(), 400);
   const t0 = Date.now();
   const evs = await turn(cfg, 'slowsession', 's', 'remember badger', { store, signal: ctl.signal });
-  assert.ok(Date.now() - t0 < 1200, `the stop is not held up by the setup (${Date.now() - t0} ms)`);
+  assert.ok(Date.now() - t0 < 3000, `the stop is not held up by the setup (${Date.now() - t0} ms)`);
   assert.equal(finalText(evs), '[somora] aborted by user');
   assert.ok(!evs.some((e) => e.kind === 'error'));
   // The session that was being set up is kept for the next turn.
-  await sleep(1500);
+  await sleep(5000);
   assert.match(String(store.data.get('slowsession/s')?.externalSessionId), /^fake-/);
   assert.equal(finalText(await turn(cfg, 'slowsession', 's', 'recall', { store })), 'you said nothing');
 });
