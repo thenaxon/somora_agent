@@ -39,7 +39,7 @@ window in the web client. Each tool has a switch there.
 ## The tool families
 
 Every tool carries a toolset tag. The tag groups tools for the
-per-agent switch (`toolset:<tag>`). There are 64 built-in tools, plus
+per-agent switch (`toolset:<tag>`). There are 66 built-in tools, plus
 whatever your external MCP servers bring.
 
 | Toolset | Tools | Offered when |
@@ -51,7 +51,7 @@ whatever your external MCP servers bring.
 | `web` | 2 | `web_fetch` always, `web_search` with `web.brave.apiKey` |
 | `file` | 6 | always, except `analyze_file` (see below) |
 | `exec` | 3 | always |
-| `agents` | 13 | always (`ask_user` only in a turn someone watches) |
+| `agents` | 14 | always (`ask_user` only in a turn someone watches) |
 | `skills` | 2 | always |
 | `sentinel` | 1 | always |
 | `projects` | 6 | `projects.enabled: true` |
@@ -60,7 +60,7 @@ whatever your external MCP servers bring.
 | `media` | 1 | image or video generation is set up |
 | `browser` | 1 | `browser.enabled: true` |
 | `decision` | 1 | `decisions.model` names an entry in `decisions.models` |
-| `builder` | 2 | builder agents only |
+| `builder` | 3 | builder agents only |
 | `mcp` | varies | servers listed under `mcp.servers` |
 
 ### Memory, docs and resources

@@ -179,8 +179,8 @@ green test suite are not an accepted build.
   compaction carries the list word for word. After a compaction before
   a turn, the builder reads it with `acceptance_write` and no items.
 
-At most 60 items. A requirement is cut at 500 characters, evidence and
-review notes at 1000.
+At most 60 items. A requirement may have 500 characters, evidence and
+review notes 1000; the tool refuses a longer one (the HTTP route cuts it).
 
 ### Reviewing the list
 

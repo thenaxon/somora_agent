@@ -1054,12 +1054,12 @@ HTTPS the connection is also pinged (`sse.h2PingIntervalMs`,
 |---|---|
 | `text` | The message as it is kept: what a person typed, what an agent asked, what a trigger's prompt says, or the one-line statement of a wake-up. |
 | `ts` | Epoch ms. |
-| `turnId` | The id from `POST /chat/send`. Match it to the bubble you drew. |
+| `turnId` | Live event only. The id from `POST /chat/send`. Match it to the bubble you drew. |
 | `origin` | Where the turn came from. See below. |
 | `input` | `{modality?: "text"\|"voice", source?: "stt"\|"realtime"}` when the turn was not typed. `stt` is dictation, `realtime` a sentence from a call. |
 | `steer`, `steer_id` | `steer: true` marks a message that went into the running turn `turnId`. `steer_id` matches the `steer_queued` event. |
 | `from_agent`, `from_session`, `agent_ask_call_id` | Older fields, derived from an `agent` origin. |
-| `attachments` | `{hash, name, mime, size}` of the files sent with the message. |
+| `attachments` | Stored row only. `{hash, name, mime, size}` of the files sent with the message. |
 | `attachment_descriptions` | Stored row only. The vision worker's description of each attachment the model could not see, one string per file. |
 | `from_system` | Older field, derived from the origin: `sentinel`, `tmux`, `browser`, `voice`, `peer`, or for a wake its `about` (`a2a`, `subagent`, `job`, `system`). The shipped clients draw these as a divider, not as a bubble. |
 
