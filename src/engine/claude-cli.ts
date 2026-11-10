@@ -965,12 +965,18 @@ export const claudeCliEngine: AgentEngine = {
         // so a concurrent /sessions stats-cache write (or activity mark)
         // can't revert sdkSessionId, and our write can't revert theirs
         // (Juni-Audit 2026-06).
+        // The mark moves only when this turn was answered here (text
+        // without a provider error, or a tool ran). A turn the provider
+        // ended before any answer (quota, an auth failure) leaves it, so
+        // the fallback's answer is caught up on next time (Fable review
+        // 2026-11-10 Nr. 5; grok-cli already did this).
+        const answeredHere = sawToolUse || (!yieldedErrorEvent && Boolean(finalText || cumulative));
         await metaStore.update(agent, session, (freshMeta) => ({
           ...freshMeta,
           engine: ENGINE,
           sdkSessionId: lastSdkSessionId,
           mcpServerName: MCP_SERVER_NAME,
-          engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()),
+          ...(answeredHere ? { engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()) } : {}),
         }));
       }
     } catch (err) {
