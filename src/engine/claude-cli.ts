@@ -1060,6 +1060,17 @@ export const claudeCliEngine: AgentEngine = {
     } finally {
       disarmIdleTimer();
       if (steerPoll) clearInterval(steerPoll);
+      // Messages pushed into the input but never confirmed by a further
+      // SDK message (the turn stopped or failed first): neither recorded
+      // nor answered. Back to the letterbox, so the next turn has them,
+      // as codex-cli and grok-cli do (Fable review 2026-11-10 Nr. 27).
+      if (input.steer && pendingSteerEvents.length > 0) {
+        const msgs = pendingSteerEvents.splice(0).flatMap((e) => (e.kind === 'steer_applied' ? e.messages : []));
+        if (msgs.length > 0) {
+          input.steer.requeue(msgs);
+          logger.info({ msg: 'engine.claude_steer_requeued', engine: ENGINE, agent, session, count: msgs.length });
+        }
+      }
       steerInput?.close();
       if (signal) signal.removeEventListener('abort', onUpstreamAbort);
     }
