@@ -26,6 +26,15 @@ async function ensureDirs(): Promise<void> {
   await mkdir(LUCID_PROCESSED, { recursive: true });
 }
 
+/** Write via a temp file and rename: the run file is rewritten from the
+ *  server and the MCP child, and a reader must never see half of it
+ *  (Fable review 2026-11-10 Nr. 27). */
+async function writeFileAtomic(path: string, text: string): Promise<void> {
+  const tmp = `${path}.tmp.${process.pid}.${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  await writeFile(tmp, text, 'utf8');
+  await rename(tmp, path);
+}
+
 function runFilePath(id: string, processed = false): string {
   return join(processed ? LUCID_PROCESSED : LUCID_ROOT, `${id}.json`);
 }
@@ -33,7 +42,7 @@ function runFilePath(id: string, processed = false): string {
 export async function writeLucidRun(run: LucidRun): Promise<void> {
   await ensureDirs();
   const text = JSON.stringify(run, null, 2);
-  await writeFile(runFilePath(run.id), text, 'utf8');
+  await writeFileAtomic(runFilePath(run.id), text);
 }
 
 export async function readLucidRunById(id: string): Promise<LucidRun | null> {
@@ -220,7 +229,7 @@ export async function updateLucidFindingStatus(
   if (allResolved) {
     run.status = 'processed';
     run.processed_at = new Date().toISOString();
-    await writeFile(runFilePath(run.id), JSON.stringify(run, null, 2), 'utf8');
+    await writeFileAtomic(runFilePath(run.id), JSON.stringify(run, null, 2));
     try {
       await rename(runFilePath(run.id, false), runFilePath(run.id, true));
     } catch (err) {
@@ -260,7 +269,7 @@ export async function dismissEntireLucidRun(
   }
   run.status = 'processed';
   run.processed_at = new Date().toISOString();
-  await writeFile(runFilePath(run.id), JSON.stringify(run, null, 2), 'utf8');
+  await writeFileAtomic(runFilePath(run.id), JSON.stringify(run, null, 2));
   try {
     await rename(runFilePath(run.id, false), runFilePath(run.id, true));
   } catch (err) {
