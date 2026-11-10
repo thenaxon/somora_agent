@@ -130,6 +130,12 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
     const session = await resolveSessionId(agent, sessionRef);
     if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
     const body = (await c.req.json().catch(() => ({}))) as { reason?: string };
+    // An external agent's session is archived under its session lock, as
+    // reset does: closing the connection under a running turn cut that
+    // turn off mid-answer (Fable review 2026-11-10 Nr. 28). It waits for
+    // a running turn; Stop ends one within 10 s even when the agent
+    // ignores the cancel.
+    const release = isExternalAgent(agent) ? await acquireSessionLock(agent, session, { priority: 'user' }) : null;
     try {
       // An external agent's connection goes first, then what it sent on
       // its own and not yet written — else it lands in the archived file.
@@ -140,6 +146,8 @@ export function registerSessionRoutes(app: Hono, routeDeps: SessionRoutesDeps): 
       return c.json({ archived: true, agent, session });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 400);
+    } finally {
+      release?.();
     }
   });
 
