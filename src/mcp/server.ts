@@ -30,7 +30,7 @@ import { alwaysVisibleTools } from '../tools/catalog.ts';
 import type { ToolDefinition } from '../tools/types.ts';
 import { loadPersona } from '../persona/loader.ts';
 import { logger } from '../server/logger.ts';
-import { loadSomoraEnvFile } from '../server/env-file.ts';
+import { loadPrivateEnvFile, loadSomoraEnvFile } from '../server/env-file.ts';
 import { isToolAllowed, sessionToolDeny, withSessionDeny } from '../tools/gating.ts';
 import { readBuilderState } from '../server/builder-session.ts';
 import { sessionToolAllows } from '../server/ask-attended.ts';
@@ -199,6 +199,9 @@ async function main(): Promise<void> {
   // rides on the Claude Code command line); exec and skills here need
   // them, so read the file as the main server does. The login key comes
   // from server.key (loopbackFetch).
+  // First the server's full environment from the private file (what is
+  // on the command line wins), then somora.env as the main server reads it.
+  loadPrivateEnvFile();
   loadSomoraEnvFile();
   const agent = process.env.SOMORA_AGENT;
   if (!agent || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(agent)) {

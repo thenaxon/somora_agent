@@ -22,6 +22,18 @@ test('Nr. 1: the MCP child config (on the Claude Code command line) carries no k
     assert.ok(!argv.includes('hunter2'), 'no somora.env secret');
     assert.equal(spec.env.SOMORA_HOME, HOME, 'what the child needs is still there');
   }
+  // A secret from outside somora.env (a systemd EnvironmentFile): kept
+  // off the command line by its name, handed over in the private file.
+  process.env.GOG_KEYRING_PASSWORD = 'from-systemd';
+  const again = JSON.stringify(somoraMemoryServerSpawn({ agent: 'ada' }));
+  assert.ok(!again.includes('from-systemd'), 'a systemd-provided password stays off the command line');
+  const spec = somoraMemoryServerSpawn({ agent: 'ada' });
+  const { readFileSync, statSync } = await import('node:fs');
+  const file = spec.env.SOMORA_MCP_ENV_FILE!;
+  assert.equal(statSync(file).mode & 0o777, 0o600, 'private file');
+  const handed = JSON.parse(readFileSync(file, 'utf8')) as Record<string, string>;
+  assert.equal(handed.GOG_KEYRING_PASSWORD, 'from-systemd', 'the child still gets it');
+  assert.equal(handed.SOMORA_KEY, undefined, 'never the login key');
   const env = secretFreeEnv();
   assert.equal(env.SOMORA_KEY, undefined);
   assert.equal(env.FAKE_SKILL_SECRET, undefined);

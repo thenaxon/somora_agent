@@ -5,7 +5,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { secretFreeEnv } from '../server/env-file.ts';
+import { secretFreeEnv, writePrivateEnvFile } from '../server/env-file.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // .../src/mcp -> .../src -> .../somora
@@ -58,6 +58,7 @@ export function somoraMemoryServerSpawn(args: {
     args: useLocalTsx ? [MCP_SERVER_TS] : ['tsx', MCP_SERVER_TS],
     env: {
       ...secretFreeEnv(),
+      SOMORA_MCP_ENV_FILE: writePrivateEnvFile(),
       SOMORA_AGENT: args.agent,
       ...(args.session ? { SOMORA_SESSION: args.session } : {}),
       ...(args.subagentDepth !== undefined && args.subagentDepth > 0
@@ -106,6 +107,7 @@ export function somoraMcpProxySpawn(args: {
       // secretFreeEnv carries SOMORA_HOME (catalog path) and SOMORA_HOST/
       // PORT/TLS (HTTP-forward endpoint) from the parent server.
       ...secretFreeEnv(),
+      SOMORA_MCP_ENV_FILE: writePrivateEnvFile(),
       SOMORA_AGENT: args.agent,
       SOMORA_MCP_PROXY_SERVER: args.server,
       ...(args.session ? { SOMORA_SESSION: args.session } : {}),
