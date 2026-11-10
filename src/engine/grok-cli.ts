@@ -18,6 +18,7 @@
 // Wire shapes below are transcribed from a recorded probe against
 // grok 0.2.106 — see the `session/update` variants in mapUpdate().
 
+import { StringDecoder } from 'node:string_decoder';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -434,6 +435,9 @@ function imageMimeForPath(path: string): string {
 class AcpClient {
   private child: ChildProcessWithoutNullStreams;
   private buf = '';
+  /** A multi-byte character (an umlaut, an emoji) split across two pipe
+   *  reads stays whole; chunk.toString() made each half a U+FFFD. */
+  private readonly decoder = new StringDecoder('utf8');
   private nextId = 1;
   private pending = new Map<number, (f: JsonRpcFrame) => void>();
   /** Notifications + server->client requests, drained by the turn loop. */
@@ -484,7 +488,7 @@ class AcpClient {
   }
 
   private onData(chunk: Buffer): void {
-    this.buf += chunk.toString();
+    this.buf += this.decoder.write(chunk);
     let nl: number;
     while ((nl = this.buf.indexOf('\n')) >= 0) {
       const line = this.buf.slice(0, nl).trim();
@@ -737,6 +741,12 @@ export const grokCliEngine: AgentEngine = {
     // Reasoning trace from agent_thought_chunk.
     let thinkingText = '';
     let emittedAny = false;
+    /** The loop already ended the turn with an error (closed, silent):
+     *  no placeholder answer after it — that one survived the fallback,
+     *  left the session with two answers and paired the user's message
+     *  with "[somora] grok returned no content" in the replay (Fable
+     *  review 2026-11-10 Nr. 18). */
+    let loopErrored = false;
     /** A tool ran since the last text: the next text opens a paragraph. */
     let toolSinceText = false;
     /** Same for the reasoning trace: each model round's thoughts apart. */
@@ -1057,6 +1067,7 @@ export const grokCliEngine: AgentEngine = {
             // "[somora] aborted by user" assistant_message below covers
             // the abort case; only a genuine crash is an error.
             if (!input.signal?.aborted) {
+              loopErrored = true;
               yield {
                 kind: 'error',
                 ts: Date.now(),
@@ -1066,6 +1077,7 @@ export const grokCliEngine: AgentEngine = {
             }
             break;
           }
+          loopErrored = true;
           yield {
             kind: 'error',
             ts: Date.now(),
@@ -1332,7 +1344,7 @@ export const grokCliEngine: AgentEngine = {
           engine: ENGINE,
           message: `grok: ${apiError}`,
         };
-      } else if (finalText || !emittedAny) {
+      } else if (finalText || (!emittedAny && !loopErrored)) {
                 if (thinkingText) {
           yield { kind: 'thinking_message', ts: Date.now(), engine: ENGINE, text: thinkingText };
           thinkingText = '';
