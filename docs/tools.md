@@ -150,7 +150,9 @@ blocks with `allowBlocked`, for a machine that belongs to the agent.
 
 Background jobs are detached: they survive a somora restart and are
 tracked on disk. `poll` checks the real process, never a remembered
-state.
+state. When somora runs as a systemd service, each background job, and
+a tmux server an agent starts, runs in a systemd scope of its own, so a
+restart or `somora update` does not end it.
 
 #### When a command times out
 

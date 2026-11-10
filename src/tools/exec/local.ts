@@ -18,6 +18,7 @@
 //    — TUI tools in the background make no sense (no one's watching);
 //    use tmux for "long-running interactive on local" instead.
 
+import { scopeArgv, scopeUnitName } from './systemd-scope.ts';
 import { spawn } from 'node:child_process';
 import * as pty from 'node-pty';
 import { closeSync, openSync, statSync } from 'node:fs';
@@ -576,9 +577,12 @@ export async function localExecBackground(
   const outFd = openSync(stdoutPath, 'a');
   const errFd = openSync(stderrPath, 'a');
   let child: ReturnType<typeof spawn>;
+  // Under systemd the job gets a scope of its own, so a somora restart
+  // does not end it (systemd-scope.ts). Same shell, same process group.
+  const scope = scopeArgv(scopeUnitName('job', job_id));
   try {
-    child = spawn(wrapped, {
-      shell: true,
+    child = spawn(scope.length > 0 ? scope[0]! : wrapped, scope.length > 0 ? [...scope.slice(1), '/bin/sh', '-c', wrapped] : [], {
+      shell: scope.length === 0,
       cwd: opts.cwd,
       env,
       detached: true,
