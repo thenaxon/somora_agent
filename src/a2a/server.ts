@@ -466,6 +466,9 @@ async function acceptNew(
 ): Promise<Accepted> {
   const msg = params?.message;
   if (!msg || !Array.isArray(msg.parts)) return { error: [-32602, 'params.message with parts is required'] };
+  // A peer's malformed part (null, a number) is a client error, not a 500
+  // (Fable review Nr. 27).
+  if (msg.parts.some((p: unknown) => !p || typeof p !== 'object')) return { error: [-32602, 'every message part must be an object'] };
   // Text and data parts are the task; file parts become attachments.
   const isFile = (p: A2APart) => typeof p.raw === 'string' || typeof p.url === 'string' || Boolean(p.file?.bytes || p.file?.uri);
   let text = partsText(msg.parts.filter((p) => !isFile(p))).trim();

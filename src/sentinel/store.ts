@@ -86,7 +86,9 @@ export function listTriggers(): Trigger[] {
 /** Return a specific trigger by id, or null. */
 export function getTrigger(id: string): Trigger | null {
   if (!cache) cache = { triggers: {} };
-  return cache.triggers[id] ?? null;
+  // Own keys only: `__proto__` read the object prototype as a trigger,
+  // and a pause on it saved a trigger "undefined" (Fable review Nr. 27).
+  return Object.hasOwn(cache.triggers, id) ? cache.triggers[id]! : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────

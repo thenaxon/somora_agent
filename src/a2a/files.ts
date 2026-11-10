@@ -191,7 +191,8 @@ export async function incomingFiles(
   if (refused) return { error: refused };
   const files: AttachmentRef[] = [];
   for (const p of fileParts) {
-    const name = (p.filename ?? p.file?.name ?? 'file').slice(0, 200);
+    const rawName = p.filename ?? p.file?.name;
+    const name = (typeof rawName === 'string' && rawName ? rawName : 'file').slice(0, 200);
     let body: Readable;
     try {
       const raw = p.raw ?? p.file?.bytes;
