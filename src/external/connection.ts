@@ -27,6 +27,13 @@ import { startAgentProcess, type AgentProcess } from './transport.ts';
 
 const INIT_TIMEOUT_MS = 60_000;
 
+/** How long an agent has to honour session/cancel before the connection
+ *  is closed under it. */
+let cancelGraceMs = 10_000;
+export function setCancelGraceMsForTest(ms: number): void {
+  cancelGraceMs = ms;
+}
+
 export interface PromptHandlers {
   onUpdate(update: SessionUpdate): void;
   onPermission(req: RequestPermissionRequest): Promise<RequestPermissionResponse>;
@@ -120,7 +127,9 @@ export class ExternalConnection {
   }
 
   get alive(): boolean {
-    return this.dead === null && !this.conn.signal.aborted;
+    // closed counts at once: the process exits a moment later, and a
+    // turn in between must start a new one, not reuse this connection.
+    return this.dead === null && !this.closed && !this.conn.signal.aborted;
   }
 
   get inUse(): boolean {
@@ -269,12 +278,27 @@ export class ExternalConnection {
     this.busy += 1;
     this.lastUsed = Date.now();
     const sessionId = this.sessionId;
+    // An agent that ignores session/cancel held the turn, and the
+    // session lock, for good: Stop did nothing and /reset waited behind
+    // it (Fable review 2026-11-10 Nr. 12). It gets CANCEL_GRACE_MS, then
+    // the connection is closed and the turn ends as stopped — the A2A
+    // path already gives up after 10 s.
+    let graceTimer: NodeJS.Timeout | null = null;
+    let giveUp: (r: PromptResponse) => void = () => {};
+    const abandoned = new Promise<PromptResponse>((resolve) => (giveUp = resolve));
     const onAbort = () => {
       void this.conn.cancel({ sessionId }).catch(() => {});
+      graceTimer = setTimeout(() => {
+        logger.warn({ msg: 'external.cancel_ignored', agent: this.ext.name, sessionId, graceMs: cancelGraceMs });
+        this.close();
+        giveUp({ stopReason: 'cancelled' });
+      }, cancelGraceMs);
+      graceTimer.unref?.();
     };
     signal?.addEventListener('abort', onAbort, { once: true });
     try {
       return await Promise.race([
+        abandoned,
         this.conn.prompt({ sessionId, prompt: blocks }),
         this.proc.exited.then(() => {
           throw new Error(this.deathReason ?? 'the external agent ended during the turn');
@@ -285,6 +309,7 @@ export class ExternalConnection {
       await settleExit(this.proc);
       throw new Error(this.dead ?? (err as Error).message);
     } finally {
+      if (graceTimer) clearTimeout(graceTimer);
       signal?.removeEventListener('abort', onAbort);
       this.handlers = null;
       this.busy -= 1;

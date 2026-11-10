@@ -10,6 +10,7 @@
 //                once and, FAKE_LATER_MS later, a result on its own
 //                (a tool call and a reply in pieces)
 // Env: FAKE_AGENT_NAME (agentInfo.name), FAKE_NO_RESUME=1 (offer load only),
+//      FAKE_IGNORE_CANCEL=1 (session/cancel does nothing),
 //      FAKE_STDERR (written to stderr at start), FAKE_FAIL_INIT=1,
 //      FAKE_INIT_DELAY_MS / FAKE_SESSION_DELAY_MS (answer initialize /
 //      session/new that much later).
@@ -69,7 +70,8 @@ new AgentSideConnection((conn) => {
       return { sessions: [...sessions.keys()].map((id) => ({ sessionId: id, cwd: '/', title: id })) };
     },
     async cancel(p) {
-      cancelled.add(p.sessionId);
+      // FAKE_IGNORE_CANCEL=1: an agent that never stops on cancel.
+      if (!process.env.FAKE_IGNORE_CANCEL) cancelled.add(p.sessionId);
     },
     async prompt(p) {
       const sid = p.sessionId;
