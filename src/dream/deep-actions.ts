@@ -14,6 +14,7 @@
 //
 // See `private/dream-system-v2.md`.
 
+import { wikiFile } from './wiki-file.ts';
 import { DEFAULT_WIKI_SCHEMA, type WikiSchema } from '../wiki/language.ts';
 import { mkdir, stat, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -90,7 +91,7 @@ export async function applyPromote(args: {
 }): Promise<CandidateOutcome> {
   const { candidate, decision, ctx } = args;
   const wikiPath = decision.slug; // e.g. "personen/leo"
-  const wikiFileAbs = join(ctx.wikiAbs, `${wikiPath}.md`);
+  const wikiFileAbs = wikiFile(ctx.wikiAbs, wikiPath);
 
   // Build the new wiki page content.
   const wikiPageContent = buildInitialWikiPage({
@@ -152,7 +153,7 @@ export async function applyMerge(args: {
 }): Promise<CandidateOutcome> {
   const { candidate, decision, ctx, wikiPageMtimeMs } = args;
   const wikiPath = decision.wikiPath;
-  const wikiFileAbs = join(ctx.wikiAbs, `${wikiPath}.md`);
+  const wikiFileAbs = wikiFile(ctx.wikiAbs, wikiPath);
 
   // Re-read wiki page to get current content + parse fm. We don't
   // trust the caller's snapshot — we need the latest-known fm.
