@@ -98,6 +98,19 @@ show it. A script an agent writes reads it with `somora key`. The
 exception is a command or tmux session started with
 `inherit_agent_env: true`, which passes it through.
 
+Secrets stay off command lines, which every user of the machine can
+read with `ps`. Claude Code starts somora's tool server with an
+environment that it puts on its own command line, so that environment
+leaves out the key, everything from `somora.env` and every variable whose
+name looks like a secret (`KEY`, `TOKEN`, `SECRET`, `PASSWORD` and
+similar).
+
+The tool server gets the full environment from
+`~/.somora/run/mcp-child-env.json`, which only your user can read. An
+external agent started on this machine gets the server's environment
+without the key, without those secrets and without somora's own
+variables.
+
 Ten wrong keys from one address within five minutes block that address
 for a minute. The server's own machine is never blocked.
 

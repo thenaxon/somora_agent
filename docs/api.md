@@ -2554,7 +2554,9 @@ upload in `attachments` on `POST /chat/send` or `POST /chat/send-sync`.
 ### `POST /attachments`
 
 Uploads one file as the raw request body. The file name goes into the
-`X-Somora-Filename` header, URL-encoded.
+`X-Somora-Filename` header, URL-encoded. An upload larger than the
+largest accepted file (50 MB, the size an image may have before it is
+scaled) is stopped while it streams, with `400`.
 
 ```bash
 curl -H "Authorization: Bearer $KEY" -X POST $BASE/attachments \

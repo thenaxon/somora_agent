@@ -27,7 +27,9 @@ over that command's input and output.
   options numbered.
 - **Stop.** The stop button cancels the agent's turn on its side. It
   also works while the connection is still starting: the turn ends at
-  once and nothing is sent.
+  once and nothing is sent. An agent that ignores the cancel gets ten
+  seconds; then somora closes the connection and the turn ends as
+  stopped. The next message starts the agent again.
 - **Messages it sends on its own.** Some agents write again after their
   turn ended, for example when a sub-task they started finishes. somora
   keeps listening, see

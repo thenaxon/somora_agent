@@ -730,7 +730,7 @@ How the fallback chain works:
 | `steering` | boolean | `false` | Default for a message typed in the web client while a turn runs. `true` hands it into the running turn before its next step. `false` queues it as its own turn. The toggle next to Send flips it per message. Steering works on every engine: `openai-compatible`, `claude-cli`, `codex-cli` and `grok-cli`. |
 | `imageReview` | `never`, `always` | `never` | `always` feeds each generated image back to the agent so it can judge it, about 2k tokens per image. Not a lock: the agent can set `return_image` per call either way. |
 | `agentLoop.maxRounds` | integer | server value (8) | Rounds per turn on the `openai-compatible` engine. Builders have none unless set. |
-| `agentLoop.maxToolCallsPerTurn` | integer | server value (30) | Tool calls per turn, across all rounds. Builders default to 2000. |
+| `agentLoop.maxToolCallsPerTurn` | integer | server value (30) | Tool calls per turn, across all rounds. Builders default to 2000. A hard limit: calls in a reply beyond it are refused, not run, and the model is asked to answer. |
 | `agentLoop.maxTurnMs` | integer | none | Time limit per turn in milliseconds. Builders default to 8 hours. |
 
 ### Workspace and visibility

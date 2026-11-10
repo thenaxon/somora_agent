@@ -209,7 +209,11 @@ them as the thinking block.
 ### Tools on Codex
 
 somora hands its tools to Codex as dynamic tools, so every Codex model
-reaches the same tools as on the other engines.
+reaches the same tools as on the other engines. Codex's own tools are
+off: its shell, web search, apps, plugins, image tools, and its `clock`
+and `sleep`. What the model has besides somora's tools is Code Mode's
+own `exec` and `wait`. A test checks this against the bundled Codex, so
+an update that brings a new tool of its own is caught before release.
 
 | Namespace | What is in it |
 |---|---|
@@ -254,6 +258,15 @@ providers:
 | Model | contextWindow | Notes | Checked |
 |---|---|---|---|
 | `grok-4.7` | 256000 | Thinking levels are passed as `--reasoning-effort`. `off` is sent as `low`, because the model always reasons. `reasoning.levels` is applied. Images go to Grok as images, PDFs as page images. | yes: chat, tools, thinking text, images and PDFs, steering, stop, `/compact`, model switch and back |
+
+**Tools on Grok.** The model has two tools of Grok's, `search_tool` and
+`use_tool`, and reaches only somora's tools through them. Grok's own
+built-ins (terminal, file edit, web search, its sub-agents and
+scheduler) are off. xAI account connectors that Grok would add from
+your account, such as `tasks` (automations) and `cursor` (your X
+account), are blocked in somora's Grok home. A connector a later Grok
+brings is logged (`engine.grok_foreign_mcp`) and blocked from the next
+turn on.
 
 Grok compacts its own conversation near the end of the window, and a
 row in the chat says so. `/compact` asks Grok to compact now. A Grok

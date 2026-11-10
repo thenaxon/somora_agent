@@ -551,6 +551,9 @@ logged as `a2a.inbound_refused`.
   minute. A right token always passes. The cards are public, as the standard wants: anyone who
   reaches the server sees which agents are switched on and their
   descriptions.
+- **Tokens go only where they belong.** somora sends a peer's token
+  only to an endpoint on the same host as the peer's agent card, the
+  `a2a.url` you configured. A card that names another host is refused.
 - **The login key stays apart.** A peer's token opens the A2A endpoint
   and nothing else in somora. The A2A paths are the only ones the login
   key does not guard, and they check the peer tokens themselves.
