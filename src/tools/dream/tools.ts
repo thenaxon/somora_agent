@@ -717,7 +717,7 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
           via: 'in-process',
         };
       }
-      return runLucidViaHttp(wait);
+      return runLucidViaHttp(wait, force);
     }
     // phase === 'deep'
     if (injectedDreamRunDeps) {
@@ -794,7 +794,7 @@ async function runDeepViaHttp(wait: boolean, force: boolean): Promise<unknown> {
   return { phase: 'deep', ...data, via: 'http' };
 }
 
-async function runLucidViaHttp(wait: boolean): Promise<unknown> {
+async function runLucidViaHttp(wait: boolean, force = false): Promise<unknown> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
   const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
@@ -802,7 +802,9 @@ async function runLucidViaHttp(wait: boolean): Promise<unknown> {
   const res = await loopbackFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ wait }),
+    // force too: the route reads it, and the HTTP path used to drop it
+    // (Fable review, docs vs code 14).
+    body: JSON.stringify({ wait, force }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');

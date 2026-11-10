@@ -8,13 +8,16 @@
 import { loadConfig } from '../config/loader.ts';
 
 export async function resolveServerBase(): Promise<string> {
-  const port = Number(process.env.SOMORA_PORT ?? 18737);
   let cfg: Awaited<ReturnType<typeof loadConfig>> | null = null;
   try {
     cfg = await loadConfig();
   } catch {
     /* missing config = first run, plain-HTTP defaults */
   }
+  // server.port from config.yaml, as the server itself uses it; the env
+  // overrides it. The TUI and `somora acp` used to take 18737 whatever
+  // config.yaml said (Fable review, docs vs code 1).
+  const port = Number(process.env.SOMORA_PORT ?? cfg?.server.port ?? 18737);
   const tlsEnv = process.env.SOMORA_TLS;
   const useTls = tlsEnv === '0' ? false : tlsEnv === '1' ? true : !!cfg?.server.tls;
   const scheme = useTls ? 'https' : 'http';

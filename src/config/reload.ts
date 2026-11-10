@@ -11,6 +11,7 @@ import type { Config } from './types.ts';
 /** Top-level config.yaml sections that only apply after a restart. */
 export const RESTART_REQUIRED_SECTIONS: readonly string[] = [
   'server', // host / port / TLS — sockets are bound at boot
+  'sse', // keep-alive and HTTP/2 ping timers are set up at boot
   'memory', // embedding model + sqlite handles live in cached managers
   'obsidian', // vault source resolved at boot for the wiki workers
   'wiki', // Deep / Lucid schedulers read enabled + intervals at start()
