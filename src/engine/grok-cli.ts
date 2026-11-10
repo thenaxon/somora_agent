@@ -746,6 +746,10 @@ export const grokCliEngine: AgentEngine = {
       abortKill.unref?.();
     };
     input.signal?.addEventListener('abort', onAbort, { once: true });
+    // Stopped before it started: the listener above never fires for an
+    // already-aborted signal, and the turn ran in full (Fable review
+    // 2026-11-10 Nr. 27).
+    if (input.signal?.aborted) onAbort();
 
     let assistantText = '';
 
@@ -783,7 +787,10 @@ export const grokCliEngine: AgentEngine = {
         const message = client.lastError
           ? client.lastError
           : `grok handshake failed: ${init.error.message}. Has \`grok login\` been run?`;
-        yield { kind: 'error', ts: Date.now(), engine: ENGINE, message };
+        // A Stop during the handshake killed the child: that is a stop,
+        // not an engine failure the fallback should answer.
+        if (input.signal?.aborted) yield { kind: 'assistant_message', ts: Date.now(), engine: ENGINE, text: '[somora] aborted by user' };
+        else yield { kind: 'error', ts: Date.now(), engine: ENGINE, message };
         yield { kind: 'turn_end', ts: Date.now(), engine: ENGINE, turnId };
         return;
       }
@@ -839,12 +846,14 @@ export const grokCliEngine: AgentEngine = {
         );
         const sid = (created.result as { sessionId?: string } | undefined)?.sessionId;
         if (created.error || !sid) {
-          yield {
-            kind: 'error',
-            ts: Date.now(),
-            engine: ENGINE,
-            message: `grok session/new failed: ${created.error?.message ?? 'no sessionId returned'}`,
-          };
+          if (input.signal?.aborted) yield { kind: 'assistant_message', ts: Date.now(), engine: ENGINE, text: '[somora] aborted by user' };
+          else
+            yield {
+              kind: 'error',
+              ts: Date.now(),
+              engine: ENGINE,
+              message: `grok session/new failed: ${created.error?.message ?? 'no sessionId returned'}`,
+            };
           yield { kind: 'turn_end', ts: Date.now(), engine: ENGINE, turnId };
           return;
         }
