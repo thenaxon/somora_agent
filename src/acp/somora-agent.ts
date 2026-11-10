@@ -10,8 +10,6 @@
 // somora session ids.
 
 import type {
-  Agent,
-  AgentSideConnection,
   AuthenticateResponse,
   CancelNotification,
   InitializeRequest,
@@ -26,10 +24,15 @@ import type {
   PromptRequest,
   PromptResponse,
   ResumeSessionRequest,
+  RequestPermissionRequest,
+  RequestPermissionResponse,
   ResumeSessionResponse,
+  SessionNotification,
   SessionUpdate,
+  Stream,
+  AgentConnection,
 } from '@agentclientprotocol/sdk';
-import { RequestError } from '@agentclientprotocol/sdk';
+import { RequestError, agent as acpAgent, methods } from '@agentclientprotocol/sdk';
 import { SseToAcp, historyToAcp, type SseFrame } from './translate.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 
@@ -130,7 +133,40 @@ interface PromptRun {
   stream: AbortController;
 }
 
-export class SomoraAcpAgent implements Agent {
+/** The editor side as the agent calls it: session updates out, a
+ *  permission question in. */
+export interface AcpClientPeer {
+  sessionUpdate(params: SessionNotification): Promise<void>;
+  requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse>;
+}
+
+/**
+ * Serve one ACP client on a stream: every method `SomoraAcpAgent`
+ * handles, registered on an SDK agent app (SDK 2: apps replaced the
+ * AgentSideConnection class; the wire protocol is ACP v1 as before).
+ */
+export function serveSomoraAcp(stream: Stream, opts: SomoraAcpOptions): AgentConnection {
+  let handle: AgentConnection | null = null;
+  const peer: AcpClientPeer = {
+    sessionUpdate: (p) => handle!.client.notify(methods.client.session.update, p),
+    requestPermission: (p) => handle!.client.request(methods.client.session.requestPermission, p),
+  };
+  const impl = new SomoraAcpAgent(peer, opts);
+  handle = acpAgent({ name: 'somora' })
+    .onRequest(methods.agent.initialize, (c) => impl.initialize(c.params))
+    .onRequest(methods.agent.authenticate, () => impl.authenticate())
+    .onRequest(methods.agent.session.new, (c) => impl.newSession(c.params))
+    .onRequest(methods.agent.session.list, (c) => impl.listSessions(c.params))
+    .onRequest(methods.agent.session.load, (c) => impl.loadSession(c.params))
+    .onRequest(methods.agent.session.resume, (c) => impl.resumeSession(c.params))
+    .onRequest(methods.agent.session.close, () => impl.closeSession())
+    .onRequest(methods.agent.session.prompt, (c) => impl.prompt(c.params))
+    .onNotification(methods.agent.session.cancel, (c) => impl.cancel(c.params))
+    .connect(stream);
+  return handle;
+}
+
+export class SomoraAcpAgent {
   /** Running prompts by session: cancel stops them. */
   private readonly running = new Map<string, PromptRun>();
   /** New sessions are only noted until their first prompt: a client
@@ -160,7 +196,7 @@ export class SomoraAcpAgent implements Agent {
   }
 
   constructor(
-    private readonly conn: AgentSideConnection,
+    private readonly conn: AcpClientPeer,
     private readonly opts: SomoraAcpOptions,
   ) {}
 

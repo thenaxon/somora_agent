@@ -8,8 +8,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { AgentSideConnection, ClientSideConnection, ndJsonStream, type SessionUpdate } from '@agentclientprotocol/sdk';
-import { SomoraAcpAgent, type HttpFetch } from './somora-agent.ts';
+import { client as acpClient, methods, ndJsonStream, type ClientConnection, type SessionUpdate } from '@agentclientprotocol/sdk';
+import { serveSomoraAcp, type HttpFetch } from './somora-agent.ts';
+
+/** The editor's calls, as named methods over an SDK 2 client connection. */
+function editor(conn: ClientConnection) {
+  const ag = conn.agent;
+  return {
+    initialize: (p: any): Promise<any> => ag.request(methods.agent.initialize, p),
+    newSession: (p: any): Promise<any> => ag.request(methods.agent.session.new, p),
+    loadSession: (p: any): Promise<any> => ag.request(methods.agent.session.load, p),
+    listSessions: (p: any): Promise<any> => ag.request(methods.agent.session.list, p),
+    prompt: (p: any): Promise<any> => ag.request(methods.agent.session.prompt, p),
+    cancel: (p: any): Promise<void> => ag.notify(methods.agent.session.cancel, p),
+  };
+}
 
 type Frame = { event: string; data: Record<string, unknown> };
 interface Fake {
@@ -125,24 +138,17 @@ async function connect(base: string, opts: { onPermission?: (r: any) => any; ses
   const b = new TransformStream<Uint8Array, Uint8Array>();
   const updates: SessionUpdate[] = [];
   const permissions: any[] = [];
-  new AgentSideConnection(
-    (c) => new SomoraAcpAgent(c, { base, agent: 'ada', version: 'test', fetch: fetch as unknown as HttpFetch, ...(opts.session ? { session: opts.session } : {}) }),
-    ndJsonStream(a.writable, b.readable),
-  );
-  const client = new ClientSideConnection(
-    () =>
-      ({
-        async sessionUpdate(n: { update: SessionUpdate }) {
-          updates.push(n.update);
-        },
-        async requestPermission(r: any) {
-          permissions.push(r);
-          return opts.onPermission ? opts.onPermission(r) : { outcome: { outcome: 'cancelled' } };
-        },
-      }) as any,
-    ndJsonStream(b.writable, a.readable),
-  );
-  return { client, updates, permissions };
+  serveSomoraAcp(ndJsonStream(a.writable, b.readable), { base, agent: 'ada', version: 'test', fetch: fetch as unknown as HttpFetch, ...(opts.session ? { session: opts.session } : {}) });
+  const conn = acpClient({ name: 'test-editor' })
+    .onNotification(methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+    })
+    .onRequest(methods.client.session.requestPermission, async ({ params }) => {
+      permissions.push(params);
+      return opts.onPermission ? opts.onPermission(params) : { outcome: { outcome: 'cancelled' } };
+    })
+    .connect(ndJsonStream(b.writable, a.readable));
+  return { client: editor(conn), updates, permissions };
 }
 
 async function withServer(script: Parameters<typeof fakeSomora>[0], fn: (base: string, fake: ReturnType<typeof fakeSomora>['fake']) => Promise<void>) {
@@ -320,7 +326,7 @@ test('load replays the stored conversation; --session opens that session; unknow
       const { sessionId } = await client.newSession({ cwd: '/w', mcpServers: [] });
       assert.equal(sessionId, 'main');
       const list = await client.listSessions({ cwd: '/w' });
-      assert.deepEqual(list.sessions.map((s) => [s.sessionId, s.title, s.cwd]), [['main', 'main', '/w']]);
+      assert.deepEqual(list.sessions.map((s: any) => [s.sessionId, s.title, s.cwd]), [['main', 'main', '/w']]);
       await client.loadSession({ sessionId: 'main', cwd: '/w', mcpServers: [] });
       assert.deepEqual(updates.map((u) => u.sessionUpdate), ['user_message_chunk', 'agent_message_chunk']);
       await assert.rejects(client.loadSession({ sessionId: 'nope', cwd: '/w', mcpServers: [] }), /not found/i);
@@ -331,8 +337,8 @@ test('load replays the stored conversation; --session opens that session; unknow
     async (base) => {
       const a = new TransformStream<Uint8Array, Uint8Array>();
       const b = new TransformStream<Uint8Array, Uint8Array>();
-      new AgentSideConnection((c) => new SomoraAcpAgent(c, { base, agent: 'claw', version: 't', fetch: fetch as unknown as HttpFetch }), ndJsonStream(a.writable, b.readable));
-      const client = new ClientSideConnection(() => ({}) as any, ndJsonStream(b.writable, a.readable));
+      serveSomoraAcp(ndJsonStream(a.writable, b.readable), { base, agent: 'claw', version: 't', fetch: fetch as unknown as HttpFetch });
+      const client = editor(acpClient().connect(ndJsonStream(b.writable, a.readable)));
       await assert.rejects(client.initialize({ protocolVersion: 1, clientCapabilities: {} }), /external agent/);
     },
   );
@@ -341,7 +347,7 @@ test('load replays the stored conversation; --session opens that session; unknow
 test('a server that is not there fails initialize with a clear message', async () => {
   const a = new TransformStream<Uint8Array, Uint8Array>();
   const b = new TransformStream<Uint8Array, Uint8Array>();
-  new AgentSideConnection((c) => new SomoraAcpAgent(c, { base: 'http://127.0.0.1:1', agent: 'ada', version: 't', fetch: fetch as unknown as HttpFetch }), ndJsonStream(a.writable, b.readable));
-  const client = new ClientSideConnection(() => ({}) as any, ndJsonStream(b.writable, a.readable));
+  serveSomoraAcp(ndJsonStream(a.writable, b.readable), { base: 'http://127.0.0.1:1', agent: 'ada', version: 't', fetch: fetch as unknown as HttpFetch });
+  const client = editor(acpClient().connect(ndJsonStream(b.writable, a.readable)));
   await assert.rejects(client.initialize({ protocolVersion: 1, clientCapabilities: {} }), /not reachable/);
 });

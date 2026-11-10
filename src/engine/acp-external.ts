@@ -6,7 +6,7 @@
 // updates into somora events (src/acp/translate.ts).
 
 import { randomUUID } from 'node:crypto';
-import type { ContentBlock, RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk';
+import type { ContentBlock, RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk/unstable';
 import type { Config } from '../config/types.ts';
 import { ACP_ENGINE, AcpTurnTranslator } from '../acp/translate.ts';
 import { connectionFor, rememberInfo, type ExternalConnection } from '../external/connection.ts';

@@ -5,7 +5,7 @@
 // share is the plumbing: the session file, the live stream to every open
 // window (same serializer, same events), the result shape.
 
-import type { RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk';
+import type { RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk/unstable';
 import { readFile } from 'node:fs/promises';
 import { resolveAttachmentForModel } from '../attachments/store.ts';
 import { ACP_ENGINE } from '../acp/translate.ts';

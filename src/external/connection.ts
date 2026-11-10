@@ -5,18 +5,23 @@
 // prompt and the agent's session is resumed.
 
 import { homedir } from 'node:os';
+// The `/unstable` entrypoint (SDK 2): the stable one strips `usage` from
+// a prompt response while parsing, and that is how an external agent
+// reports what a turn cost. Same ACP v1 on the wire.
 import {
-  ClientSideConnection,
+  client as acpClient,
+  methods,
   ndJsonStream,
   PROTOCOL_VERSION,
   type AgentCapabilities,
+  type ClientConnection,
   type ContentBlock,
   type Implementation,
   type PromptResponse,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionUpdate,
-} from '@agentclientprotocol/sdk';
+} from '@agentclientprotocol/sdk/unstable';
 import type { Config } from '../config/types.ts';
 import { profileByName, profileFor, type AcpProfile } from '../acp/profiles.ts';
 import { getResourceHome } from '../ssh/pool.ts';
@@ -108,7 +113,7 @@ export class ExternalConnection {
   private constructor(
     readonly ext: ExternalAgent,
     private readonly proc: AgentProcess,
-    private readonly conn: ClientSideConnection,
+    private readonly conn: ClientConnection,
   ) {
     this.fingerprint = fingerprint(ext);
     this.info = { agentInfo: null, capabilities: null, profile: profileByName(ext.systemConfig.profile ?? 'generic'), where: proc.where };
@@ -137,39 +142,36 @@ export class ExternalConnection {
     const proc = await startAgentProcess(ext.systemConfig.transport, ext.agent.command, config);
     let self: ExternalConnection | null = null;
     const stream = ndJsonStream(proc.input, proc.output);
-    const conn = new ClientSideConnection(
-      () => ({
-        sessionUpdate: async (p) => {
-          if (!self || self.replaying || self.closed) return;
-          if (self.sessionId && p.sessionId !== self.sessionId) return;
-          if (self.handlers) {
-            self.lastUsed = Date.now();
-            self.handlers.onUpdate(p.update);
-            return;
-          }
-          if (Date.now() - self.turnEndedAt < afterTurnGraceMs || !self.somoraSession) return;
+    const conn = acpClient({ name: 'somora' })
+      .onNotification(methods.client.session.update, ({ params: p }) => {
+        if (!self || self.replaying || self.closed) return;
+        if (self.sessionId && p.sessionId !== self.sessionId) return;
+        if (self.handlers) {
           self.lastUsed = Date.now();
-          unpromptedSink?.(self.ext, self.somoraSession, p.update);
-        },
-        requestPermission: async (p) => {
-          if (!self?.handlers) return { outcome: { outcome: 'cancelled' } };
-          return self.handlers.onPermission(p);
-        },
-        // somora offers no file system and no terminal to an external agent.
-        readTextFile: async () => {
-          throw new Error('somora does not offer file access to external agents');
-        },
-        writeTextFile: async () => {
-          throw new Error('somora does not offer file access to external agents');
-        },
-      }),
-      stream,
-    );
+          self.handlers.onUpdate(p.update);
+          return;
+        }
+        if (Date.now() - self.turnEndedAt < afterTurnGraceMs || !self.somoraSession) return;
+        self.lastUsed = Date.now();
+        unpromptedSink?.(self.ext, self.somoraSession, p.update);
+      })
+      .onRequest(methods.client.session.requestPermission, async ({ params: p }): Promise<RequestPermissionResponse> => {
+        if (!self?.handlers) return { outcome: { outcome: 'cancelled' } };
+        return self.handlers.onPermission(p);
+      })
+      // somora offers no file system and no terminal to an external agent.
+      .onRequest(methods.client.fs.readTextFile, () => {
+        throw new Error('somora does not offer file access to external agents');
+      })
+      .onRequest(methods.client.fs.writeTextFile, () => {
+        throw new Error('somora does not offer file access to external agents');
+      })
+      .connect(stream);
     self = new ExternalConnection(ext, proc, conn);
     try {
       const init = await withTimeout(
         Promise.race([
-          conn.initialize({
+          conn.agent.request(methods.agent.initialize, {
             protocolVersion: PROTOCOL_VERSION,
             clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
             clientInfo: { name: 'somora', title: 'somora', version: SOMORA_VERSION },
@@ -235,7 +237,7 @@ export class ExternalConnection {
     if (known) {
       try {
         if (caps?.sessionCapabilities?.resume) {
-          await withTimeout(this.conn.resumeSession({ sessionId: known, cwd, mcpServers: [] }), INIT_TIMEOUT_MS, 'session/resume');
+          await withTimeout(this.conn.agent.request(methods.agent.session.resume, { sessionId: known, cwd, mcpServers: [] }), INIT_TIMEOUT_MS, 'session/resume');
           this.sessionId = known;
           return { sessionId: known, started: false, lostPrevious: false };
         }
@@ -243,7 +245,7 @@ export class ExternalConnection {
           this.replaying = true;
           this.sessionId = known;
           try {
-            await withTimeout(this.conn.loadSession({ sessionId: known, cwd, mcpServers: [] }), INIT_TIMEOUT_MS, 'session/load');
+            await withTimeout(this.conn.agent.request(methods.agent.session.load, { sessionId: known, cwd, mcpServers: [] }), INIT_TIMEOUT_MS, 'session/load');
           } finally {
             this.replaying = false;
           }
@@ -253,7 +255,7 @@ export class ExternalConnection {
         logger.warn({ msg: 'external.resume_failed', agent: this.ext.name, sessionId: known, err: (err as Error).message });
       }
     }
-    const res = await withTimeout(this.conn.newSession({ cwd, mcpServers: [] }), INIT_TIMEOUT_MS, 'session/new');
+    const res = await withTimeout(this.conn.agent.request(methods.agent.session.new, { cwd, mcpServers: [] }), INIT_TIMEOUT_MS, 'session/new');
     this.sessionId = res.sessionId;
     logger.info({ msg: 'external.session_new', agent: this.ext.name, sessionId: res.sessionId, replaced: known ?? null });
     return { sessionId: res.sessionId, started: true, lostPrevious: Boolean(known) };
@@ -270,12 +272,12 @@ export class ExternalConnection {
     this.lastUsed = Date.now();
     const sessionId = this.sessionId;
     const onAbort = () => {
-      void this.conn.cancel({ sessionId }).catch(() => {});
+      void this.conn.agent.notify(methods.agent.session.cancel, { sessionId }).catch(() => {});
     };
     signal?.addEventListener('abort', onAbort, { once: true });
     try {
       return await Promise.race([
-        this.conn.prompt({ sessionId, prompt: blocks }),
+        this.conn.agent.request(methods.agent.session.prompt, { sessionId, prompt: blocks }),
         this.proc.exited.then(() => {
           throw new Error(this.deathReason ?? 'the external agent ended during the turn');
         }),

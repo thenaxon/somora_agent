@@ -4,8 +4,8 @@
 // carries the protocol, so every diagnostic goes to stderr.
 
 import { Readable, Writable } from 'node:stream';
-import { AgentSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
-import { SomoraAcpAgent, type HttpFetch } from '../acp/somora-agent.ts';
+import { ndJsonStream } from '@agentclientprotocol/sdk';
+import { serveSomoraAcp, type HttpFetch } from '../acp/somora-agent.ts';
 import { loopbackFetch } from '../server/loopback-fetch.ts';
 import { resolveServerBase } from './server-base.ts';
 import { SOMORA_VERSION } from '../version.ts';
@@ -58,10 +58,7 @@ export async function runAcpCli(args: string[]): Promise<number> {
   }
   log(`agent ${agent} at ${base}`);
   const stream = ndJsonStream(Writable.toWeb(process.stdout) as WritableStream<Uint8Array>, Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>);
-  const conn = new AgentSideConnection(
-    (c) => new SomoraAcpAgent(c, { base, agent: agent!, ...(session ? { session } : {}), version: SOMORA_VERSION, fetch, log }),
-    stream,
-  );
+  const conn = serveSomoraAcp(stream, { base, agent: agent!, ...(session ? { session } : {}), version: SOMORA_VERSION, fetch, log });
   await conn.closed;
   return 0;
 }

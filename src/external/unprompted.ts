@@ -10,7 +10,7 @@
 // turn starting in that session first writes what was collected.
 
 import { randomUUID } from 'node:crypto';
-import type { SessionUpdate } from '@agentclientprotocol/sdk';
+import type { SessionUpdate } from '@agentclientprotocol/sdk/unstable';
 import { ACP_ENGINE, AcpTurnTranslator } from '../acp/translate.ts';
 import { logger } from '../server/logger.ts';
 import { createTurnSerializer } from '../server/sse-serializer.ts';

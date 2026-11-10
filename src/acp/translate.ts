@@ -22,6 +22,9 @@ import type {
   ToolCallStatus,
   ToolKind,
 } from '@agentclientprotocol/sdk';
+// What an external agent may send: the full v1 surface (SDK 2's
+// `/unstable` types, e.g. plan_removed). Unknown kinds fall through.
+import type { SessionUpdate as IncomingSessionUpdate } from '@agentclientprotocol/sdk/unstable';
 import type { NormalizedEvent } from '../types/events.ts';
 
 /** Engine name on every event an external agent produces. */
@@ -114,7 +117,7 @@ export class AcpTurnTranslator {
     private readonly now: () => number = Date.now,
   ) {}
 
-  update(u: SessionUpdate): Ev[] {
+  update(u: IncomingSessionUpdate): Ev[] {
     if (this.finished) {
       this.lateUpdates += 1;
       return [];
