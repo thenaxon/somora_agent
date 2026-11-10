@@ -722,19 +722,24 @@ export const codexCliEngine: AgentEngine = {
         armIdleTimer();
         const started = Date.now();
         let result;
+        // Cleared when the tool returns: left standing, each call's timer
+        // held its closure for the full timeout (Fable review Nr. 26).
+        let toolTimer: NodeJS.Timeout | undefined;
         try {
           result = await Promise.race([
             input.tools.invoke(registryName, args),
-            new Promise<never>((_, reject) =>
-              setTimeout(
+            new Promise<never>((_, reject) => {
+              toolTimer = setTimeout(
                 () => reject(new Error(`tool '${registryName}' timed out after ${toolTimeoutMs / 1000}s`)),
                 toolTimeoutMs,
-              ).unref(),
-            ),
+              );
+              toolTimer.unref();
+            }),
           ]);
         } catch (err) {
           result = { ok: false, error: (err as Error).message };
         } finally {
+          if (toolTimer) clearTimeout(toolTimer);
           if (pendingToolCalls > 0) pendingToolCalls--;
           armIdleTimer();
         }

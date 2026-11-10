@@ -633,6 +633,17 @@ class AcpClient {
       } catch {
         /* already gone */
       }
+      // A Grok that ignores SIGTERM is not left running (Fable review
+      // 2026-11-10 Nr. 26; the codex client does the same).
+      setTimeout(() => {
+        if (!this.closed) {
+          try {
+            this.child.kill('SIGKILL');
+          } catch {
+            /* already gone */
+          }
+        }
+      }, 3_000).unref();
     }
   }
 }

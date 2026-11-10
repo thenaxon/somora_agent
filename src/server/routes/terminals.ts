@@ -30,6 +30,10 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
     __pty?: { write(s: string): void; resize(cols: number, rows: number): void; kill(): void };
     __hbTimer?: ReturnType<typeof setInterval>;
     __lastSeenAt?: number;
+    /** onClose ran: a PTY started after it (onOpen awaits an import or
+     *  the tmux list first) is killed at once instead of living on with
+     *  its heartbeat (Fable review 2026-11-10 Nr. 26). */
+    __closed?: boolean;
   }
 
   function armTerminalHeartbeat(
@@ -106,6 +110,10 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
             });
             const raw = ws.raw as PtyWsBag | undefined;
             if (raw) {
+              if (raw.__closed) {
+                term.kill();
+                return;
+              }
               raw.__pty = term;
               armTerminalHeartbeat(ws, raw, 'terminal.attach');
             }
@@ -145,6 +153,7 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
         },
         onClose(_evt, ws) {
           const raw = ws.raw as PtyWsBag | undefined;
+          if (raw) raw.__closed = true;
           if (raw?.__hbTimer) clearInterval(raw.__hbTimer);
           try {
             raw?.__pty?.kill();
@@ -221,6 +230,10 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
             // closure scope.
             const raw = ws.raw as PtyWsBag | undefined;
             if (raw) {
+              if (raw.__closed) {
+                term.kill();
+                return;
+              }
               raw.__pty = term;
               armTerminalHeartbeat(ws, raw, 'tmux.attach');
             }
@@ -261,6 +274,7 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
         },
         onClose(_evt, ws) {
           const raw = ws.raw as PtyWsBag | undefined;
+          if (raw) raw.__closed = true;
           if (raw?.__hbTimer) clearInterval(raw.__hbTimer);
           try {
             raw?.__pty?.kill();

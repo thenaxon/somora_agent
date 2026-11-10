@@ -599,6 +599,10 @@ export async function localExecBackground(
   }
 
   if (!child.pid) {
+    // A failed spawn (no shell, EAGAIN) also emits 'error' on the next
+    // tick; with no listener yet that became an uncaughtException
+    // (Fable review 2026-11-10 Nr. 26). The throw below is the report.
+    child.once('error', () => {});
     throw new Error('exec.local.background: spawn returned no pid');
   }
 
