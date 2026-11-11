@@ -34,6 +34,7 @@ import {
 } from './launchd.ts';
 // Plain-ESM helper shared with bin/somora.mjs (must run on the Node we reject).
 import { glibcUpgradeHint, glibcVersion, nodeUpgradeHint, satisfiesGlibc, satisfiesNode } from '../../bin/node-version.mjs';
+import { helpAction } from './help-args.ts';
 
 // CLI commands talk to the person on this terminal; the logger's pretty
 // stdout lines belong to the foreground server only (it gets the
@@ -709,7 +710,13 @@ async function main(): Promise<number> {
   }
 
   const cmd = argv[0];
-  const rest = argv.slice(1);
+  let rest = argv.slice(1);
+  const help = helpAction(cmd, rest);
+  if (help.kind === 'usage') {
+    process.stdout.write(usage());
+    return 0;
+  }
+  if (help.kind === 'module-help') rest = help.args;
   switch (cmd) {
     case 'init':
       return await cmdInit();

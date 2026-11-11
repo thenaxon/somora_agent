@@ -163,6 +163,6 @@ export async function runTeamCli(args: string[]): Promise<number> {
       return cmdShow(args.slice(1));
     default:
       process.stdout.write(usage());
-      return sub ? 2 : 0;
+      return sub && sub !== '--help' && sub !== '-h' ? 2 : 0;
   }
 }

@@ -66,6 +66,6 @@ export async function runLspCli(args: string[]): Promise<number> {
       return install(rest);
     default:
       process.stderr.write(usage());
-      return cmd ? 2 : 0;
+      return cmd && cmd !== '--help' && cmd !== '-h' ? 2 : 0;
   }
 }
