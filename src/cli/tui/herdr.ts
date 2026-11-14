@@ -16,7 +16,10 @@ export function resumeArgs(agent: string, session: string): string[] | null {
 const env = process.env;
 const enabled = env.HERDR_ENV === '1' && !!env.HERDR_BIN_PATH && !!env.HERDR_PANE_ID && !!env.HERDR_SOCKET_PATH;
 const owner = ['--source', 'somora-tui', '--agent', 'somora'];
-let pending: string[] | null = null;
+const metadataOwner = [...owner, '--applies-to-source', 'somora-tui'];
+const clearDisplay = ['pane', 'report-metadata', env.HERDR_PANE_ID!, ...metadataOwner, '--clear-display-agent'];
+let pending: { report: string[]; display: string[] } | null = null;
+let latest: { report: string[]; display: string[] } | null = null;
 let flight: Promise<void> | null = null;
 let previous = '';
 let stopped = false;
@@ -32,9 +35,21 @@ async function drain(): Promise<void> {
   while (pending) {
     const args = pending;
     pending = null;
-    await send(args);
+    await send(args.report);
+    await send(args.display);
   }
 }
+
+function flush(): void {
+  if (!flight) flight = drain().finally(() => { flight = null; });
+}
+
+// Herdr handoff does not retain display metadata; refresh it even while idle.
+const refresh = enabled ? setInterval(() => {
+  if (stopped || !latest) return;
+  pending = latest;
+  flush();
+}, 30_000).unref() : null;
 
 export function reportHerdr(agent: string, session: string, state: ReturnType<typeof herdrState>, message: string): void {
   if (!enabled || stopped) return;
@@ -45,15 +60,20 @@ export function reportHerdr(agent: string, session: string, state: ReturnType<ty
   const key = JSON.stringify(args);
   if (key === previous) return;
   previous = key;
-  pending = args;
-  if (!flight) flight = drain().finally(() => { flight = null; });
+  pending = latest = {
+    report: args,
+    display: ['pane', 'report-metadata', env.HERDR_PANE_ID!, ...metadataOwner, '--display-agent', `${agent} · Somora`],
+  };
+  flush();
 }
 
 export async function releaseHerdr(): Promise<void> {
   if (!enabled || stopped) return;
   stopped = true;
-  pending = null;
+  if (refresh) clearInterval(refresh);
+  pending = latest = null;
   await flight;
+  await send(clearDisplay);
   await send(['pane', 'release-agent', env.HERDR_PANE_ID!, ...owner]);
   released = true;
 }
@@ -61,6 +81,9 @@ export async function releaseHerdr(): Promise<void> {
 // Covers termination paths that bypass Ink's normal shutdown.
 if (enabled) process.once('exit', () => {
   if (released) return;
+  try {
+    execFileSync(env.HERDR_BIN_PATH!, clearDisplay, { timeout: 250, stdio: 'ignore' });
+  } catch { /* Herdr is optional. */ }
   try {
     execFileSync(env.HERDR_BIN_PATH!, ['pane', 'release-agent', env.HERDR_PANE_ID!, ...owner], { timeout: 250, stdio: 'ignore' });
   } catch { /* Herdr is optional. */ }
