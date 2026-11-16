@@ -75,11 +75,12 @@ export function wakePrompt(
     };
   }
   return {
-    text: `[tmux attention] Session '${name}'${where} (${agent}) finished and is ready.`,
+    text: `[tmux attention] Session '${name}'${where} (${agent}) stopped working and is idle.`,
     prefix:
-      `The coding agent in the tmux session named below was working and is idle now: it finished. You ` +
-      `started it earlier and your last look predates this. Inspect it now:\n` +
-      `1. tmux (action: read, ${ref}) to read its answer.\n` +
+      `The coding agent in the tmux session named below was working and is idle now. That usually means ` +
+      `it finished — but a turn can also stop half-way (an error, a model that wrote a tool call as text). ` +
+      `You started it earlier and your last look predates this. Inspect it now:\n` +
+      `1. tmux (action: read, ${ref}) to read its answer, and check its status report if you asked for one.\n` +
       `2. Decide: prompt it again, report the result to the person, or kill the session when done.\n` +
       `Do not blindly send a new prompt — read first.`,
   };

@@ -34,6 +34,8 @@ const POLL_MS = 400;
  *  between tool calls. */
 const SETTLE_MS = 800;
 const LOOK_LINES = 60;
+/** prompt to a working agent: this many more looks before agent_busy. */
+const BUSY_GRACE_LOOKS = 7;
 /** Starting: idle must hold longer, on a screen that shows something —
  *  while an agent loads, a near-blank screen reads idle by herdr's
  *  fallback (no rule matches). */
@@ -173,8 +175,16 @@ export interface PromptOptions {
 export async function promptAgent(run: Runner, name: string, opts: PromptOptions): Promise<DriveResult> {
   const clock = opts.clock ?? realClock;
   const start = clock.now();
-  const before = await look(run, name, LOOK_LINES, opts.kind);
+  let before = await look(run, name, LOOK_LINES, opts.kind);
   if ('error' in before) return fail('tmux_error', start, clock, {}, before.error);
+  // A moment of "working" right after the agent drew a fresh screen
+  // (Codex after /new) passes by itself: give it a few looks.
+  for (let i = 0; i < BUSY_GRACE_LOOKS && before.agent?.state === 'working'; i += 1) {
+    await clock.sleep(POLL_MS);
+    const again = await look(run, name, LOOK_LINES, opts.kind);
+    if ('error' in again) return fail('tmux_error', start, clock, {}, again.error);
+    before = again;
+  }
   const content0 = contentOf(before.look, opts.lines);
   if (!before.agent) return fail('no_agent', start, clock, { content: content0 });
   const s0 = before.agent.state;

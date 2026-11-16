@@ -15,6 +15,7 @@
 import { getConnection, remoteExec } from '../../ssh/index.ts';
 import { resolveVisibleResourceFresh } from '../resources/visibility.ts';
 import { logger } from '../../server/logger.ts';
+import { AGENT_PANE_SIZE, fixWindowSize } from './local.ts';
 
 const DEFAULT_CAPTURE_LINES = 200;
 
@@ -95,7 +96,7 @@ export async function tmuxRemoteCreate(
   cwd?: string,
 ): Promise<TmuxRemoteResult> {
   const cwdFlag = cwd ? ` -c ${shQuote(cwd)}` : '';
-  const cmd = `tmux new-session -d -s ${shQuote(name)}${cwdFlag}`;
+  const cmd = `tmux new-session -d -s ${shQuote(name)} ${AGENT_PANE_SIZE}${cwdFlag} && ${fixWindowSize(name)}`;
   logger.info({ msg: 'tmux.remote.create', target, name, cwd });
   return runRemoteTmux(agent, target, cmd);
 }

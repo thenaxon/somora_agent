@@ -155,3 +155,18 @@ test('start on a host without ps: the declared kind recognises the agent once it
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.agent?.identified_by, 'kind');
 });
+
+test('prompt: a moment of working (Codex after /new) passes before agent_busy', async () => {
+  const t = fakeTmux(pi(WORKING), { paste: withText, enter: () => [pi(WORKING), pi(DONE)] });
+  // The first looks show working, then the pane settles to idle by itself.
+  let looks = 0;
+  const run: typeof t.run = async (cmd) => {
+    if (cmd.startsWith('tmux display-message') && looks++ === 2) {
+      // third look: idle
+      return t.run(cmd).then((r) => ({ ...r, stdout: r.stdout.replaceAll(WORKING, IDLE) }));
+    }
+    return t.run(cmd);
+  };
+  const r = await promptAgent(run, 'p', { text: 'go', wait: false, timeoutMs: 60_000, lines: 20, clock: fakeClock() });
+  assert.notEqual(r.error, 'agent_busy', JSON.stringify(r));
+});

@@ -6,6 +6,7 @@
 import type { Hono } from 'hono';
 import type * as Server from '../index.ts';
 import { listTmuxSessions } from '../../tmux/list.ts';
+import { getTmuxOrigin } from '../../tmux/origin-store.ts';
 import { logger } from '../logger.ts';
 import { config } from '../server-state.ts';
 import { upgradeWebSocket } from '@hono/node-server';
@@ -198,7 +199,14 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
             const pty = await import('node-pty');
             const term = pty.spawn(
               'tmux',
-              ['attach-session', '-d', '-t', session],
+              // A session somora created holds a coding agent whose screen
+              // is read: a viewer must not change its size. -f ignore-size
+              // (tmux 3.2+) keeps typing and scrolling, only the size is
+              // the session's own. A session made by hand follows the
+              // viewer as before.
+              getTmuxOrigin(session)
+                ? ['attach-session', '-d', '-f', 'ignore-size', '-t', session]
+                : ['attach-session', '-d', '-t', session],
               {
                 name: 'xterm-256color',
                 cols: 80,

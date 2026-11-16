@@ -1,6 +1,6 @@
 {
  "id": "codex",
- "note": "somora's additions to herdr's codex rules. Recorded 2026-11-16 on Codex 0.169 (src/tmux/__fixtures__/codex/blocked-startup-daemon).",
+ "note": "somora's additions to herdr's codex rules. Recorded on Codex 0.169: the shared-background-server dialog at start (src/tmux/__fixtures__/codex/blocked-startup-daemon, 2026-11-16) and the worktree choice after /new (acceptance run 2026-11-16).",
  "rules": [
   {
    "id": "somora_daemon_settings_dialog",
@@ -8,10 +8,42 @@
    "priority": 950,
    "region": "bottom_non_empty_lines(20)",
    "visible_blocker": true,
-   "contains": ["background server has incompatible feature settings"],
+   "contains": [
+    "background server has incompatible feature settings"
+   ],
    "any": [
-    { "contains": ["run without daemon this time"] },
-    { "contains": ["restart with these settings"] }
+    {
+     "contains": [
+      "run without daemon this time"
+     ]
+    },
+    {
+     "contains": [
+      "restart with these settings"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "somora_new_conversation_dialog",
+   "state": "blocked",
+   "priority": 950,
+   "region": "bottom_non_empty_lines(20)",
+   "visible_blocker": true,
+   "contains": [
+    "where should the new conversation run?"
+   ],
+   "any": [
+    {
+     "contains": [
+      "enter select"
+     ]
+    },
+    {
+     "contains": [
+      "use current git worktree"
+     ]
+    }
    ]
   }
  ]

@@ -76,6 +76,16 @@ Remote sessions get everything local ones do: the agent's state,
 
 ## Coding agents
 
+### The size of a session
+
+A session that `create` or `start` makes is 160 columns by 45 rows and
+keeps that size (`window-size manual`): an agent's state is read from
+its screen, and a small terminal that attaches must not shrink it. The
+web client attaches to these sessions without changing their size, and
+you can still type into them. A smaller viewer sees part of the screen,
+a larger one a margin. Sessions made by hand follow the viewer as
+before.
+
 ### Recognising the agent
 
 somora looks at the foreground processes of a session's terminal
@@ -122,7 +132,8 @@ title. Of the matching rules the one with the highest priority decides.
 No match means `idle`.
 
 somora adds rules herdr does not have yet beside them, for example
-Codex's dialog about its shared background server. New herdr rules
+Codex's dialog about its shared background server and its worktree
+question after `/new`. New herdr rules
 arrive with somora releases. Nothing is fetched while somora runs.
 
 ### Your own rules
@@ -269,7 +280,9 @@ The server watches the sessions somora created, locally and on SSH
 resources, as long as a coding agent runs in them. Every few seconds it
 reads the agent's state and notices two things:
 
-- **Finished:** the agent went from working to idle.
+- **Stopped working:** the agent went from working to idle. Usually it
+  finished; a turn can also stop half-way, so the wake asks to read
+  first and check the agent's status report.
 - **Needs an answer:** the agent stopped at a dialog (blocked).
 
 What happens next depends on whether the agent that created the session
@@ -283,7 +296,7 @@ saw it:
 The wake turn carries one of these texts:
 
 ```
-[tmux attention] Session '<name>' (<agent>) finished and is ready.
+[tmux attention] Session '<name>' (<agent>) stopped working and is idle.
 [tmux attention] Session '<name>' (<agent>) needs an answer: it stopped at a dialog.
 ```
 
@@ -291,6 +304,12 @@ A session on an SSH resource adds ` on <resource>` after its name. The
 turn comes with instructions: read the session first, never send a new
 prompt unread, never approve a dialog it does not understand. Web
 client, mobile app and TUI show the turn as a `tmux` divider.
+
+While the agent is busy in another turn, the wake waits. Meanwhile
+every `tmux` result it gets carries `waiting_for_you`: its other
+sessions that finished or wait at a dialog and were not looked at yet,
+each with `name`, `target` (remote only), `state` and `since`. Looking
+at such a session counts as having seen it, and its wake is dropped.
 
 ### Rules that keep it calm
 
@@ -423,13 +442,15 @@ One tool, `tmux`. Only `action` is always required.
 ## Results
 
 Every result has `action`, `ok`, `target` and, except for `list`,
-`name`. A failed call adds `error`.
+`name`. A failed call adds `error`. Every result except `list` adds
+`waiting_for_you` when other sessions of the calling agent finished or
+wait at a dialog.
 
 | Action | More fields |
 |---|---|
 | `create` | `hint`: a reminder of the next calls. |
 | `start`, `prompt` | `agent`, `content`, `ms`; `submitted` and `settled` (`prompt`), `settled` (`start`); on failure `error` (a code from the table above) and `hint`. |
-| `send` | `ms` |
+| `send` | `ms`, `agent` (the state a moment after the keys) |
 | `capture`, `read` | `content`, `matched_pattern` (`false` on a timeout or without a pattern), `wait_pattern` (echoed when set), `ms`, `agent`, `attention` |
 | `wait_idle` | `content`, `became_idle`, `ms`, `agent`, `hint`, `attention` |
 | `list` | `count`, `sessions`: each with `name`, `created_at` (epoch milliseconds), `windows`, `agent` (`name`, `state`) and `attention` |

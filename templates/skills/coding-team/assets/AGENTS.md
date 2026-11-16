@@ -22,7 +22,7 @@ The plan and the interfaces are in `docs/PLAN.md`. Read it before every task.
 3. Before you report done: `<check command>` and `<test command>` pass.
 4. No git commits. The coordinator commits.
 5. Scratch files only in `.scratch/` inside the project (git ignores it),
-   never in `/tmp` or elsewhere.
+   never in `/tmp` or elsewhere. Delete only your own files there.
 6. Visual changes: check them yourself (a screenshot you look at) before
    you report done.
 7. End every task with exactly this:

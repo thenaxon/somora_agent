@@ -32,7 +32,7 @@ import {
   tmuxRemoteSend,
   tmuxRemoteSendKey,
 } from './remote.ts';
-import { getTmuxOrigin, originKey, recordTmuxOrigin, removeTmuxOrigin } from '../../tmux/origin-store.ts';
+import { getTmuxOrigin, listTmuxOrigins, originKey, recordTmuxOrigin, removeTmuxOrigin } from '../../tmux/origin-store.ts';
 import { shQuote as shellQuote } from '../../tmux/observe.ts';
 import {
   readAttentionMirror,
@@ -171,7 +171,20 @@ interface SendResult {
   target: string;
   name: string;
   ms: number;
+  /** The agent's state a moment after the keys (answering a dialog
+   *  shows at once whether it went on, stopped or closed). */
+  agent?: AgentStateField;
   error?: string;
+}
+
+/** Sessions of the calling agent that finished or wait at a dialog and
+ *  were not looked at yet — so a busy agent learns of them without
+ *  polling list. Added to every result where there are any. */
+interface WaitingEntry {
+  name: string;
+  target?: string;
+  state: 'ready' | 'blocked' | 'running' | null;
+  since: number | null;
 }
 /** prompt, start: what drive.ts reports, under its action. */
 type DriveActionResult = { action: 'prompt' | 'start'; target: string; name: string } & DriveResult;
@@ -239,7 +252,7 @@ interface KillResult {
   was_running: boolean;
 }
 
-type TmuxResult =
+type TmuxResult = (
   | CreateResult
   | SendResult
   | DriveActionResult
@@ -247,7 +260,8 @@ type TmuxResult =
   | WaitIdleResult
   | ListResult
   | ExplainResult
-  | KillResult;
+  | KillResult
+) & { waiting_for_you?: WaitingEntry[] };
 
 /**
  * Count how many times `needle` appears in `haystack`. Used by the
@@ -315,6 +329,26 @@ async function runCapture(
   return r.ok
     ? { ok: true, content: r.stdout }
     : { ok: false, content: r.stdout, error: r.stderr.trim() || `exit ${r.exit_code}` };
+}
+
+/** The caller's sessions that need attention, except `name` on `target`. */
+function waitingFor(ctx: { agent: string; session?: string }, target: string, name?: string): WaitingEntry[] {
+  try {
+    const mirror = readAttentionMirror();
+    const out: WaitingEntry[] = [];
+    for (const o of listTmuxOrigins()) {
+      if (o.agent !== ctx.agent) continue;
+      if (o.session && ctx.session && o.session !== ctx.session) continue;
+      const key = originKey(o.target, o.name);
+      if (name !== undefined && key === originKey(target, name)) continue;
+      const a = mirror[key];
+      if (!a?.needs_attention) continue;
+      out.push({ name: o.name, ...(o.target ? { target: o.target } : {}), state: a.state, since: a.last_event_at });
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 /** Where a target's tmux commands run. */
@@ -400,9 +434,11 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     'and says when the agent did not take the text (agent_prompt_stalled: capture before sending ' +
     'again, never twice blindly).\n' +
     '3. blocked: read the dialog, decide or ask the person, answer with send key:"Down" / "Enter" / ' +
-    '"Escape" or keys:"1". Never approve something you do not understand.\n' +
+    '"Escape" or keys:"1" — the send result shows the agent\'s state right after. Never approve ' +
+    'something you do not understand.\n' +
     '4. A long task: prompt with wait:false or let wait time out, then end your turn — somora wakes ' +
-    'you with a [tmux attention] turn when the agent finishes or needs an answer.\n' +
+    'you with a [tmux attention] turn when the agent stops working or needs an answer. While you are ' +
+    'busy, results carry waiting_for_you: your other sessions that finished or wait at a dialog.\n' +
     'Coordinating several agents: one session per agent with a clear name and role, a fresh session ' +
     'or the agent\'s /new for a new task, and ask each to end its work with a short status ' +
     '(done | blocked, files changed, open questions).' +
@@ -457,6 +493,15 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
   },
   maxTimeoutMs: MAX_WAIT_TIMEOUT_MS + 15_000,
   async handler(input, ctx): Promise<TmuxResult> {
+    const r = await handle(input, ctx);
+    if (r.action === 'list') return r;
+    const target = input.target ?? 'local';
+    const waiting = waitingFor(ctx, target, input.name);
+    return waiting.length > 0 ? { ...r, waiting_for_you: waiting } : r;
+  },
+};
+
+async function handle(input: z.infer<typeof TmuxInput>, ctx: { agent: string; session?: string }): Promise<TmuxResult> {
     const target = input.target ?? 'local';
     const run = runnerFor(target, ctx.agent);
 
@@ -560,13 +605,21 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         : target === 'local'
           ? await tmuxLocalSend(name, input.keys as string, input.multiline_safe ?? false)
           : await tmuxRemoteSend(ctx.agent, target, name, input.keys as string, input.multiline_safe ?? false);
-      if (r.ok) noteObservation(target, name, ctx);
+      let agent: AgentStateField | null = null;
+      if (r.ok) {
+        // A moment for the program to react, then one look.
+        await new Promise((res) => setTimeout(res, 600));
+        const o = await observePane(run, name, { lines: 1 });
+        if (!('error' in o)) agent = agentStateOf(o.look, lookupSessionKind(target, name));
+        noteObservation(target, name, ctx, seen(agent));
+      }
       return {
         action: 'send',
         ok: r.ok,
         target,
         name,
         ms: Date.now() - start,
+        ...(agent ? { agent } : {}),
         ...(r.ok ? {} : { error: r.stderr.trim() || `exit ${r.exit_code}` }),
       };
     }
@@ -833,8 +886,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       if (wasMissing) return { action: 'kill', ok: true, target, name, was_running: false };
     }
     return { action: 'kill', ok: r.ok, target, name, was_running: r.ok };
-  },
-};
+}
 
 export function tmuxTools(): ToolDefinition[] {
   return [tmux] as ToolDefinition[];

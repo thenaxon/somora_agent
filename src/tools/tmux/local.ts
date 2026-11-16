@@ -107,6 +107,17 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
   return cmds.join(' && ');
 }
 
+/** A session the tool creates has a fixed size of its own: a coding
+ *  agent needs room, and its state is read from the screen. With
+ *  tmux's default (window-size latest) the last client to attach — a
+ *  small terminal window in the web client — shrank every agent's pane
+ *  to 67×7, and its state was misread (2026-11-16 acceptance run).
+ *  window-size manual keeps the size whoever attaches. */
+export const AGENT_PANE_SIZE = '-x 160 -y 45';
+export function fixWindowSize(name: string): string {
+  return `tmux set-option -w -t ${shQuote(`=${name}:`)} window-size manual`;
+}
+
 export interface TmuxLocalCreateOptions {
   name: string;
   cwd?: string;
@@ -166,7 +177,7 @@ export async function tmuxLocalCreate(opts: TmuxLocalCreateOptions): Promise<Tmu
       explicit.push(`-e ${shQuote(`${name}=${value}`)}`);
     }
     const eFlags = explicit.length > 0 ? ' ' + explicit.join(' ') : '';
-    cmd = `tmux new-session -d -s ${shQuote(opts.name)}${cwdFlag}${eFlags}`;
+    cmd = `tmux new-session -d -s ${shQuote(opts.name)} ${AGENT_PANE_SIZE}${cwdFlag}${eFlags}`;
   } else {
     // Default behavior: strip somora-internal claude-isolation env vars
     // so a `claude` / `codex` started inside the pane sees the user's
@@ -181,7 +192,7 @@ export async function tmuxLocalCreate(opts: TmuxLocalCreateOptions): Promise<Tmu
     const unsetNames = new Set<string>(SOMORA_INTERNAL_ENV_NAMES);
     for (const [name] of somoraInternalEnvPresent()) unsetNames.add(name);
     const wrapper = `unset ${[...unsetNames].join(' ')}; exec "\${SHELL:-/bin/bash}"`;
-    cmd = `tmux new-session -d -s ${shQuote(opts.name)}${cwdFlag} ${shQuote(wrapper)}`;
+    cmd = `tmux new-session -d -s ${shQuote(opts.name)} ${AGENT_PANE_SIZE}${cwdFlag} ${shQuote(wrapper)}`;
   }
   // Also strip on the spawn-env path in case this call boots a fresh
   // tmux server (whose subsequent sessions would otherwise inherit
@@ -191,6 +202,7 @@ export async function tmuxLocalCreate(opts: TmuxLocalCreateOptions): Promise<Tmu
   // every restart. A scope of its own keeps it (systemd-scope.ts).
   const scope = scopeArgv(scopeUnitName('tmux', opts.name));
   if (scope.length > 0) cmd = `${scope.map((a) => shQuote(a)).join(' ')} ${cmd}`;
+  cmd += ` && ${fixWindowSize(opts.name)}`;
   logger.info({
     msg: 'tmux.local.create',
     name: opts.name,

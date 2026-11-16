@@ -31,7 +31,8 @@ test("somora's additions are appended to herdr's rules, herdr's file untouched",
   assert.ok(ids.includes('somora_daemon_settings_dialog'));
   const herdr = JSON.parse(readFileSync(new URL('./manifests/codex.json', import.meta.url), 'utf8')) as { rules: Array<{ id: string }> };
   assert.equal(herdr.rules.some((r) => r.id.startsWith('somora_')), false);
-  assert.equal(ids.length, herdr.rules.length + 1);
+  const extra = JSON.parse(readFileSync(new URL('./somora-rules/codex.json', import.meta.url), 'utf8')) as { rules: unknown[] };
+  assert.equal(ids.length, herdr.rules.length + extra.rules.length);
 });
 
 test('a file of one\'s own wins, can add an agent, and a broken one is skipped with a warning', () => {
@@ -64,4 +65,18 @@ test('a file of one\'s own wins, can add an agent, and a broken one is skipped w
     reloadManifests();
   }
   assert.equal(loadedManifest('pi')?.source, 'bundled');
+});
+
+test("Codex's worktree question after /new is blocked (somora rule)", () => {
+  const screen = [
+    '  Where should the new conversation run?',
+    '',
+    '› 1. Use current Git worktree',
+    '  2. Create new Git worktree',
+    '',
+    '  enter select · esc back',
+  ].join('\n');
+  const d = detectAgentState('codex', { screen, title: 'demo' });
+  assert.equal(d?.state, 'blocked');
+  assert.equal(d?.rule?.id, 'somora_new_conversation_dialog');
 });
