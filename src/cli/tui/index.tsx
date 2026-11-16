@@ -4,10 +4,14 @@
 //                                Phase C ships)
 
 import { render } from 'ink';
+import { parseArgs } from 'node:util';
+import { releaseHerdr } from './herdr.ts';
 import { Api } from './api.ts';
 import { App } from './app.tsx';
 import { readTuiState } from './state.ts';
 import { resolveServerBase } from '../server-base.ts';
+
+const { values } = parseArgs({ options: { agent: { type: 'string' }, session: { type: 'string' } } });
 
 // Where the server listens (config.yaml TLS, env overrides).
 const base = await resolveServerBase();
@@ -40,11 +44,11 @@ try {
 //   2. alphabetically-first agent from /agents
 //   3. literal placeholder ('default') — TUI shows a "no agents found" state
 const persisted = readTuiState();
-let initialAgent = persisted.lastAgent ?? '';
+let initialAgent = values.agent ?? persisted.lastAgent ?? '';
 try {
   const agents = await new Api(base).fetchAgents();
   const names = agents.map((a) => a.name);
-  if (initialAgent && !names.includes(initialAgent)) initialAgent = '';
+  if (!values.agent && initialAgent && !names.includes(initialAgent)) initialAgent = '';
   if (!initialAgent) {
     const sorted = [...names].sort();
     initialAgent = sorted[0] ?? 'default';
@@ -82,11 +86,11 @@ if (process.stdout.isTTY) {
 // exitOnCtrlC: false lets us implement a soft-cancel pattern: first Ctrl+C
 // clears the current input or closes the autocomplete popup; only when
 // there's nothing to clear does it exit.
-render(
+const app = render(
   <App
     base={base}
     initialAgent={initialAgent}
-    initialSession="main"
+    initialSession={values.session ?? 'main'}
     initialShowMemory={initialShowMemory}
     initialShowTools={initialShowTools}
     initialVerboseTools={initialVerboseTools}
@@ -98,3 +102,8 @@ render(
     exitOnCtrlC: false,
   },
 );
+try {
+  await app.waitUntilExit();
+} finally {
+  await releaseHerdr();
+}
