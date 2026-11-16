@@ -188,6 +188,10 @@ short status: done or blocked, the files it changed, open questions.
 A file such as `AGENTS.md` in the project can carry these rules for all
 of them.
 
+The bundled skill `coding-team` holds the whole procedure: agreeing the
+team, an `AGENTS.md` template with roles, the files each may change and
+the status format, handing out tasks, checking and committing.
+
 ## Sending input
 
 **Text.** `keys` is typed as written. Each `\n` is an Enter, so end a

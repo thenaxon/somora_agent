@@ -255,13 +255,14 @@ Use ClawHub's own slug as the local name. When ClawHub limits requests
 
 ## Built in skills
 
-somora ships two skills and copies them to `~/.somora/skills/` when the
+somora ships three skills and copies them to `~/.somora/skills/` when the
 server starts:
 
 | Skill | Teaches |
 |---|---|
 | `skill-author` | Writing and installing skills with `somora skill`. |
 | `builder-handover` | Handing a coding task to a builder agent. |
+| `coding-team` | Coordinating several coding agents (Claude Code, Codex, OpenCode, Pi) in tmux sessions as one team, with an `AGENTS.md` template. |
 
 A new somora version may bring a newer text. What happens to your copy
 at server start:
