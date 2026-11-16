@@ -1848,3 +1848,79 @@ button { cursor: pointer; }
   color: var(--text-1);
 }
 .asked-question-desc { color: var(--text-2); }
+
+/* The chat's view settings behind one header button (SettingsSheet.tsx).
+   The dot: at least one setting is not as it starts out. */
+.header-settings {
+  position: relative;
+  flex: none;
+  margin-left: 6px;
+  background: transparent;
+  border: 1px solid var(--border-2, #444);
+  border-radius: 6px;
+  padding: 4px 8px;
+  min-height: 26px;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+}
+.header-settings.open {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+.header-settings svg circle { fill: var(--bg-1); }
+.header-settings-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-1);
+}
+.settings-sheet { font-family: inherit; font-size: 14px; }
+.settings-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 4px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-0);
+  font: inherit;
+  text-align: left;
+}
+.settings-row:last-child { border-bottom: 0; }
+.settings-row:active { opacity: 0.7; }
+.settings-row-icon { width: 24px; text-align: center; font-size: 17px; flex: none; }
+.settings-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.settings-row-label { font-weight: 500; }
+.settings-row-hint { font-size: 12px; color: var(--text-3); }
+.settings-switch {
+  flex: none;
+  width: 42px;
+  height: 24px;
+  border-radius: 12px;
+  background: var(--bg-3, var(--line-2));
+  border: 1px solid var(--line-2);
+  position: relative;
+  transition: background 0.15s;
+}
+.settings-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform 0.15s, background 0.15s;
+}
+.settings-switch.on {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  border-color: var(--accent-dim);
+}
+.settings-switch.on .settings-switch-knob { transform: translateX(18px); background: var(--accent); }

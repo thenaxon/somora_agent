@@ -22,6 +22,7 @@ import { useBuilderPanel } from '../hooks/useBuilderPanel';
 import { BuilderButton, BuilderSheet } from './BuilderSheet';
 import { resolveAgentColor } from '../hooks/agentColors';
 import { SessionSheet } from './SessionSheet';
+import { SettingsButton, SettingsSheet, type SettingRow } from './SettingsSheet';
 import { AgentOrderSheet } from './AgentOrderSheet';
 import { QuestionCard, useSessionQuestion } from './QuestionCard';
 import { CallSheet, PhoneIcon } from './CallSheet';
@@ -97,11 +98,12 @@ export function MobileApp() {
   const activeInfo = agents.find((a) => a.name === activeAgent);
   const activeKind = activeInfo?.kind;
   const activeColor = activeInfo ? resolveAgentColor(activeInfo) : undefined;
-  const [showTools, toggleTools] = useToolSwitch(activeAgent, session.id, activeKind);
-  const [showMemory, toggleMemory] = useMemorySwitch(activeAgent, session.id);
+  const [showTools, toggleTools, toolsChanged] = useToolSwitch(activeAgent, session.id, activeKind);
+  const [showMemory, toggleMemory, memoryChanged] = useMemorySwitch(activeAgent, session.id);
   const sessionBusy = Boolean(work && (work.busy || work.active));
   const builderTurn = useBuilderTurn(activeAgent, session.id, activeKind === 'builder' && showTools, sessionBusy);
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const builderPanel = useBuilderPanel(activeAgent, session.id, activeKind === 'builder', builderOpen, sessionBusy);
   // Another agent or session: the sheet belongs to the one it was opened on.
   useEffect(() => setBuilderOpen(false), [activeAgent, session.id]);
@@ -373,6 +375,35 @@ export function MobileApp() {
     };
   }, []);
 
+  // The view settings behind the header's settings button (SettingsSheet):
+  // each only where it applies, as its button used to be.
+  const settingRows: SettingRow[] = [
+    ...(activeAgent
+      ? [
+          { id: 'tools', icon: '🔧', label: 'Tool activity in chat', hint: 'the calls of each turn as a block', on: showTools, onToggle: toggleTools, changed: toolsChanged },
+          { id: 'memory', icon: '🧠', label: 'Recalled notes in chat', hint: 'what memory brought to each turn', on: showMemory, onToggle: toggleMemory, changed: memoryChanged },
+        ]
+      : []),
+    ...(!wakeLock.unsupported
+      ? [{
+          id: 'awake',
+          icon: wakeLock.enabled ? '☀️' : '🌙',
+          label: 'Keep screen awake',
+          hint: wakeLock.unreliable
+            ? 'iOS before 18.4 may sleep anyway'
+            : wakeLock.enabled && !wakeLock.active
+              ? 'starts once you touch the app'
+              : 'while this app is open',
+          on: wakeLock.enabled,
+          onToggle: () => wakeLock.setEnabled(!wakeLock.enabled),
+          changed: wakeLock.enabled,
+        }]
+      : []),
+    ...(ttsEnabled && autoPlayAllowOverride && activeAgent
+      ? [{ id: 'voice', icon: autoPlay ? '🔊' : '🔇', label: 'Read replies aloud', hint: 'when you spoke the message', on: autoPlay, onToggle: () => setAutoPlay((v) => !v), changed: autoPlay !== autoPlayDefault }]
+      : []),
+  ];
+
   return (
     <div className="mobile-shell">
       <header className="mobile-header">
@@ -385,6 +416,7 @@ export function MobileApp() {
             className="mobile-header-pick"
             onClick={() => {
               setWorkOpen(false);
+              setSettingsOpen(false);
               setBuilderOpen(false);
               setSessionSheetOpen((v) => !v);
             }}
@@ -412,43 +444,10 @@ export function MobileApp() {
         <WorkBadge work={work} open={workOpen} onToggle={() => {
           if (!workOpen) refreshWork();
           setSessionSheetOpen(false);
+          setSettingsOpen(false);
           setBuilderOpen(false);
           setWorkOpen((v) => !v);
         }} />
-        {activeAgent && (
-          <button
-            type="button"
-            onClick={toggleTools}
-            aria-pressed={showTools}
-            aria-label={showTools ? 'tool activity shown' : 'tool activity hidden'}
-            title={showTools ? 'tool activity shown in the chat' : 'tool activity hidden'}
-            className={`header-tools ${showTools ? 'on' : ''}`}
-            style={showTools && activeColor ? { borderColor: `${activeColor}88`, background: `${activeColor}25`, color: activeColor } : undefined}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-            </svg>
-            <span>tools</span>
-          </button>
-        )}
-        {activeAgent && (
-          <button
-            type="button"
-            onClick={toggleMemory}
-            aria-pressed={showMemory}
-            aria-label={showMemory ? 'recalled notes shown' : 'recalled notes hidden'}
-            title={showMemory ? 'recalled notes shown in the chat' : 'recalled notes hidden'}
-            className={`header-tools header-memory ${showMemory ? 'on' : ''}`}
-            style={showMemory && activeColor ? { borderColor: `${activeColor}88`, background: `${activeColor}25`, color: activeColor } : undefined}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
-              <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
-              <path d="M12 5v13" />
-            </svg>
-            <span>memory</span>
-          </button>
-        )}
         {activeAgent && activeKind === 'builder' && (
           <BuilderButton
             open={builderOpen}
@@ -456,41 +455,11 @@ export function MobileApp() {
             color={activeColor}
             onToggle={() => {
               setWorkOpen(false);
+              setSettingsOpen(false);
               setSessionSheetOpen(false);
               setBuilderOpen((v) => !v);
             }}
           />
-        )}
-        {!wakeLock.unsupported && (
-          <button
-            type="button"
-            onClick={() => wakeLock.setEnabled(!wakeLock.enabled)}
-            aria-label={wakeLock.enabled ? 'keep screen awake: on' : 'keep screen awake: off'}
-            title={
-              wakeLock.unreliable
-                ? 'keep the screen awake — your iOS is older than 18.4, where Apple fixed this for home-screen web apps, so it may sleep anyway'
-                : wakeLock.enabled
-                  ? wakeLock.active
-                    ? 'screen stays awake while this app is open'
-                    : 'screen stays awake once you touch the app'
-                  : 'screen sleeps as usual'
-            }
-            style={{
-              marginLeft: activeAgent ? 6 : 'auto',
-              background: 'transparent',
-              border: '1px solid var(--border-2, #444)',
-              borderRadius: 6,
-              padding: '4px 8px',
-              color: wakeLock.enabled ? 'var(--accent, #6cf)' : 'var(--text-2, #888)',
-              opacity: wakeLock.enabled && wakeLock.unreliable ? 0.6 : 1,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-              fontSize: 12,
-            }}
-          >
-            <span aria-hidden="true">{wakeLock.enabled ? '☀️' : '🌙'}</span>
-          </button>
         )}
         {callable && (
           <button
@@ -515,31 +484,17 @@ export function MobileApp() {
             <PhoneIcon size={14} />
           </button>
         )}
-        {ttsEnabled && autoPlayAllowOverride && activeAgent && (
-          <button
-            type="button"
-            onClick={() => setAutoPlay((v) => !v)}
-            aria-label={autoPlay ? 'voice auto-play on' : 'voice auto-play off'}
-            title={
-              autoPlay
-                ? 'voice auto-play on (mic input ⇒ spoken reply)'
-                : 'voice auto-play off (mic input ⇒ text only)'
-            }
-            style={{
-              marginLeft: wakeLock.unsupported && !activeAgent ? 'auto' : 6,
-              background: 'transparent',
-              border: '1px solid var(--border-2, #444)',
-              borderRadius: 6,
-              padding: '4px 8px',
-              color: autoPlay ? 'var(--accent, #6cf)' : 'var(--text-2, #888)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-              fontSize: 12,
+        {settingRows.length > 0 && (
+          <SettingsButton
+            open={settingsOpen}
+            changed={settingRows.some((r) => r.changed)}
+            onToggle={() => {
+              setWorkOpen(false);
+              setSessionSheetOpen(false);
+              setBuilderOpen(false);
+              setSettingsOpen((v) => !v);
             }}
-          >
-            <span aria-hidden="true">{autoPlay ? '🔊' : '🔇'}</span>
-          </button>
+          />
         )}
       </header>
 
@@ -565,6 +520,7 @@ export function MobileApp() {
         />
       )}
 
+      {settingsOpen && settingRows.length > 0 && <SettingsSheet rows={settingRows} onClose={() => setSettingsOpen(false)} />}
       <WorkSheet
         open={workOpen}
         onClose={() => setWorkOpen(false)}

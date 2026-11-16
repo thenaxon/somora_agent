@@ -93,8 +93,9 @@ first and the voice follows a moment later.
 
 ## The auto-play toggle
 
-The chat header shows a `🔊`/`🔇` toggle when `tts.enabled` is `true`
-and `allowUserOverride` is `true` for that client.
+The web chat header shows a `🔊`/`🔇` toggle when `tts.enabled` is
+`true` and `allowUserOverride` is `true` for that client. On the phone it
+is the **Read replies aloud** switch in the header's settings sheet.
 
 | Client | Remembered per | First value |
 |---|---|---|

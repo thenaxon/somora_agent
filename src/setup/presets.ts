@@ -26,7 +26,7 @@ export const CLAUDE_PRESET: ProviderPreset = {
   key: 'anthropic',
   engine: 'claude-cli',
   models: [
-    { id: 'claude-fable-5-1', alias: 'fable', contextWindow: 1000000, capabilities: FULL, note: 'frontier model' },
+    { id: 'claude-fable-5-2', alias: 'fable', contextWindow: 1000000, capabilities: FULL, note: 'frontier model' },
     { id: 'claude-opus-5-5', alias: 'opus', contextWindow: 1000000, capabilities: FULL, note: 'recommended for most work' },
     { id: 'claude-sonnet-5-5', alias: 'sonnet', contextWindow: 1000000, capabilities: FULL, note: 'lighter on the subscription budget' },
     { id: 'claude-haiku-5-5', alias: 'haiku', contextWindow: 1000000, capabilities: FULL, note: 'fast and cheap — good for background work' },
@@ -39,7 +39,7 @@ export const CODEX_PRESET: ProviderPreset = {
   models: [
     { id: 'gpt-6-astra', alias: 'astra', contextWindow: 258400, capabilities: FULL, note: 'frontier model', reasoning: { levels: { off: 'low', high: 'xhigh' } } },
     { id: 'gpt-6.1-sol', alias: 'sol', contextWindow: 258400, capabilities: FULL, note: 'strong all-rounder', reasoning: { levels: { high: 'xhigh' } } },
-    { id: 'gpt-5.6-terra', alias: 'terra', contextWindow: 258400, capabilities: FULL, note: 'balanced' },
+    { id: 'gpt-6.1-terra', alias: 'terra', contextWindow: 475000, capabilities: FULL, note: 'balanced', reasoning: { levels: { off: 'low', high: 'xhigh' } } },
     { id: 'gpt-6-luna', alias: 'luna', contextWindow: 258400, capabilities: FULL, note: 'fast and cheap — good for background work' },
     { id: 'gpt-5.5', alias: 'gpt55', contextWindow: 258400, capabilities: FULL, note: 'previous generation' },
   ],

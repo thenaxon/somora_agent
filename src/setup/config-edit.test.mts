@@ -28,7 +28,7 @@ test('a fresh config gets providers in block style and loads', () => {
   assert.equal(r.changed, true);
   assert.equal(r.backup, null);
   const text = readFileSync(p, 'utf8');
-  assert.match(text, /providers:\n  anthropic:\n    engine: claude-cli\n    models:\n      - id: claude-fable-5-1\n        alias: fable/);
+  assert.match(text, /providers:\n  anthropic:\n    engine: claude-cli\n    models:\n      - id: claude-fable-5-2\n        alias: fable/);
   assert.match(text, /capabilities: \[ ?text, image, pdf, reasoning ?\]/);
   assert.match(text, /^# somora server config/);
 });

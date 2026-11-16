@@ -66,7 +66,8 @@ Otherwise the link points at `127.0.0.1`, which the phone cannot open.
 
 | Part | What it does |
 |---|---|
-| **Header** | Shows `agent · session ▾ model`. Tap it to switch session or model. On the right: the work badge, the **tools** switch (a wrench; on a wide screen with its name), in a builder session the **builder** button (a clipboard, with the number of open tasks), the screen-awake toggle, the voice toggle and, with realtime voice, the **call** button (a phone). |
+| **Header** | Shows `agent · session ▾ model`. Tap it to switch session or model. On the right: the work badge, in a builder session the **builder** button (a clipboard, with the number of open tasks), with realtime voice the **call** button (a phone), and the **settings** button (sliders). |
+| **Settings** | The sliders button opens a sheet with the chat's view settings: tool activity, recalled notes, keeping the screen awake and reading replies aloud, each where it applies. A dot on the button means at least one of them is not as it starts out. |
 | **Avatar row** | One tile per agent. Tap to switch. The app remembers the last agent. Long-press a tile to change the order, see below. |
 | **Chat** | The history of the open session, newest first loaded. Scroll to the top, or tap **Load older messages**, for the next older part. Replies are rendered as Markdown. A wide code block scrolls sideways. |
 | **Input bar** | Paperclip, microphone, text field, Send. Enter sends, Shift+Enter starts a new line. |
@@ -202,9 +203,9 @@ again and the transcript lands in the text field for you to check. It
 is never sent by itself. The button is greyed out when `stt.enabled` is
 off or the browser cannot record.
 
-**Spoken replies.** With text-to-speech configured, the header shows a
-`🔊`/`🔇` toggle. When it is on and you sent the message by voice, the
-reply is also played. The toggle is remembered per agent. Replies with
+**Spoken replies.** With text-to-speech configured, the settings sheet
+has a **Read replies aloud** switch. When it is on and you sent the message by voice, the
+reply is also played. The switch is remembered per agent. Replies with
 audio get a Play button. Details are in the [voice guide](voice.md).
 
 ### Calling an agent
@@ -233,12 +234,12 @@ the screen follows. After a call ends: **call again** or **close**.
 
 ### Keeping the screen awake
 
-The `☀️`/`🌙` toggle in the header keeps the display on while the app
-is open. It is off by default and remembered per browser.
+**Keep screen awake** in the settings sheet keeps the display on while
+the app is open. It is off by default and remembered per browser.
 
 > **Note:** On an iPhone this needs iOS 18.4 or newer. Older versions
-> accept the request and let the screen sleep anyway. The toggle still
-> switches there, and its tooltip says so.
+> accept the request and let the screen sleep anyway. The switch still
+> works there, and the line under it says so.
 
 ## What the chat shows
 
@@ -259,7 +260,7 @@ The thinking row only exists when the server captures reasoning.
 
 ### Tool activity
 
-The **tools** switch in the header shows what the agent does between
+**Tool activity in chat** in the settings sheet shows what the agent does between
 its messages. A builder writes almost no text while it works, so
 without it a build of several hours shows an empty chat.
 
@@ -294,7 +295,7 @@ agents, off by default.
 
 ### Recalled notes
 
-The **memory** switch in the header shows which notes somora gave the
+**Recalled notes in chat** in the settings sheet shows which notes somora gave the
 agent before a turn. A line stands above the reply:
 
 ```text

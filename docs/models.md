@@ -68,7 +68,7 @@ providers:
   anthropic:
     engine: claude-cli
     models:
-      - id: claude-fable-5-1
+      - id: claude-fable-5-2
         alias: fable
         contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]
@@ -88,7 +88,8 @@ providers:
 
 | Model | contextWindow | Notes | Checked |
 |---|---|---|---|
-| `claude-fable-5-1` | 1000000 | Frontier model, adaptive thinking always on. The SDK discloses no thinking text for it, so somora shows a placeholder row that the model thought. No separate reasoning token count: it is part of `tokens_out`. | full check |
+| `claude-fable-5-2` | 1000000 | The current Fable. It replaces `claude-fable-5-1`: keep your alias, change the `id`. Same surface: adaptive thinking always on, the thinking text is a placeholder. | in use |
+| `claude-fable-5-1` | 1000000 | The previous Fable. Frontier model, adaptive thinking always on. The SDK discloses no thinking text for it, so somora shows a placeholder row that the model thought. No separate reasoning token count: it is part of `tokens_out`. | full check |
 | `claude-opus-5-5` | 1000000 | Anthropic's recommendation for most workloads. It replaces `claude-opus-5`: keep your alias, change the `id`. Thinking text is a placeholder, as above. | full check |
 | `claude-sonnet-5-5` | 1000000 | The current Sonnet: same surface as Opus, cheaper on the subscription budget. It replaces `claude-sonnet-5`: keep your alias, change the `id`. | in use |
 | `claude-sonnet-5` | 1000000 | The previous Sonnet. | full check |
@@ -136,10 +137,12 @@ providers:
         capabilities: [text, image, pdf, reasoning]
         reasoning:
           levels: { high: xhigh }      # optional: /thinking high → codex xhigh
-      - id: gpt-5.6-terra
+      - id: gpt-6.1-terra
         alias: terra
-        contextWindow: 258400
+        contextWindow: 475000          # what codex reports for 6.1 Terra
         capabilities: [text, image, pdf, reasoning]
+        reasoning:
+          levels: { "off": low, high: xhigh }   # refuses `minimal`: map `off` explicitly
       - id: gpt-6-luna
         alias: luna
         contextWindow: 258400
@@ -162,7 +165,8 @@ move along.
 | `gpt-6-sol` | 258400 | The first GPT-6 Sol, followed by 6.1. | in use |
 | `gpt-6-luna` | 258400 | Fast and cheap: extraction, classification, volume. The current Luna. | in use |
 | `gpt-5.6-sol` | 258400 | The previous Sol. | full check |
-| `gpt-5.6-terra` | 258400 | Workhorse. OpenAI positions it as GPT-5.5 class at lower cost. GPT-6 has no Terra, so this is the current one. | full check |
+| `gpt-6.1-terra` | 475000 | The current Terra, the workhorse between Sol and Luna. Codex reports a 475000 window for it. It refuses `minimal` with HTTP 400, so map `off: low` as in the block above. | in use |
+| `gpt-5.6-terra` | 258400 | The previous Terra. OpenAI positions it as GPT-5.5 class at lower cost. | full check |
 | `gpt-5.6-luna` | 258400 | The previous Luna. | full check |
 | `gpt-5.5` | 258400 | Still listed by Codex. The one model here that does not run in Code Mode only. Terra is the equivalent at lower cost. | full check |
 | `gpt-5.4-mini`, `gpt-5.3-codex` | none | Retired for ChatGPT accounts. Codex answers with an error, which shows as a failed turn or a crashed compaction worker. Remove them. | retired |
@@ -565,12 +569,15 @@ decisions:
 | Model | Where it runs | Images | Input limit | Checked |
 |---|---|---|---|---|
 | Clef | Self-hosted, Cloudflare's open decision model | yes, up to 4 per call | what the server reports at `/v1/models` | yes: all three question types, images, the limit, refusal of too long input |
+| OneJev 1.6 9B | Self-hosted on a Flide server | yes; somora sends them in Flide's form | set `maxInputTokens` (32768 on Flide; its `/v1/models` names none) | yes: text questions, images, Flide's length refusal |
 | Jev | TypeSafe AI, hosted | no | per its documentation | no: not tested with somora |
 
 Clef's answer time grows with the input: a short request takes well
 under a second, four images or tens of thousands of tokens take tens of
-seconds. Jev speaks the same API by its public description; somora was
-checked against Clef only.
+seconds. OneJev answers a short request in about 0.1 to 0.2 seconds. Jev
+speaks the same API by its public description; somora was checked
+against Clef and OneJev only. How images differ between the servers is
+in [decision models](decisions.md).
 
 ## Settings
 

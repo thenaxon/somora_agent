@@ -50,7 +50,11 @@ function configShow(): Promise<{ tools: boolean; memory: boolean }> {
   return configPromise;
 }
 
-function useShowSwitch(which: Which, agent: string | null, session: string, kind: string | undefined): [boolean, () => void] {
+/** [shown, toggle, differs from what it starts as] — the third drives
+ *  the dot on the header's settings button. */
+export type ShowSwitch = [boolean, () => void, boolean];
+
+function useShowSwitch(which: Which, agent: string | null, session: string, kind: string | undefined): ShowSwitch {
   const key = agent ? (which === 'tools' ? toolSwitchKey : memorySwitchKey)(agent, session) : '';
   const [cfg, setCfg] = useState(false);
   const [stored, setStored] = useState<boolean | null>(() => (key ? readStored(key) : null));
@@ -69,7 +73,8 @@ function useShowSwitch(which: Which, agent: string | null, session: string, kind
     setStored(key ? readStored(key) : null);
   }, [key]);
 
-  const on = stored ?? (which === 'tools' ? defaultShowTools(kind, cfg) : cfg);
+  const start = which === 'tools' ? defaultShowTools(kind, cfg) : cfg;
+  const on = stored ?? start;
   const toggle = useCallback(() => {
     if (!key) return;
     const next = !on;
@@ -80,13 +85,13 @@ function useShowSwitch(which: Which, agent: string | null, session: string, kind
       /* private mode: the switch still works for this visit */
     }
   }, [key, on]);
-  return [on, toggle];
+  return [on, toggle, on !== start];
 }
 
-export function useToolSwitch(agent: string | null, session: string, kind: string | undefined): [boolean, () => void] {
+export function useToolSwitch(agent: string | null, session: string, kind: string | undefined): ShowSwitch {
   return useShowSwitch('tools', agent, session, kind);
 }
 
-export function useMemorySwitch(agent: string | null, session: string): [boolean, () => void] {
+export function useMemorySwitch(agent: string | null, session: string): ShowSwitch {
   return useShowSwitch('memory', agent, session, undefined);
 }
