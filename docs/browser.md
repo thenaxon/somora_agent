@@ -359,7 +359,7 @@ browser:
 | `browser.viewport` | `1280` x `800` | Page size. Minimum 320 x 240. |
 | `browser.stream.quality` | `60` | JPEG quality of the live picture, 10 to 100. |
 | `browser.stream.maxFps` | `15` | Frames per second of the live picture, 1 to 30. The stream never sends more than 20. |
-| `browser.allowPrivate` | `[]` | Private hosts or ranges agents may open, for example `["192.0.2.0/24", "nas.local"]`. |
+| `browser.allowPrivate` | `[]` | Private hosts or ranges agents may open, for example `["192.0.2.0/24", "nas.local"]`. `[localhost, 127.0.0.1, "::1"]` lets agents check dev servers and test builds on the somora machine and nothing else of your network. |
 | `browser.deny` | `[]` | Hosts never opened, for example `["*.exampleco.com"]`. |
 | `browser.profiles` | `{}` | Shared profiles: `<name>: { agents: [...] }`. Names use lowercase letters, digits, `-` and `_`. |
 

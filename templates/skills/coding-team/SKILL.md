@@ -91,6 +91,9 @@ tmux({ action: "start", name: "review", cwd: "<project>", command: "codex" })
 - For a person to test, build the last commit into a folder of its own
   (`git archive HEAD` or a worktree) and serve that on a port of its
   own. The dev server shows the half-edited working tree.
+- Check it yourself in the `browser` tool first when this somora lets
+  the browser open `localhost` (`browser.allowPrivate`); otherwise a
+  headless browser from the shell does.
 
 ## 8. Commit and report
 - Only you commit, after the checks pass, one commit per finished task
