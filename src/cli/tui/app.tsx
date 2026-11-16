@@ -1093,6 +1093,7 @@ export function App({
     pushHistory(trimmed);
     if (trimmed.startsWith('/')) {
       try {
+        const questionBeforeCommand = openQuestionRef.current;
         const actions = await runCommand(trimmed, {
           api: apiRef.current,
           agent,
@@ -1121,6 +1122,10 @@ export function App({
             rememberAgent(a.agent);
           } else if (a.kind === 'clearStats') {
             setStats(null);
+          } else if (a.kind === 'clearQuestion') {
+            // A question that arrived while the reset ran belongs to the
+            // fresh conversation and stays.
+            if (openQuestionRef.current?.id === questionBeforeCommand?.id) setOpenQuestion(null);
           } else if (a.kind === 'setShow') {
             if (a.target === 'memory') setShowMemory(a.value);
             else setShowTools(a.value);
