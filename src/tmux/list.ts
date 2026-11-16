@@ -64,7 +64,7 @@ export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
     return [];
   }
 
-  const origins = new Map(listTmuxOrigins().map((o) => [o.name, o]));
+  const origins = new Map(listTmuxOrigins('local').map((o) => [o.name, o]));
   const out: TmuxSessionInfo[] = [];
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;

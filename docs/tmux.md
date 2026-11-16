@@ -1,27 +1,25 @@
 # tmux
 
-The `tmux` tool gives an agent a terminal that stays open between its
-tool calls. The agent starts a program once, then types into it and
-reads its screen over many turns. This is how an agent drives another
-command-line program such as Claude Code, codex, OpenCode, vim or a
-REPL.
+The `tmux` tool gives an agent terminals that stay open between its
+tool calls. The agent starts a program once, then works with it over
+many turns. This is how an agent drives other coding agents (Claude
+Code, Codex, OpenCode, Pi and more), a shell, vim or a REPL.
 
 ## What you get
 
-- **A terminal that survives the turn.** The program keeps running
-  while the agent answers you, and is still there on the next turn.
-- **Waiting without guessing.** The agent can wait for a text to
-  appear, or simply until the screen stops changing.
-- **Knows the common coding CLIs.** For Claude Code, codex and OpenCode
-  the tool reports whether the program is ready, still working or
-  holding unsent input.
-- **A wake-up when the program is done.** If a coding CLI finishes
-  after the agent stopped watching, somora starts a turn so the agent
-  reads the result.
+- **Coding agents as colleagues.** `start` launches an agent in a
+  session, `prompt` hands it a task and waits for the answer. The agent
+  in a session is recognised by its process.
+- **Its state, read reliably.** For each coding agent somora reports
+  `idle`, `working` or `blocked`, the last when a permission, question
+  or startup dialog waits for an answer. The rules come from herdr.
+- **A wake-up when it matters.** If an agent finishes or stops at a
+  dialog while nobody watches, somora starts a turn for the agent that
+  started it.
 - **Local or remote.** The same calls work on the somora machine and on
   any configured SSH resource.
-- **You can look in.** The web client lists the sessions and attaches
-  to them in a terminal window.
+- **You can look in.** The web client lists the local sessions and
+  attaches to them in a terminal window.
 
 For a single command that runs and ends, use `exec` instead. A tmux
 session that nobody kills stays around.
@@ -29,21 +27,22 @@ session that nobody kills stays around.
 ## Try it
 
 tmux must be installed on the machine that runs the session
-(`sudo apt install tmux`, `brew install tmux`). Then ask the agent:
+(`sudo apt install tmux`, `brew install tmux`), and the coding agent you
+want to drive. Then ask the agent:
 
 ```
-Open a tmux session called build-1 in /path/to/project, run ./build.sh
-and tell me when it says "Build succeeded".
+Start Codex in a tmux session called review-1 in /path/to/project and
+ask it to review the current diff. Tell me what it finds.
 ```
 
 The agent makes these calls:
 
 ```jsonc
-tmux({ action: "create",  name: "build-1", cwd: "/path/to/project" })
-tmux({ action: "send",    name: "build-1", keys: "./build.sh\n" })
-tmux({ action: "capture", name: "build-1",
-       wait_pattern: "Build succeeded", wait_timeout_ms: 60000 })
-tmux({ action: "kill",    name: "build-1" })
+tmux({ action: "start",  name: "review-1", cwd: "/path/to/project", command: "codex" })
+tmux({ action: "prompt", name: "review-1",
+       text: "Review the current diff and report only actionable findings." })
+tmux({ action: "read",   name: "review-1", lines: 120 })
+tmux({ action: "kill",   name: "review-1" })
 ```
 
 `tmux` is part of the `exec` toolset. An agent that may not use that
@@ -54,10 +53,14 @@ toolset does not have the tool.
 | Action | What it does |
 |---|---|
 | `create` | Starts a detached session with a shell in it. Fails when the name is taken, so the agent can reuse the session or pick another name. |
+| `start` | Starts a coding agent: creates the session if needed, types `command` into its shell and returns when the agent is ready. |
+| `prompt` | Hands the coding agent a message and, by default, waits until it is done or stops at a dialog. |
 | `send` | Types text (`keys`) or presses named keys (`key`). |
 | `capture` | Returns the end of the screen, at once or after waiting for a pattern. |
-| `wait_idle` | Waits until the screen stops changing. No pattern needed. |
-| `list` | Lists the sessions on the target. |
+| `read` | Like `capture`, with wrapped lines joined: for reading an answer. |
+| `wait_idle` | Waits until a coding agent is idle or blocked, or a shell's screen stops changing. |
+| `list` | Lists the sessions on the target, with the agent in each and its state. |
+| `explain` | Shows which detection rule decided an agent's state. |
 | `kill` | Ends the session. Killing a session that is gone is not an error. |
 
 ## Local and remote sessions
@@ -67,151 +70,177 @@ on. Any other value is the name of an SSH resource the agent may use
 (`resource_list` shows them). The session lives on that host and keeps
 running when the connection drops between calls.
 
-Three things work for local sessions only: the session `kind` with its
-`tui_state`, the attention watcher, and `inherit_agent_env`. A remote
-session behaves like kind `shell`.
+Remote sessions get everything local ones do: the agent's state,
+`start` and `prompt`, and the attention watcher. Only
+`inherit_agent_env` and the web client's tmux app are local.
+
+## Coding agents
+
+### Recognising the agent
+
+somora looks at the foreground processes of a session's terminal
+(`ps -t <tty>`) and recognises the agent by name, also when a shell or
+`sh -c` started it, or when it runs on node or bun. Recognised are
+Claude Code, Codex, OpenCode, Pi, Gemini CLI, Cursor Agent, GitHub
+Copilot CLI, Grok CLI, Qwen Code, Kimi Code, Kilo Code, Devin, Droid,
+Amp, Hermes Agent, Letta Code and more.
+
+A host whose `ps` cannot list a terminal's processes shows no agent. For
+such a host name the agent at `create` with `kind` (`"codex"`,
+`"claude"`, `"pi"`, …). The kind only counts while `ps` shows nothing.
+
+### Its state
+
+```jsonc
+"agent": {
+  "name": "codex",
+  "state": "working",
+  "rule": "osc_title_working",
+  "identified_by": "process"
+}
+```
+
+| `state` | Meaning |
+|---|---|
+| `idle` | Ready for input: finished, or freshly started. |
+| `working` | Busy. A message waiting behind the current turn counts as working. |
+| `blocked` | An approval, question or startup dialog waits for an answer (trust this folder, allow this command, pick an option). |
+| `unknown` | The screen says nothing about the state, for example while a transcript viewer is open. |
+
+`capture`, `read`, `wait_idle`, `prompt` and `start` report `agent` for
+every session with a recognised agent, `list` reports `name` and `state`
+per session. A shell has no `agent` field.
+
+### How the state is read
+
+somora reads the visible screen and the terminal title with herdr's
+detection rules. [herdr](https://github.com/herdrdev/herdr) is a
+terminal workspace for coding agents (Apache-2.0); its rule files come
+with somora unchanged, with the herdr version they are from. Each rule
+looks at one part of the screen, the bottom lines, the input box or the
+title. Of the matching rules the one with the highest priority decides.
+No match means `idle`.
+
+somora adds rules herdr does not have yet beside them, for example
+Codex's dialog about its shared background server. New herdr rules
+arrive with somora releases. Nothing is fetched while somora runs.
+
+### Your own rules
+
+A file `~/.somora/tmux-detection/<agent>.json` replaces the rules for
+that agent, for example `codex.json`. It uses herdr's rule format as
+JSON (`id`, `version`, `rules` with `id`, `state`, `priority`,
+`region`, `contains`, `regex`, `line_regex`, `all`, `any`, `not`). A
+file may also add an agent somora does not know. A file that does not
+parse or compile is skipped with a warning in the log, and the shipped
+rules stay in force. Changes apply after a restart of somora.
+
+`explain` shows the rule that decided, every rule that matched, where
+the rules came from and their version:
+
+```jsonc
+tmux({ action: "explain", name: "review-1" })
+// explain: { state, rule, fallback, rules_from: "bundled" | "override",
+//            version, title, matched_rules, rules_checked }
+```
+
+## Starting and prompting
+
+`start` types `command` into the session's shell, so the session stays
+open when the agent exits. It returns when the agent is ready (idle on a
+screen that shows something). Errors:
+
+- `agent_not_ready` with `agent.state: "blocked"`: the agent stopped at
+  a dialog on its way up (trust this folder, a login). Read `content`
+  and answer with `send`, or ask the person.
+- `agent_not_ready` without a state: it did not come up within
+  `wait_timeout_ms` (60 seconds by default).
+
+`prompt` pastes `text` as one message, line breaks kept, and presses
+Enter. With `wait: true` (the default) it returns when the agent is
+idle again or blocked, at most `wait_timeout_ms` (5 minutes by default,
+10 at most). `content` holds the end of the screen.
+
+`prompt` sends nothing in these cases, and says so:
+
+| `error` | The agent is | Do |
+|---|---|---|
+| `agent_blocked` | at a dialog | Read it, decide or ask the person, answer with `send`, then prompt again. |
+| `agent_busy` | working | `wait_idle`, or interrupt with `send` `key: "Escape"`. Codex keeps text typed while it works in its input box. |
+| `agent_state_unknown` | showing something else | `capture` to look, `key: "Escape"` usually closes it. |
+| `no_agent` | not there | Use `start`, or `send` for a shell. |
+
+After Enter, `prompt` waits up to 10 seconds for a sign that the agent
+took the message: it works, it stops at a dialog, or its screen moved
+on. Without one the result is `agent_prompt_stalled`. Capture before
+sending again: the text may still sit in the input box.
+
+`timeout` means the agent took the message and is still working. Wait
+longer with `wait_idle`, or end the turn: the attention watcher wakes
+the agent when it is done.
+
+### Coordinating several agents
+
+One session per agent, each with a readable name and a clear role,
+works best. Give every task to a fresh agent session, or clear it with
+the agent's own command (`/new`, `/clear`). Ask each agent to end with a
+short status: done or blocked, the files it changed, open questions.
+A file such as `AGENTS.md` in the project can carry these rules for all
+of them.
 
 ## Sending input
 
 **Text.** `keys` is typed as written. Each `\n` is an Enter, so end a
-shell command with `\n` to run it.
+shell command with `\n` to run it. For a coding agent use `prompt`.
 
 **Named keys.** `key` presses one or more tmux keys, separated by
-spaces: `Escape`, `C-c`, `C-u`, `Tab`, `BSpace`, `Up`, `F1`, `C-x C-c`.
-The prefixes are `C-` for Ctrl, `M-` for Alt and `S-` for Shift. Use
-it to interrupt a program (`Escape`, `C-c`) or to clear its input line
-(`C-u`). Control characters written into `keys` are unreliable.
+spaces: `Escape`, `C-c`, `C-u`, `Tab`, `BSpace`, `Up`, `Down`, `Enter`,
+`F1`, `C-x C-c`. The prefixes are `C-` for Ctrl, `M-` for Alt and `S-`
+for Shift. Use it to interrupt a program (`Escape`, `C-c`) or to answer
+a dialog (`Down`, `Enter`).
 
 A `send` call takes `keys` or `key`, never both.
 
-### Messages with several lines
-
-The input boxes of coding CLIs submit on Enter. A message with line
-breaks would be sent as several messages. With `multiline_safe: true`
-every `\n` inside the text becomes Alt+Enter (`M-Enter`), which those
-programs treat as a line break. A `\n` at the very end is still a
-plain Enter and submits the message.
-
-```jsonc
-tmux({ action: "send", name: "claude-1", multiline_safe: true,
-       keys: "Please build a Tetris game.\n\n" +
-             "1. Next.js + TS\n" +
-             "2. 10x20 grid\n" })
-```
-
-Use `multiline_safe` only for the chat-style input boxes of Claude
-Code, codex and OpenCode. In a shell or a Python REPL every Enter runs
-its line, so send the lines as they are, without the flag. The Python
-REPL from 3.13 on indents by itself: send lines without leading spaces,
-or start it with `PYTHON_BASIC_REPL=1`.
+With `multiline_safe: true` every `\n` inside `keys` becomes Alt+Enter,
+a line break that does not submit. `prompt` needs no such flag: it
+pastes. Alt+Enter does not reach every program when tmux's
+`extended-keys` is off. In a shell or a Python REPL every Enter runs
+its line, so send the lines as they are. The Python REPL from 3.13 on
+indents by itself: send lines without leading spaces.
 
 ## Reading the screen
 
 `capture` returns the last `lines` lines of the pane (200 by default)
-in `content`. Without `wait_pattern` it returns at once.
+in `content`. Without `wait_pattern` it returns at once. `read` returns
+the same with wrapped lines joined, the better choice for reading an
+agent's answer.
 
-With `wait_pattern` it checks the screen every 200 ms until the pattern
-matches or `wait_timeout_ms` is over (30 seconds by default, 10 minutes
-at most). On a timeout you get `matched_pattern: false` and the screen
-as it is. `wait_mode` decides what counts as a match:
+With `wait_pattern`, `capture` checks the screen every 200 ms until the
+pattern matches or `wait_timeout_ms` is over (30 seconds by default, 10
+minutes at most). On a timeout you get `matched_pattern: false` and the
+screen as it is. `wait_mode` decides what counts as a match:
 
 | `wait_mode` | Matches when | Use for |
 |---|---|---|
 | `auto` (default) | The pattern appears more often than before the wait, or it is on screen and the last line ends with a prompt (`$`, `#` or `>`). | Shell sessions. The command you typed often contains the pattern itself, and this mode does not fall for that. |
-| `present` | The pattern is anywhere on screen. | Programs that draw a fixed screen: Claude Code, codex, vim, htop, fzf. There is no shell prompt and the count never grows. |
+| `present` | The pattern is anywhere on screen. | Programs that draw a fixed screen: vim, htop, fzf. |
 | `idle` | The pattern is on screen and nothing has changed for `idle_stable_ms` (500 by default). | Waiting until a program has stopped redrawing. |
-
-```jsonc
-// A coding CLI has started and shows its welcome panel.
-tmux({ action: "capture", name: "claude-1",
-       wait_pattern: "bypass permissions on",
-       wait_mode: "present", wait_timeout_ms: 15000 })
-```
 
 > **Tip:** A wait that ends in a timeout although the text is on screen
 > usually has the wrong mode. Use `present` for full-screen programs and
 > `auto` for shells. `auto` does not know prompts that end in `❯`.
 
-### Waiting until it is quiet
+### Waiting
 
-`wait_idle` needs no pattern. It returns when the screen has not
-changed for `idle_stable_ms`, with `became_idle: true`. On a timeout
-it returns `became_idle: false` and the latest screen. Use it when you
-cannot know what the final output will look like.
-
-## Session kinds
-
-A session has a `kind`, set on `create`. It tells somora which program
-runs in the pane.
-
-| `kind` | Start it for | Counts as queued | Counts as running |
-|---|---|---|---|
-| `shell` (default) | bash, zsh, fish, build scripts, REPLs, vim, htop, anything not listed below | never | never |
-| `claude-code` | `claude`, `claude --dangerously-skip-permissions` | `Press up to edit queued messages` | `esc to interrupt`, or a spinner word: `Tempering…`, `Whisking…`, `Contemplating…`, `Pondering…`, `Brewing…`, `Simmering…`, `Sautéing…` |
-| `codex` | `codex` | never | `esc to interrupt` |
-| `opencode` | `opencode` | `QUEUED` under a message sent during a turn | `esc interrupt`, or `esc again to interrupt` after a first Escape |
-
-For every kind except `shell`, two things change:
-
-1. `capture` and `wait_idle` add a `tui_state` block to the result.
-2. `wait_idle` reports `became_idle: true` only when the screen is
-   quiet and the state is `ready`. A pane that sits on unsent input or
-   on a paused spinner no longer passes as finished.
-
-Pick `shell`, or leave `kind` out, when you are unsure. A wrong kind
-does not break the session. Its markers just never match.
-
-### The state of the program
-
-```jsonc
-"tui_state": {
-  "state": "ready",
-  "markers": [],
-  "suggestion_visible": false
-}
-```
-
-| Field | Meaning |
-|---|---|
-| `state` | `ready`: waiting for input. `queued`: input is in the box and not processed yet. `running`: still working. `idle_unknown` is reserved and not reported today. |
-| `markers` | The marker texts from the table above that were found on screen. |
-| `suggestion_visible` | `true` when the input line shows a grey suggestion. Kinds `claude-code` and `codex` only. |
-| `suggestion_text` | The suggested text, when one is visible. |
-
-When both a queued and a running marker are on screen, the state is
-`queued`.
-
-```jsonc
-tmux({ action: "create", name: "claude-1", kind: "claude-code",
-       cwd: "/path/to/project" })
-tmux({ action: "send", name: "claude-1",
-       keys: "claude --dangerously-skip-permissions\n" })
-// later, after sending a prompt
-const r = await tmux({ action: "wait_idle", name: "claude-1",
-                       wait_timeout_ms: 600000 })
-// r.tui_state.state === "queued":  not submitted, do not go on
-// r.tui_state.state === "running": wait longer, or send key "Escape"
-// r.became_idle && state "ready":  done, read r.content
-```
-
-### OpenCode
-
-Two things differ from the other kinds:
-
-- A `△ Permission required` dialog reads as `ready`, because it waits
-  for an answer. `capture` shows the dialog. `key: "Enter"` picks the
-  preselected "Allow once". Arrow keys and Enter pick "Allow always" or
-  "Reject".
-- A message sent while a turn runs is queued and submitted by OpenCode
-  when the turn ends. `queued` therefore means that more work follows.
-
-OpenCode reads its model from `~/.config/opencode/opencode.json` and
-accepts any OpenAI-compatible endpoint. That makes it the kind to use
-for driving a coding model you host yourself.
+`wait_idle` needs no pattern. For a coding agent it returns when the
+agent is idle (`became_idle: true`) or blocked (`became_idle: false`,
+`agent.state: "blocked"`, with a hint). For a shell it returns when the
+screen has not changed for `idle_stable_ms`. On a timeout it returns
+`became_idle: false` and the latest screen.
 
 ## Suggestions are not input
 
-Claude Code and codex show a grey suggestion in their input field, a
+Claude Code and Codex show a grey suggestion in their input field, a
 guess at what a human might type next. In a normal capture it looks
 exactly like typed text:
 
@@ -224,60 +253,60 @@ exactly like typed text:
 > may be a suggestion, and submitting it can trigger destructive actions
 > such as "delete the project". Type your own input, or ask the user.
 
-How to tell the two apart:
-
-- **With a kind set:** `tui_state.suggestion_visible` and
-  `suggestion_text` say what is a suggestion. Ignore it. Do not clear
-  it, mention it or submit it. It disappears when you type.
-- **Without a kind:** capture with `include_ansi: true`. `content`
-  then keeps the colour codes, and a suggestion arrives wrapped in dim
-  styling such as `\x1b[2m…\x1b[0m`. Typed text does not.
+`agent.suggestion_visible` and `agent.suggestion_text` say what is a
+suggestion. Ignore it: do not clear it, mention it or submit it. It
+disappears when you type. Without an agent field, capture with
+`include_ansi: true`: a suggestion arrives in dim styling such as
+`\x1b[2m…\x1b[0m`, typed text does not.
 
 ## The attention watcher
 
-Local sessions of kind `claude-code`, `codex` or `opencode` are watched
-by the server. Every few seconds it looks at the pane and notices when
-the program goes from working to `ready`. That means it finished, or it
-waits for input such as a permission prompt.
+The server watches the sessions somora created, locally and on SSH
+resources, as long as a coding agent runs in them. Every few seconds it
+reads the agent's state and notices two things:
+
+- **Finished:** the agent went from working to idle.
+- **Needs an answer:** the agent stopped at a dialog (blocked).
 
 What happens next depends on whether the agent that created the session
 saw it:
 
-- **The agent saw it.** Its own `capture` or `wait_idle` returned
-  `ready` after the program stopped. Nothing happens.
-- **The agent missed it.** Its wait timed out and its turn ended while
-  the program kept working. somora starts a turn for that agent in the
-  session the tmux session was created from.
+- **The agent saw it.** Its own `prompt`, `wait_idle` or `capture`
+  returned that state. Nothing happens.
+- **The agent missed it.** somora starts a turn for that agent in the
+  chat session the tmux session was created from.
 
-The wake turn carries this text:
+The wake turn carries one of these texts:
 
 ```
-[tmux attention] Session '<name>' (<kind>) became ready.
+[tmux attention] Session '<name>' (<agent>) finished and is ready.
+[tmux attention] Session '<name>' (<agent>) needs an answer: it stopped at a dialog.
 ```
 
-It comes with instructions for the agent: capture the session first,
-then decide whether to reply into it, answer a prompt, report to the
-user or wrap up, and never send a new prompt unread. Web client, mobile
-app and TUI show the turn as a `tmux` divider, like a sentinel trigger.
+A session on an SSH resource adds ` on <resource>` after its name. The
+turn comes with instructions: read the session first, never send a new
+prompt unread, never approve a dialog it does not understand. Web
+client, mobile app and TUI show the turn as a `tmux` divider.
 
 ### Rules that keep it calm
 
-- **One wake per completion.** A wake the agent ignores is not
-  repeated. The session is armed again once the agent uses it again.
+- **One wake per event.** A wake the agent ignores is not repeated. The
+  session is armed again once the agent uses it again.
 - **Never in the middle of a turn.** While the agent is busy in that
   chat session, the wake waits.
 - **Cooldown and daily cap.** `cooldownS` sets the pause between two
   wakes for one session, `dailyCapPerSession` the limit per UTC day.
   Past the cap only the flag is set.
-- **Only what somora started.** Sessions made by hand with `tmux new`,
-  kind `shell` and remote sessions are never watched.
+- **Only what somora started.** Sessions made by hand with `tmux new`
+  and sessions without a coding agent are never watched.
 - **No wake for a dead session.** If the session was killed before the
   turn could start, the wake is dropped.
-- **Opt out per session** with `attention: false` on `create`.
+- **Opt out per session** with `attention: false` on `create` or
+  `start`.
 
 ### The attention block
 
-For watched sessions `capture`, `wait_idle` and `list` add:
+For watched sessions `capture`, `read`, `wait_idle` and `list` add:
 
 ```jsonc
 "attention": {
@@ -291,11 +320,11 @@ For watched sessions `capture`, `wait_idle` and `list` add:
 
 | Field | Meaning |
 |---|---|
-| `needs_attention` | A completion the creating agent has not looked at yet. |
-| `last_event_at` | When the program last became ready, in epoch milliseconds. |
+| `needs_attention` | An event the creating agent has not looked at yet. |
+| `last_event_at` | When the agent last finished or stopped at a dialog, in epoch milliseconds. |
 | `last_wake_at` | When the last wake turn was started, or `null`. |
 | `wakes_today` | Wake turns for this session today. |
-| `state` | What the watcher saw last: `running` or `ready`. Unsent input counts as `running`. |
+| `state` | What the watcher saw last: `running`, `ready` or `blocked`. |
 
 ## The environment inside a session
 
@@ -367,22 +396,25 @@ One tool, `tmux`. Only `action` is always required.
 
 | Parameter | Used by | Default | Meaning |
 |---|---|---|---|
-| `action` | all | required | `create`, `send`, `capture`, `wait_idle`, `list` or `kill`. |
+| `action` | all | required | `create`, `start`, `prompt`, `send`, `capture`, `read`, `wait_idle`, `list`, `explain` or `kill`. |
 | `target` | all | `"local"` | `"local"` or the name of an SSH resource. |
 | `name` | all except `list` | required | Session name, up to 100 characters. Use letters, digits, dash and underscore, for example `codex-bugfix-auth`. |
-| `cwd` | `create` | none | Working directory of the session's shell. |
-| `kind` | `create` | `"shell"` | `shell`, `claude-code`, `codex` or `opencode`. |
-| `attention` | `create` | `true` | `false` keeps the watcher away from this session. |
-| `inherit_agent_env` | `create` | `false` | `true` keeps somora's internal variables. Local only. |
-| `keys` | `send` | none | Text to type. `\n` is Enter. Into a Python REPL (3.13+) send lines without leading spaces. |
+| `cwd` | `create`, `start` | none | Working directory of a new session's shell. |
+| `command` | `start` | required | The command that starts the agent, for example `codex`, `claude`, `opencode --model <provider>/<model>`. |
+| `text` | `prompt` | required | The message, any length, line breaks kept. |
+| `wait` | `prompt` | `true` | `false` returns as soon as the agent took the message. |
+| `kind` | `create` | none | The agent, for a host whose `ps` cannot show it. |
+| `attention` | `create`, `start` | `true` | `false` keeps the watcher away from this session. |
+| `inherit_agent_env` | `create`, `start` | `false` | `true` keeps somora's internal variables. Local only. |
+| `keys` | `send` | none | Text to type. `\n` is Enter. |
 | `key` | `send` | none | Named keys, separated by spaces. Letters, digits, dash and underscore only. |
 | `multiline_safe` | `send` | `false` | `true` sends every `\n` inside `keys` as `M-Enter`. |
-| `lines` | `capture`, `wait_idle` | `200` | Lines from the end of the pane to return. 1 to 10000. |
+| `lines` | `capture`, `read`, `prompt`, `start`, `wait_idle` | `200` (`prompt`, `start`: 60) | Lines from the end of the pane to return. 1 to 10000. |
 | `wait_pattern` | `capture` | none | Text to wait for. |
 | `wait_mode` | `capture` | `"auto"` | `auto`, `present` or `idle`. |
-| `wait_timeout_ms` | `capture`, `wait_idle` | `30000` | Longest wait. 100 to 600000. |
-| `idle_stable_ms` | `capture` in mode `idle`, `wait_idle` | `500` | How long the screen must stay unchanged. 100 to 10000. |
-| `include_ansi` | `capture`, `wait_idle` | `false` | `true` keeps colour and style codes in `content`. |
+| `wait_timeout_ms` | `prompt`, `start`, `capture`, `wait_idle` | `prompt` 300000, `start` 60000, others 30000 | Longest wait. 100 to 600000. |
+| `idle_stable_ms` | `capture` in mode `idle`, `wait_idle` on a shell | `500` | How long the screen must stay unchanged. 100 to 10000. |
+| `include_ansi` | `capture` | `false` | `true` keeps colour and style codes in `content`. |
 
 ## Results
 
@@ -392,14 +424,13 @@ Every result has `action`, `ok`, `target` and, except for `list`,
 | Action | More fields |
 |---|---|
 | `create` | `hint`: a reminder of the next calls. |
+| `start`, `prompt` | `agent`, `content`, `ms`; `submitted` and `settled` (`prompt`), `settled` (`start`); on failure `error` (a code from the table above) and `hint`. |
 | `send` | `ms` |
-| `capture` | `content`, `matched_pattern` (`false` on a timeout or without a pattern), `wait_pattern` (echoed when set), `ms`, `tui_state`, `attention` |
-| `wait_idle` | `content`, `became_idle`, `ms`, `tui_state`, `attention` |
-| `list` | `count`, `sessions`: each with `name`, `created_at` (epoch milliseconds), `windows` and `attention` |
+| `capture`, `read` | `content`, `matched_pattern` (`false` on a timeout or without a pattern), `wait_pattern` (echoed when set), `ms`, `agent`, `attention` |
+| `wait_idle` | `content`, `became_idle`, `ms`, `agent`, `hint`, `attention` |
+| `list` | `count`, `sessions`: each with `name`, `created_at` (epoch milliseconds), `windows`, `agent` (`name`, `state`) and `attention` |
+| `explain` | `agent`, `explain` |
 | `kill` | `was_running`: `false` when the session was already gone. |
-
-`tui_state` is present for local sessions with a kind other than
-`shell`. `attention` is present for watched sessions.
 
 ## Routes and files
 
@@ -410,31 +441,37 @@ Every result has `action`, `ok`, `target` and, except for `list`,
 
 | File in `~/.somora/` | Content |
 |---|---|
-| `tmux-origins.json` | Who created which session, and its kind. |
-| `tmux-observations.json` | When the creating agent last looked at a session. |
+| `tmux-origins.json` | Who created which session, on which target, and a declared kind. |
+| `tmux-observations.json` | When the creating agent last looked at a session, and what it saw. |
 | `tmux-attention.json` | The watcher's current `attention` block per session. |
+| `tmux-detection/<agent>.json` | Your own detection rules for an agent. |
 
 ## Troubleshooting
+
+**An agent's state looks wrong.** Run `explain` on the session: it
+names the rule that decided and what matched. A program version newer
+than the rules may draw a screen they do not know yet; a file of your
+own in `~/.somora/tmux-detection/` fixes it until the next release.
+
+**`list` shows no agent although one runs.** The agent is recognised by
+its process name. A wrapper with another name hides it: start the agent
+directly, or name it with `kind` on `create`.
+
+**`prompt` says `agent_prompt_stalled`.** The agent showed no sign of
+taking the message. Capture the session: the text may sit in the input
+box, or the agent shows something unusual. Do not send the text again
+blindly.
 
 **A capture times out although the text is on screen.** The wait mode
 does not fit the program. Use `wait_mode: "present"` for full-screen
 programs. The server log has a `tmux.capture.pattern_timeout` line with
 the mode and the pattern.
 
-**`wait_idle` never reports idle for a coding CLI.** Look at
-`tui_state.state` in the result. `queued` means the input is still in
-the box: submit it with `key: "Enter"` if you typed it. `running`
-means the program is still working.
-
-**A multi-line prompt arrives as several messages.** Send it with
-`multiline_safe: true`.
-
-**No wake turn after the CLI finished.** Check that the session is
-local, was created with a coding kind and without `attention: false`,
-and that `tmux.attention.enabled` and `wake` are on. The watcher must
-have seen the program working first. A program that starts and
-finishes between two polls goes unnoticed. The log lines are
-`tmux.attention_wake`, `tmux.attention_wake_skipped`,
+**No wake turn after the agent finished.** Check that somora created the
+session, without `attention: false`, and that `tmux.attention.enabled`
+and `wake` are on. The watcher must have seen the agent working first:
+an agent that starts and finishes between two polls goes unnoticed. The
+log lines are `tmux.attention_wake`, `tmux.attention_wake_skipped`,
 `tmux.attention_wake_stale` and `tmux.attention_cap_reached`.
 
 **`claude` in the pane asks for a login.** That is the default: the

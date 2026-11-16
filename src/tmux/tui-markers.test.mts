@@ -1,4 +1,5 @@
-// Tests for the TUI marker tables + ANSI helpers (tui-markers.ts).
+// The 2026-08-25 OpenCode screens against the herdr-rule detector, and
+// the ANSI helpers for ghost text (tui-markers.ts).
 //
 // Run: npx tsx src/tmux/tui-markers.test.mts
 //
@@ -7,7 +8,9 @@
 // OpenAI-compatible router — ready, running, queued, permission dialog, done.
 
 import assert from 'node:assert/strict';
-import { detectSuggestion, detectTuiState } from './tui-markers.ts';
+import { detectSuggestion } from './tui-markers.ts';
+import { detectAgentState } from './detection/manifests.ts';
+import { detectionScreen } from './detection/engine.ts';
 
 let pass = 0;
 let fail = 0;
@@ -25,25 +28,16 @@ const OC_QUEUED = "  \u2503\n  \u2503  second message while running\n  \u2503   
 const OC_PERMISSION = "  \u2503  \u25b3 Permission required\n  \u2503    \u2190 Access external directory /etc\n  \u2503\n  \u2503  Patterns\n  \u2503                                                                                                                               /tmp/claude-1000/-home-suspect-\n  \u2503  - /etc/*                                                                                                                     Projects-nova-somora/0dd2df6d-c303-\n  \u2503                                                                                                                               4ebd-aebe-44a19c612975/scratchpad/oc-\n  \u2503                                                                                                                               probe:main\n  \u2503   Allow once   Allow always   Reject                                         ctrl+f fullscreen  \u21c6 select  enter confirm\n  \u2503                                                                                                                               \u2022 OpenCode 1.18.23";
 const OC_DONE = "     \u25a3  Build \u00b7 Local Model (local) \u00b7 10.0s\n  \u2503\n  \u2503  queued hello                                                                                                                 /tmp/claude-1000/-home-suspect-\n  \u2503                                                                                                                               Projects-nova-somora/0dd2df6d-c303-\n  \u2503  Build \u00b7 Local Model (local) Local (OpenAI-compatible)                                                                 4ebd-aebe-44a19c612975/scratchpad/oc-\n  \u2579\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580    probe:main\n   /tmp/claude-1000/-home-suspect-Projects-nova-somora/0dd2df6d-c303-4ebd-aebe-44a19c612975/         8.5K (1%) ctrl+p\n   scratchpad/oc-probe                                                                                          commands          \u2022 OpenCode 1.18.23";
 
-// ── opencode state detection ─────────────────────────────────────────
+// ── opencode state detection (herdr rules) ───────────────────────────
 {
-  const r = detectTuiState(OC_READY, 'opencode');
-  check('opencode fresh TUI → ready', r?.state === 'ready', JSON.stringify(r));
-  const run = detectTuiState(OC_RUNNING, 'opencode');
-  check('opencode mid-turn → running', run?.state === 'running', JSON.stringify(run));
-  check('opencode running marker is the footer cue', run?.markers.includes('esc interrupt') === true);
+  const st = (screen: string) => detectAgentState('opencode', { screen: detectionScreen(screen, 40) })?.state;
+  check('opencode fresh TUI → idle', st(OC_READY) === 'idle', String(st(OC_READY)));
+  check('opencode mid-turn → working', st(OC_RUNNING) === 'working', String(st(OC_RUNNING)));
   const interrupting = OC_RUNNING.replace('esc interrupt', 'esc again to interrupt');
-  const i = detectTuiState(interrupting, 'opencode');
-  check('opencode interrupt-confirmation footer → still running', i?.state === 'running', JSON.stringify(i));
-  check('interrupt-confirmation marker is reported', i?.markers.includes('esc again to interrupt') === true);
-  const q = detectTuiState(OC_QUEUED, 'opencode');
-  check('opencode message submitted mid-turn → queued (beats running)', q?.state === 'queued', JSON.stringify(q));
-  const p = detectTuiState(OC_PERMISSION, 'opencode');
-  check('opencode permission dialog → ready (waits for a decision)', p?.state === 'ready', JSON.stringify(p));
-  check('permission dialog text is visible for the orchestrator', OC_PERMISSION.includes('Permission required'));
-  const d = detectTuiState(OC_DONE, 'opencode');
-  check('opencode after turn → ready', d?.state === 'ready', JSON.stringify(d));
-  check('shell kind still undetected', detectTuiState(OC_RUNNING, 'shell') === null);
+  check('opencode interrupt-confirmation footer → still working', st(interrupting) === 'working', String(st(interrupting)));
+  check('opencode message submitted mid-turn → working', st(OC_QUEUED) === 'working', String(st(OC_QUEUED)));
+  check('opencode permission dialog → blocked (waits for a decision)', st(OC_PERMISSION) === 'blocked', String(st(OC_PERMISSION)));
+  check('opencode after turn → idle', st(OC_DONE) === 'idle', String(st(OC_DONE)));
   check('opencode has no input-line probe → suggestion null', detectSuggestion(OC_READY, 'opencode') === null);
 }
 

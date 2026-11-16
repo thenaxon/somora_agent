@@ -128,6 +128,18 @@ export function identifyForeground(rows: ProcessRow[]): string | null {
   return null;
 }
 
+const SHELLS = new Set(['bash', 'zsh', 'sh', 'fish', 'dash', 'ksh', 'tcsh', 'csh', 'nu', 'elvish', 'xonsh']);
+
+/** Is the terminal's foreground job a shell at its prompt? null when ps
+ *  showed nothing (a host whose ps cannot list a terminal). */
+export function foregroundIsShell(rows: ProcessRow[]): boolean | null {
+  const fg = rows.filter((r) => r.tpgid > 0 && r.pgid === r.tpgid);
+  if (fg.length === 0) return rows.length === 0 ? null : false;
+  const leader = fg.find((r) => r.pid === r.pgid) ?? fg[0]!;
+  const argv0 = leader.args.split(/\s+/)[0] ?? '';
+  return SHELLS.has(basename(argv0).replace(/^-/, ''));
+}
+
 /** The ps command for a pane's terminal (`#{pane_tty}`). Works on Linux
  *  and macOS, locally or over SSH. */
 export function psCommandForTty(tty: string): string {

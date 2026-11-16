@@ -71,8 +71,8 @@ export const ENGINES: Catalog = {
   },
   'tmux.attention': {
     label: 'Attention watcher',
-    help: 'Notices when a coding program an agent started in tmux finishes or waits for input, and brings the agent back if it missed that.',
-    more: 'Only local sessions of kind claude-code, codex or opencode that somora created are watched; sessions made by hand, plain shells and remote sessions never are.',
+    help: 'Notices when a coding agent that an agent started in tmux finishes or stops at a dialog, and brings the agent back if it missed that.',
+    more: 'Watched are the sessions somora created, locally and on SSH resources, while a coding agent (Claude Code, Codex, OpenCode, Pi, …) runs in them; sessions made by hand and plain shells never are.',
     level: 'basic',
     docs: 'tmux.md#the-attention-watcher',
   },

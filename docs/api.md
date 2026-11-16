@@ -1083,7 +1083,7 @@ origin?:
 | `human` | A person typing (`chat`) or dictating (`voice-stt`). |
 | `agent` | Another agent's question, or its follow-up on one (`callId` is the original call). |
 | `subagent` | A brief running in its own `sub-…` session. |
-| `sentinel`, `tmux`, `browser`, `voice` | A trigger, a tmux session that became ready, a browser window handed back, a question from a voice call. |
+| `sentinel`, `tmux`, `browser`, `voice` | A trigger, a coding agent in tmux that finished or stopped at a dialog, a browser window handed back, a question from a voice call. |
 | `wake` | Something the agent started earlier has finished: a late answer (`about: "a2a"`, `ref` is the call id), a sub-agent (`subagent`, task id) or a video (`job`, job id). |
 | `peer` | A task from another agent system over A2A ([A2A](a2a.md#taking-work-in)). |
 | `wake` with `about: "system"` | somora itself speaks. `cause` names the occasion. Today that is `restart`, and the text begins `[system: restart]`. |

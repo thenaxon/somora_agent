@@ -81,6 +81,13 @@ async function runRemoteTmux(
   };
 }
 
+/** A Runner for panes on an SSH resource (src/tmux/observe.ts). The
+ *  resource is resolved per call, with the agent's visibility rules. */
+export function remoteRunner(agent: string, target: string) {
+  return (command: string, timeoutMs: number = 10_000): Promise<TmuxRemoteResult> =>
+    runRemoteTmux(agent, target, command, timeoutMs);
+}
+
 export async function tmuxRemoteCreate(
   agent: string,
   target: string,

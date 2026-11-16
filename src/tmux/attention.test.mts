@@ -266,11 +266,57 @@ function step(
   check('next completion re-fires (wakes)', r.action.kind === 'wake', r.action.kind);
 }
 
-// ── queued counts as running ──────────────────────────────────────────
+// ── blocked: a dialog waits for an answer ─────────────────────────────
 {
-  let r = step(initialAttentionState(), { tuiState: 'queued', now: T0 });
-  r = step(r.state, { tuiState: 'ready', now: T0 + 3000, originBusy: true });
-  check('queued→ready fires event (queued = mid-cycle)', r.action.kind === 'event');
+  let r = step(initialAttentionState(), { tuiState: 'running', now: T0 });
+  r = step(r.state, { tuiState: 'blocked', now: T0 + 3000, originBusy: true });
+  check('running→blocked fires an event', r.action.kind === 'event');
+  check('the event is a blocked one', r.state.pending?.reason === 'blocked');
+  r = step(r.state, { tuiState: 'blocked', now: T0 + 6000 });
+  check('blocked wakes once the origin is free', r.action.kind === 'wake' && r.action.reason === 'blocked', JSON.stringify(r.action));
+  r = step(r.state, { tuiState: 'blocked', now: T0 + 9000 });
+  check('no second wake while still blocked', r.action.kind === 'none');
+}
+{
+  let r = step(initialAttentionState(), { tuiState: 'blocked', now: T0 });
+  r = step(r.state, { tuiState: 'blocked', now: T0 + 3000 });
+  check('blocked from the first look: no event (baseline)', r.action.kind === 'none' && r.state.pending === null);
+}
+{
+  // The origin saw the dialog itself (its prompt or wait_idle returned blocked).
+  let r = step(initialAttentionState(), { tuiState: 'running', now: T0 });
+  r = step(r.state, { tuiState: 'blocked', now: T0 + 3000, originBusy: true });
+  r = step(r.state, {
+    tuiState: 'blocked',
+    now: T0 + 6000,
+    observation: { lastObservedAt: T0 + 2500, agent: 'ada', session: 'main', sawState: 'blocked' },
+  });
+  check('a blocked dialog the origin saw is not woken for', r.action.kind === 'observed', r.action.kind);
+  // A look that saw ready does not count as having seen the dialog.
+  let q = step(initialAttentionState(), { tuiState: 'running', now: T0 });
+  q = step(q.state, { tuiState: 'blocked', now: T0 + 3000, originBusy: true });
+  q = step(q.state, {
+    tuiState: 'blocked',
+    now: T0 + 6000,
+    observation: { lastObservedAt: T0 + 2500, agent: 'ada', session: 'main', sawState: 'ready' },
+  });
+  check('a look that saw ready does not suppress a blocked wake', q.action.kind === 'wake');
+}
+{
+  // The dialog was answered elsewhere and the agent finished: the blocked
+  // event goes, the completion comes.
+  let r = step(initialAttentionState(), { tuiState: 'running', now: T0 });
+  r = step(r.state, { tuiState: 'blocked', now: T0 + 3000, originBusy: true });
+  r = step(r.state, { tuiState: 'ready', now: T0 + 6000, originBusy: true });
+  check('blocked→ready turns into a completion event', r.state.pending?.reason === 'ready', JSON.stringify(r.state.pending));
+}
+{
+  // unknown (e.g. a transcript viewer) keeps the previous state.
+  let r = step(initialAttentionState(), { tuiState: 'running', now: T0 });
+  r = step(r.state, { tuiState: 'unknown', now: T0 + 3000 });
+  check('unknown keeps running', r.state.lastState === 'running' && r.action.kind === 'none');
+  r = step(r.state, { tuiState: 'ready', now: T0 + 6000, originBusy: true });
+  check('then ready completes as usual', r.action.kind === 'event');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

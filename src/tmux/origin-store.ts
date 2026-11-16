@@ -30,10 +30,12 @@ export interface TmuxOrigin {
   /** somora session-id of the chat from which the create was issued.
    *  Optional because MCP children don't always carry SOMORA_SESSION. */
   session?: string;
-  /** What runs inside the pane — drives TUI-aware capture/wait_idle.
-   *  Optional for backwards compat with origin records written before
-   *  this field existed; missing = "shell" (the safe default). */
-  kind?: TmuxSessionKind;
+  /** A coding agent declared at create (claude, codex, opencode, pi, …;
+   *  older records say claude-code). Only a fallback: the agent in a
+   *  pane is recognised by its process (detection/identify.ts). */
+  kind?: string;
+  /** The SSH resource the session lives on; absent = local. */
+  target?: string;
   /** Per-create opt-out for the attention watcher (create with
    *  `attention: false`). Missing = attention enabled (the default). */
   attention?: boolean;
@@ -66,16 +68,26 @@ function write(s: Store): void {
   writeFileSync(STORE_PATH, JSON.stringify(s, null, 2), 'utf8');
 }
 
+/** The store key: the session name for a local session (as always),
+ *  `@<target>/<name>` for one on an SSH resource — a name is only
+ *  unique per host. */
+export function originKey(target: string | undefined, name: string): string {
+  return !target || target === 'local' ? name : `@${target}/${name}`;
+}
+
 export function recordTmuxOrigin(args: {
   name: string;
+  target?: string;
   agent: string;
   session?: string;
-  kind?: TmuxSessionKind;
+  kind?: string;
   attention?: boolean;
 }): void {
   const store = read();
-  store[args.name] = {
+  const remote = args.target && args.target !== 'local' ? args.target : undefined;
+  store[originKey(remote, args.name)] = {
     name: args.name,
+    ...(remote ? { target: remote } : {}),
     agent: args.agent,
     ...(args.session ? { session: args.session } : {}),
     ...(args.kind ? { kind: args.kind } : {}),
@@ -85,18 +97,21 @@ export function recordTmuxOrigin(args: {
   write(store);
 }
 
-export function removeTmuxOrigin(name: string): void {
+export function removeTmuxOrigin(name: string, target?: string): void {
   const store = read();
-  if (store[name]) {
-    delete store[name];
+  const key = originKey(target, name);
+  if (store[key]) {
+    delete store[key];
     write(store);
   }
 }
 
-export function getTmuxOrigin(name: string): TmuxOrigin | undefined {
-  return read()[name];
+export function getTmuxOrigin(name: string, target?: string): TmuxOrigin | undefined {
+  return read()[originKey(target, name)];
 }
 
-export function listTmuxOrigins(): TmuxOrigin[] {
-  return Object.values(read());
+/** Every origin; `local` only the sessions on the somora host (the web
+ *  tmux list), `remote` only those on SSH resources. */
+export function listTmuxOrigins(where: 'all' | 'local' | 'remote' = 'all'): TmuxOrigin[] {
+  return Object.values(read()).filter((o) => where === 'all' || (where === 'local' ? !o.target : !!o.target));
 }

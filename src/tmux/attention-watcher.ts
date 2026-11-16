@@ -1,14 +1,15 @@
 // tmux attention watcher — main-server-only poll loop.
 //
-// Watches somora-created LOCAL tmux sessions whose origin record
-// declares a coding-CLI kind (claude-code / codex) and attention was
-// not opted out at create time. Each tick: capture the pane tail, run
-// detectTuiState, feed the pure state machine (attention.ts) and act:
+// Watches the tmux sessions somora created — locally and on SSH
+// resources — in which a coding agent runs (recognised by its process,
+// detection/), unless attention was switched off at create. Each tick:
+// look at the pane, read the agent's state with herdr's rules, feed the
+// pure state machine (attention.ts) and act:
 //
-//   event        → mirror needs_attention for tool responses / web badge
-//   observed     → origin saw the completion itself, nothing to do
+//   event        → mirror needs_attention for tool responses
+//   observed     → the origin saw it itself, nothing to do
 //   wake         → dispatch a turn to the ORIGIN (agent, session):
-//                  "session X became ready — read the output, continue"
+//                  the agent finished, or it waits at a dialog
 //   cap_reached  → flag only, no more turns today for this session
 //
 // Runs ONLY in the main server (wired at boot via
@@ -21,10 +22,12 @@ import { startTurn } from '../server/start-turn.ts';
 import type { ChatTurnResolveDeps } from '../server/run-turn-types.ts';
 import { getSessionLockStatus } from '../server/session-queue.ts';
 import type { TmuxAttentionConfig } from '../config/types.ts';
-import { tmuxLocalCapture, tmuxLocalList } from '../tools/tmux/local.ts';
-import { listTmuxOrigins, type TmuxOrigin } from './origin-store.ts';
-import { detectTuiState } from './tui-markers.ts';
+import { localRunner, tmuxLocalList } from '../tools/tmux/local.ts';
+import { remoteRunner, tmuxRemoteList } from '../tools/tmux/remote.ts';
+import { listTmuxOrigins, originKey, type TmuxOrigin } from './origin-store.ts';
+import { agentStateOf, observePane } from './observe.ts';
 import {
+  paneStateOf,
   initialAttentionState,
   readTmuxObservations,
   stepAttention,
@@ -51,32 +54,51 @@ export function configureTmuxAttention(args: {
   // turn streams through startTurn's boot-wired broadcast since 2026-09-13.
 }
 
-/** How many pane lines the watcher inspects per tick. The markers all
- *  live in the TUI footer, 50 lines is generous. */
-const CAPTURE_LINES = 50;
-
 /** The record line and, beside it, what to do (turn-framing.ts). */
-function wakePrompt(name: string, kind: string): { text: string; prefix: string } {
+export function wakePrompt(
+  name: string,
+  agent: string,
+  reason: 'ready' | 'blocked',
+  target?: string,
+): { text: string; prefix: string } {
+  const where = target && target !== 'local' ? ` on ${target}` : '';
+  const ref = `name: "${name}"${target && target !== 'local' ? `, target: "${target}"` : ''}`;
+  if (reason === 'blocked') {
+    return {
+      text: `[tmux attention] Session '${name}'${where} (${agent}) needs an answer: it stopped at a dialog.`,
+      prefix:
+        `The coding agent in the tmux session named below waits at an approval, question or startup ` +
+        `dialog. You started it earlier. Handle it now:\n` +
+        `1. tmux (action: capture, ${ref}) to read the dialog.\n` +
+        `2. Decide, or ask the person when it is theirs to decide; answer with tmux send (key: or keys:).\n` +
+        `Never approve something you do not understand.`,
+    };
+  }
   return {
-    text: `[tmux attention] Session '${name}' (${kind}) became ready.`,
+    text: `[tmux attention] Session '${name}'${where} (${agent}) finished and is ready.`,
     prefix:
-      `The tmux session named below was running and is now idle, which means it finished or is ` +
-      `waiting for input (e.g. a permission prompt). You started it earlier and your last look ` +
-      `predates this. Inspect it now:\n` +
-      `1. Use the tmux tool (action: capture, name: "${name}") to read the output.\n` +
-      `2. Decide: reply into the session, handle a prompt, report the result to the user, or wrap up.\n` +
+      `The coding agent in the tmux session named below was working and is idle now: it finished. You ` +
+      `started it earlier and your last look predates this. Inspect it now:\n` +
+      `1. tmux (action: read, ${ref}) to read its answer.\n` +
+      `2. Decide: prompt it again, report the result to the person, or kill the session when done.\n` +
       `Do not blindly send a new prompt — read first.`,
   };
 }
 
-async function tmuxSessionExists(name: string): Promise<boolean> {
-  const list = await tmuxLocalList();
-  return list.ok && list.sessions.some((s) => s.name === name);
+async function tmuxSessionExists(origin: TmuxOrigin): Promise<boolean> {
+  try {
+    const list = origin.target ? await tmuxRemoteList(origin.agent, origin.target) : await tmuxLocalList();
+    return list.ok && list.sessions.some((s) => s.name === origin.name);
+  } catch {
+    return false;
+  }
 }
 
 export class TmuxAttentionWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly states = new Map<string, AttentionSessionState>();
+  /** The agent last recognised per session (for the wake text). */
+  private readonly agents = new Map<string, string>();
   private ticking = false;
   private lastMirror = '';
 
@@ -116,30 +138,39 @@ export class TmuxAttentionWatcher {
     }
   }
 
-  private watchedOrigins(liveNames: Set<string>): TmuxOrigin[] {
-    return listTmuxOrigins().filter(
-      (o) =>
-        (o.kind === 'claude-code' || o.kind === 'codex' || o.kind === 'opencode') &&
-        o.attention !== false &&
-        liveNames.has(o.name),
-    );
+  /** The live session names per target (local and each SSH resource
+   *  with origins). A target that cannot be asked is left out this tick. */
+  private async liveSessions(origins: TmuxOrigin[]): Promise<Map<string, Set<string>>> {
+    const out = new Map<string, Set<string>>();
+    const local = await tmuxLocalList();
+    if (local.ok) out.set('local', new Set(local.sessions.map((s) => s.name)));
+    const remotes = new Map<string, string>(); // target → an agent allowed to use it
+    for (const o of origins) if (o.target && !remotes.has(o.target)) remotes.set(o.target, o.agent);
+    for (const [target, agent] of remotes) {
+      try {
+        const r = await tmuxRemoteList(agent, target);
+        if (r.ok) out.set(target, new Set(r.sessions.map((s) => s.name)));
+      } catch (err) {
+        logger.debug({ msg: 'tmux.attention_remote_list_failed', target, err: (err as Error).message });
+      }
+    }
+    return out;
   }
 
   private async tickInner(): Promise<void> {
-    // Live session names — dead sessions drop out of the state map so
-    // a recreated same-name session starts from a fresh baseline.
-    const list = await tmuxLocalList();
-    if (!list.ok) return; // tmux server not running — nothing to watch
-    const liveNames = new Set(
-      list.sessions.map((s) => s.name),
-    );
+    const origins = listTmuxOrigins().filter((o) => o.attention !== false);
+    const live = await this.liveSessions(origins);
+    // Dead sessions drop out of the state map, so a recreated same-name
+    // session starts from a fresh baseline. A target that could not be
+    // asked keeps its states.
+    const watched = origins.filter((o) => live.get(o.target ?? 'local')?.has(o.name));
+    const watchedKeys = new Set(watched.map((o) => originKey(o.target, o.name)));
     for (const known of [...this.states.keys()]) {
-      if (!liveNames.has(known)) this.states.delete(known);
+      const target = known.startsWith('@') ? known.slice(1, known.indexOf('/')) : 'local';
+      if (live.has(target) && !watchedKeys.has(known)) this.states.delete(known);
     }
-
-    const watched = this.watchedOrigins(liveNames);
     if (watched.length === 0) {
-      this.mirror(); // clears stale entries when the last session dies
+      this.mirror();
       return;
     }
 
@@ -147,10 +178,17 @@ export class TmuxAttentionWatcher {
     const now = Date.now();
 
     for (const origin of watched) {
-      const cap = await tmuxLocalCapture({ name: origin.name, lines: CAPTURE_LINES });
-      if (!cap.ok) continue; // session vanished mid-tick — next tick prunes it
-      const tui = detectTuiState(cap.stdout, origin.kind);
-      if (!tui) continue;
+      const key = originKey(origin.target, origin.name);
+      const run = origin.target ? remoteRunner(origin.agent, origin.target) : localRunner;
+      const o = await observePane(run, origin.name, { lines: 1 });
+      if ('error' in o) continue; // vanished mid-tick — next tick prunes it
+      const agentState = agentStateOf(o.look, origin.kind);
+      if (!agentState) {
+        // No coding agent (a shell, or the agent exited): nothing to watch.
+        this.states.delete(key);
+        continue;
+      }
+      this.agents.set(key, agentState.name);
 
       const originRef = {
         agent: origin.agent,
@@ -161,17 +199,17 @@ export class TmuxAttentionWatcher {
           ? getSessionLockStatus(origin.agent, origin.session).activeTurnId !== undefined
           : false;
 
-      const prev = this.states.get(origin.name) ?? initialAttentionState();
+      const prev = this.states.get(key) ?? initialAttentionState();
       const { state, action } = stepAttention({
         state: prev,
-        tuiState: tui.state,
+        tuiState: paneStateOf(agentState.state),
         now,
-        observation: observations[origin.name] ?? null,
+        observation: observations[key] ?? null,
         origin: originRef,
         originBusy: busy,
         config: this.config,
       });
-      this.states.set(origin.name, state);
+      this.states.set(key, state);
 
       if (action.kind === 'event') {
         logger.info({ msg: 'tmux.attention_event', name: origin.name, origin: originRef });
@@ -187,10 +225,13 @@ export class TmuxAttentionWatcher {
         logger.info({
           msg: 'tmux.attention_wake',
           name: origin.name,
+          ...(origin.target ? { target: origin.target } : {}),
+          reason: action.reason,
+          agent: agentState.name,
           origin: originRef,
           wakesToday: state.wakesToday,
         });
-        this.dispatchWake(origin);
+        this.dispatchWake(origin, agentState.name, action.reason);
       }
     }
 
@@ -208,7 +249,7 @@ export class TmuxAttentionWatcher {
   }
 
   /** Fire-and-forget wake turn on the origin (agent, session). */
-  private dispatchWake(origin: TmuxOrigin): void {
+  private dispatchWake(origin: TmuxOrigin, agentName: string, reason: 'ready' | 'blocked'): void {
     const deps = injectedChatTurnDeps;
     const session = origin.session;
     if (!deps || !session) {
@@ -223,13 +264,13 @@ export class TmuxAttentionWatcher {
     }
     // Lock, abort registration, turn id and the SSE broadcast are
     // startTurn's; the wake only says who, where and what.
-    const wake = wakePrompt(origin.name, origin.kind ?? 'shell');
+    const wake = wakePrompt(origin.name, agentName, reason, origin.target);
     void startTurn({
       agent: origin.agent,
       session,
       text: wake.text,
       turnPrefix: wake.prefix,
-      origin: { kind: 'tmux', tmuxSession: origin.name, ...(origin.kind ? { tmuxKind: origin.kind } : {}) },
+      origin: { kind: 'tmux', tmuxSession: origin.name, tmuxKind: agentName },
       deps,
       // The lock wait can be long — the origin's own turn typically
       // holds it, and that turn is often the one that `tmux kill`s the
@@ -237,7 +278,7 @@ export class TmuxAttentionWatcher {
       // longer exists burns a turn and confuses the agent ("became
       // ready" → `tmux list` → 0). Re-check liveness AFTER the wait.
       beforeRun: async () => {
-        if (await tmuxSessionExists(origin.name)) return true;
+        if (await tmuxSessionExists(origin)) return true;
         logger.info({
           msg: 'tmux.attention_wake_stale',
           name: origin.name,

@@ -143,7 +143,7 @@ Toolset `exec`.
 |---|---|
 | `exec` | Runs one shell command, waiting for it or in the background, locally or on an SSH resource. |
 | `process` | Handles background jobs: `action` is `list`, `poll`, `log`, `write` or `kill`. |
-| `tmux` | Keeps terminal sessions open across turns: `action` is `create`, `send`, `capture`, `wait_idle`, `list` or `kill`, against `target: local` or an SSH resource. |
+| `tmux` | Keeps terminal sessions open across turns and drives coding agents in them: `action` is `create`, `start`, `prompt`, `send`, `capture`, `read`, `wait_idle`, `list`, `explain` or `kill`, against `target: local` or an SSH resource. |
 
 Destructive command patterns are blocked in `exec` and in Sentinel
 check scripts. A resource can lift single blocks with `allowBlocked`,
@@ -182,8 +182,8 @@ The count lives in `~/.somora/agents/<agent>/exec-timeouts.json` and is
 forgotten after a day. Spaces do not make another command; a changed
 argument does.
 
-The tmux guide explains `wait_mode`, `multiline_safe` and
-`include_ansi`.
+The tmux guide explains how an agent starts and prompts other coding
+agents, their states, `wait_mode` and `multiline_safe`.
 
 ### Other agents
 

@@ -140,6 +140,12 @@ async function runTmux(
   };
 }
 
+/** Runs a shell command on the somora host — the Runner the tmux
+ *  observe/prompt layer (src/tmux/observe.ts) uses for local panes. */
+export function localRunner(command: string, timeoutMs: number = 10_000): Promise<TmuxResult> {
+  return runTmux(command, timeoutMs);
+}
+
 export async function tmuxLocalCreate(opts: TmuxLocalCreateOptions): Promise<TmuxResult> {
   // -d = detached (no attach), -s = session name. -A would attach if
   // exists; we want explicit failure on duplicate so the model knows

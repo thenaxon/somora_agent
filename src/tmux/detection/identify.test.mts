@@ -3,7 +3,7 @@
 // agents on 2026-11-16 (paths shortened).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentFromArgv, agentFromName, identifyForeground, parsePs, psCommandForTty } from './identify.ts';
+import { agentFromArgv, agentFromName, foregroundIsShell, identifyForeground, parsePs, psCommandForTty } from './identify.ts';
 
 test('the agents as they ran: direct, from a shell, wrapped in sh -c; a bare shell is none', () => {
   const ps = (s: string) => identifyForeground(parsePs(s));
@@ -44,4 +44,12 @@ test('the ps command takes only a terminal name', () => {
   assert.equal(psCommandForTty('/dev/pts/3'), 'ps -o pid=,pgid=,tpgid=,args= -t pts/3');
   assert.equal(psCommandForTty('/dev/ttys003'), 'ps -o pid=,pgid=,tpgid=,args= -t ttys003');
   assert.throws(() => psCommandForTty('/dev/pts/3; rm -rf ~'), /unexpected tty/);
+});
+
+test('is the foreground a shell at its prompt?', () => {
+  assert.equal(foregroundIsShell(parsePs(' 1000  1000  1000 -bash\n')), true);
+  assert.equal(foregroundIsShell(parsePs(' 1000  1000  1000 /usr/bin/zsh\n')), true);
+  assert.equal(foregroundIsShell(parsePs(' 1000  1000  1200 -bash\n 1200  1200  1200 vim x\n')), false);
+  assert.equal(foregroundIsShell(parsePs(' 1000  1000  1200 -bash\n 1200  1200  1200 python3\n')), false);
+  assert.equal(foregroundIsShell([]), null, 'no ps: no telling');
 });

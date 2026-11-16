@@ -30,7 +30,17 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { SOMORA_HOME_DIR } from '../server/logger.ts';
-import type { TuiState } from './tui-markers.ts';
+/** A pane's state as the watcher and the ledger speak of it, from the
+ *  agent state (detection/): working → running, idle → ready, blocked
+ *  (a dialog waits for an answer), unknown (the screen says nothing —
+ *  e.g. a transcript viewer; the previous state stands). */
+export type PaneState = 'running' | 'ready' | 'blocked' | 'unknown';
+/** What an observation saw; unknown proves nothing. */
+export type SeenState = 'running' | 'ready' | 'blocked';
+
+export function paneStateOf(agentState: 'idle' | 'working' | 'blocked' | 'unknown'): PaneState {
+  return agentState === 'idle' ? 'ready' : agentState === 'working' ? 'running' : agentState;
+}
 
 const OBSERVATIONS_PATH = join(SOMORA_HOME_DIR, 'tmux-observations.json');
 const ATTENTION_PATH = join(SOMORA_HOME_DIR, 'tmux-attention.json');
@@ -53,7 +63,7 @@ export interface ObservationRecord {
    *  the timestamps alone can't tell (the watcher's event detection
    *  lags the agent's own wait_idle by up to one poll interval).
    *  Undefined for send (typing proves driving, not knowing). */
-  sawState?: TuiState;
+  sawState?: SeenState;
 }
 
 type ObservationMap = Record<string, ObservationRecord>;
@@ -94,7 +104,7 @@ export function recordTmuxObservation(
   name: string,
   agent: string,
   session?: string,
-  sawState?: TuiState,
+  sawState?: SeenState,
 ): void {
   try {
     const map = readJsonFile<ObservationMap>(OBSERVATIONS_PATH) ?? {};
@@ -124,8 +134,9 @@ export interface AttentionDisplay {
   last_event_at: number | null;
   last_wake_at: number | null;
   wakes_today: number;
-  /** Last TUI state the watcher saw. */
-  state: TuiState | null;
+  /** Last state the watcher saw: running, ready, or blocked (a dialog
+   *  waits for an answer). */
+  state: 'running' | 'ready' | 'blocked' | null;
 }
 
 type AttentionMap = Record<string, AttentionDisplay>;
@@ -145,11 +156,15 @@ export function readAttentionMirror(): AttentionMap {
 // ── pure state machine ────────────────────────────────────────────────
 
 export interface AttentionSessionState {
-  /** Last effective state seen by the watcher (running | ready). null
-   *  until the first capture — the first tick only sets a baseline and
-   *  never fires an event (prevents a wake salvo over sessions that
-   *  were already idle when the server booted). */
-  lastState: 'running' | 'ready' | null;
+  /** Last state seen by the watcher. null until the first look — the
+   *  first tick only sets a baseline and never fires an event (prevents
+   *  a wake salvo over sessions that were already idle or waiting at a
+   *  dialog when the server booted). */
+  lastState: 'running' | 'ready' | 'blocked' | null;
+  /** When the watcher last saw the pane NOT blocked. Anchor for the
+   *  suppress rule of a blocked event, as lastRunningSeenAt is for a
+   *  completion. */
+  lastNotBlockedSeenAt: number | null;
   /** When the watcher last saw the pane running. Anchor for the
    *  suppress rule: an origin observation with sawState 'ready' at or
    *  after this moment proves the agent saw THIS run's completion
@@ -160,7 +175,7 @@ export interface AttentionSessionState {
   seenRunning: boolean;
   /** Set on the running→ready transition; cleared by observation,
    *  wake, cap, or a new running phase (moment passed). */
-  pending: { eventAt: number } | null;
+  pending: { eventAt: number; reason: 'ready' | 'blocked' } | null;
   lastWakeAt: number | null;
   /** UTC day (YYYY-MM-DD) `wakesToday` counts for. */
   wakeDay: string;
@@ -176,6 +191,7 @@ export interface AttentionSessionState {
 export function initialAttentionState(): AttentionSessionState {
   return {
     lastState: null,
+    lastNotBlockedSeenAt: null,
     lastRunningSeenAt: null,
     seenRunning: false,
     pending: null,
@@ -192,13 +208,13 @@ export type AttentionAction =
   | { kind: 'none' }
   | { kind: 'event' } // became_ready detected this tick (pending set)
   | { kind: 'observed' } // origin saw it itself — suppressed, no wake
-  | { kind: 'wake' }
+  | { kind: 'wake'; reason: 'ready' | 'blocked' }
   | { kind: 'cap_reached' };
 
 export interface AttentionStepInput {
   state: AttentionSessionState;
-  /** detectTuiState result for this tick's capture. */
-  tuiState: TuiState;
+  /** The pane's state this tick (paneStateOf the detected agent state). */
+  tuiState: PaneState;
   now: number;
   /** Observation-ledger record for this tmux session, if any. */
   observation: ObservationRecord | null;
@@ -238,33 +254,44 @@ export function stepAttention(input: AttentionStepInput): {
   const s: AttentionSessionState = { ...input.state };
   let action: AttentionAction = { kind: 'none' };
 
-  // queued = "input typed but not submitted" — the pane is mid-cycle,
-  // treat like running. idle_unknown only occurs for kind-less panes
-  // which the watcher never watches; map defensively to ready.
-  const effective: 'running' | 'ready' =
-    tuiState === 'running' || tuiState === 'queued' ? 'running' : 'ready';
+  // unknown: the screen says nothing — keep what was there.
+  if (tuiState === 'unknown') return { state: s, action };
+  const effective: 'running' | 'ready' | 'blocked' = tuiState;
 
   if (s.lastState === null) {
     // Baseline tick — record what we see, fire nothing.
     s.lastState = effective;
     s.seenRunning = effective === 'running';
     if (effective === 'running') s.lastRunningSeenAt = now;
+    if (effective !== 'blocked') s.lastNotBlockedSeenAt = now;
     return { state: s, action };
   }
 
+  if (effective !== 'blocked') s.lastNotBlockedSeenAt = now;
   if (effective === 'running') {
     s.seenRunning = true;
     s.lastRunningSeenAt = now;
     if (s.pending) {
-      // A new run started before the previous completion was handled —
-      // that moment has passed; the NEXT running→ready edge re-fires.
+      // A new run started before the previous event was handled — that
+      // moment has passed; the next edge fires again.
       s.pending = null;
     }
-  } else if (s.lastState === 'running' && s.seenRunning && !s.disarmed) {
-    s.pending = { eventAt: now };
+  } else if (effective === 'blocked' && s.lastState !== 'blocked' && !s.disarmed) {
+    // A dialog waits for an answer: wake, the origin has to decide.
+    s.pending = { eventAt: now, reason: 'blocked' };
     s.needsAttention = true;
     s.lastEventAt = now;
     action = { kind: 'event' };
+  } else if (effective === 'ready' && s.lastState !== 'ready' && s.seenRunning && !s.disarmed) {
+    // Finished (from running, or from a dialog answered elsewhere).
+    s.pending = { eventAt: now, reason: 'ready' };
+    s.needsAttention = true;
+    s.lastEventAt = now;
+    action = { kind: 'event' };
+  } else if (effective === 'ready' && s.pending?.reason === 'blocked') {
+    // The dialog went away without us — nothing left to answer.
+    s.pending = null;
+    s.needsAttention = false;
   }
   s.lastState = effective;
 
@@ -277,10 +304,13 @@ export function stepAttention(input: AttentionStepInput): {
   // the completion up to one poll interval BEFORE the watcher's
   // transition tick, and that look must still count.
   const obs = observation && observationMatchesOrigin(observation, origin) ? observation : null;
+  // A blocked event counts as seen when the origin saw the dialog after
+  // the pane was last not blocked.
   const sawCompletion =
     obs !== null &&
-    obs.sawState === 'ready' &&
-    obs.lastObservedAt >= (s.lastRunningSeenAt ?? 0);
+    (s.pending?.reason === 'blocked' || (!s.pending && s.lastState === 'blocked')
+      ? obs.sawState === 'blocked' && obs.lastObservedAt >= (s.lastNotBlockedSeenAt ?? 0)
+      : obs.sawState === 'ready' && obs.lastObservedAt >= (s.lastRunningSeenAt ?? 0));
   if (obs) {
     if (s.disarmed && s.lastWakeAt !== null && obs.lastObservedAt > s.lastWakeAt) {
       s.disarmed = false; // origin came back to the session — re-arm
@@ -316,12 +346,13 @@ export function stepAttention(input: AttentionStepInput): {
     s.pending = null; // flag stays; no more turns today
     return { state: s, action: { kind: 'cap_reached' } };
   }
+  const reason = s.pending.reason;
   s.pending = null;
   s.lastWakeAt = now;
   s.wakesToday += 1;
   s.disarmed = true;
   // needsAttention stays true until the (woken) agent actually looks.
-  return { state: s, action: { kind: 'wake' } };
+  return { state: s, action: { kind: 'wake', reason } };
 }
 
 /** Project internal state onto the display shape for the mirror file. */
