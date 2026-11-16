@@ -19,7 +19,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { loadConfig } from '../config/loader.ts';
+import { getFreshConfig, loadConfig } from '../config/loader.ts';
 import { MCP_SERVER_NAME } from './config.ts';
 import { resolveAnyRef } from '../config/types.ts';
 import { setMaxWikiCallsPerTurn } from '../dream/loop-state.ts';
@@ -219,7 +219,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  const config = await loadConfig();
+  // Through the fresh-config cache, so a tool call can see a later
+  // version of the file (CallTool handler below).
+  const config = await getFreshConfig();
   // Match the main server: tools that read longTaskDefault/Max via the
   // module-level cache (subagent_result, spawn_subagent wait:true) need
   // this populated here too — each MCP child has its own process state.
@@ -371,6 +373,14 @@ async function main(): Promise<void> {
         isError: true,
       };
     }
+    // The child lives for one turn and read config.yaml when it started.
+    // A change made during the turn (an agent edits the file and reloads,
+    // then calls the tool) reached the main server but not this process:
+    // decision_evaluate kept sending images to a model whose `image`
+    // capability had just been removed (2026-11-14 report). Read the file
+    // again when it changed (one stat per call; a broken edit keeps the
+    // last valid version).
+    ctx.config = await getFreshConfig().catch(() => ctx.config);
     const result = await registry.invoke(tool.name, args, ctx);
     if (!result.ok) {
       return { content: [{ type: 'text' as const, text: result.error ?? 'tool failed' }], isError: true };

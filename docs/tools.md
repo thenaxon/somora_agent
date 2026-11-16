@@ -204,7 +204,7 @@ Toolset `agents`.
 | `session_model` | Switches the model of an existing session, or clears the override with `clear:true`. |
 | `builder_dispatch` | Hands a build order to a builder agent and returns a `call_id`. |
 | `builder_review` | Accepts or rejects items of a builder's acceptance list, as the agent that gave the order; rejected items go back to the builder. |
-| `ask_user` | Asks you a question with options, shown as a card with a button per option. |
+| `ask_user` | Asks you a question with options, shown as a card with a button per option. Once answered, the question, its details and the options stay in the conversation. |
 
 A sub-agent session does not get the tools in `subagents.tools.deny`,
 by default `agent_ask`, `agent_ask_result`, `agent_ask_cancel` and

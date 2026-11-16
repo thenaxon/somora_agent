@@ -59,7 +59,26 @@ models page lists the decision models somora was run with.
 | Model | Where it runs | Images | Checked with somora |
 |---|---|---|---|
 | Clef | Self-hosted, Cloudflare's open decision model | yes | yes |
+| OneJev | Self-hosted on a Flide server | yes | yes |
 | Jev | TypeSafe AI, hosted | no, text only | no |
+
+Text questions look the same on every server; images do not. Clef
+takes them as an `images` list. A Flide server (OneJev and the other
+models Flide serves) takes them as `media`, each named once in the state
+by a `<image:N>` marker, and quietly ignores an `images` list.
+
+somora tells the two apart by the server's `GET <baseUrl>/v1/models`
+(Flide lists `models` with a `name`, Clef `data` with an `id`) and sends
+the form that server reads. For Flide it adds the markers itself: an
+object state gets an `images` list of them, a text state gets them
+appended, and a state with an `images` key of its own is wrapped as
+`{state, images}`.
+
+When the list cannot be read and the server's form is not known yet, a
+call with images is refused and nothing is sent.
+
+Flide's models list carries no input limit, so set `maxInputTokens` for
+a model there. An input over Flide's own limit comes back as `too-long`.
 
 Jev was not tested with somora. By its public description it speaks the
 same API, so the same block with Jev's address, key and model name

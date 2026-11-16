@@ -7,7 +7,7 @@
 // pairs by turnId or gets its own row.
 
 import assert from 'node:assert/strict';
-import { applyLiveMemory, historyEventsToMessages, mergeHistorySnapshot, prependOlderMessages, type ChatMessage, type HistoryEvent } from './history';
+import { applyLiveMemory, applyLiveTool, historyEventsToMessages, mergeHistorySnapshot, prependOlderMessages, type ChatMessage, type HistoryEvent } from './history';
 
 let ok = 0;
 let bad = 0;
@@ -204,6 +204,29 @@ const img = (id: string) => ({ type: 'image', id, filename: `${id}.png`, mime: '
   ];
   const merged = mergeHistorySnapshot(restored, [user, placed[1]!, { ...streaming, streaming: false, ts: 14 }]);
   t('memory: a history snapshot keeps the live row in its place', merged.map((m) => m.id).join(',') === `r-u,${placed[1]!.id},r-a`, merged.map((m) => m.id).join(','));
+}
+
+// A question the agent asked (ask_user) keeps its own row once its card
+// is answered (2026-11-14 report): from history and live.
+{
+  const input = { question: 'Change nothing?', header: 'Qwen faster?', details: '| a | b |\n|---|---|\n| 1 | 2 |', options: [{ label: 'Change nothing' }, { label: 'Test it', description: 'two variants' }] };
+  const rows = historyEventsToMessages([
+    { kind: 'turn_start', ts: 1, turnId: 't1' },
+    { kind: 'tool_call', ts: 2, tool: 'mcp__somora__exec', callId: 'c0', input: { command: 'ls' } },
+    { kind: 'tool_call', ts: 3, tool: 'mcp__somora__ask_user', callId: 'c1', input },
+    { kind: 'tool_result', ts: 4, callId: 'c1', output: 'ok' },
+    { kind: 'user_message', ts: 5, text: 'Change nothing' },
+  ] as HistoryEvent[]);
+  t('asked: history keeps the question as its own row', rows.map((m) => m.role).join(',') === 'activity,asked,user', rows.map((m) => m.role).join(','));
+  const asked = rows.find((m) => m.role === 'asked');
+  t('asked: question, details and options', asked?.asked?.question === 'Change nothing?' && asked.asked.details?.includes('| 1 | 2 |') === true && asked.asked.options.length === 2 && asked.asked.options[1]?.description === 'two variants');
+  t('asked: the call still counts in the activity', rows[0]?.activity?.steps.length === 2, JSON.stringify(rows[0]?.activity));
+  const live = applyLiveTool([], { phase: 'call', tool: 'ask_user', callId: 'c1', details: JSON.stringify(input, null, 2) }, 10, 't2');
+  t('asked: a live call adds the activity and the question row', live.map((m) => m.role).join(',') === 'activity,asked' && live[1]?.asked?.header === 'Qwen faster?', live.map((m) => m.role).join(','));
+  const next = applyLiveTool(live, { phase: 'call', tool: 'exec', callId: 'c2', details: '{}' }, 11, 't2');
+  t('asked: a later call of the turn goes into the same activity', next.length === 2 && next[0]?.activity?.steps.length === 2, JSON.stringify(next.map((m) => m.role)));
+  const other = applyLiveTool([], { phase: 'call', tool: 'exec', callId: 'c3', details: '{"command":"ls"}' }, 12, 't3');
+  t('asked: any other tool adds no question row', other.map((m) => m.role).join(',') === 'activity');
 }
 
 console.log(`\nhistory: ${ok} passed, ${bad} failed`);

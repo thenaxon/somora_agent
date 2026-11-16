@@ -772,9 +772,15 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   // an A2A one never inherits it. Cleared again at the end.
   setTurnOrigin(agent, session, fromAgent && fromSession ? { agent: fromAgent, session: fromSession } : null);
 
+  // One time for the record and the live event: a window that reconnects
+  // while this lands (after a restart it always does) gets the row live
+  // and in the history it reloads, and only the same ts tells it they are
+  // one row — two Date.now() calls showed the restart line twice
+  // (2026-11-14 report).
+  const userMessageTs = Date.now();
   await appendEvent(agent, session, {
     kind: 'user_message',
-    ts: Date.now(),
+    ts: userMessageTs,
     engine: engine.name,
     text,
     ...(fromAgent ? { from_agent: fromAgent } : {}),
@@ -801,7 +807,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       event: 'user_message',
       data: {
         text,
-        ts: Date.now(),
+        ts: userMessageTs,
         turnId,
         ...(fromAgent ? { from_agent: fromAgent } : {}),
         ...(fromAgent && fromSession ? { from_session: fromSession } : {}),
@@ -915,7 +921,13 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
           wiki: deps.config.wiki,
           obsidian: deps.config.obsidian,
         }),
-      config: deps.config,
+      // Read at each call, not at turn start: deps.config follows
+      // POST /config/reload, and a reload during the turn (an agent edits
+      // config.yaml, reloads, calls the tool) must reach the tool — the
+      // reload already answered "applied" (2026-11-14 report).
+      get config() {
+        return deps.config;
+      },
       // Surface the resolved model so capability-gated tools (file_read
       // polymorph) can check `image`/`pdf` capability before deciding
       // whether to return content blocks. Stays consistent across the

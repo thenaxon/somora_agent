@@ -40,6 +40,7 @@ import { ProjectChip } from './ProjectChip';
 import { WorkBadge, WorkQueuePopover } from './WorkQueuePopover';
 import { BuilderPanel } from './BuilderPanel';
 import { QuestionCard } from './QuestionCard';
+import { askedQuestionFrom, isAskUserTool } from '../lib/asked-question';
 import { useSessionQuestion } from '../hooks/useSessionQuestion';
 import { useSessionWork } from '../hooks/useSessionWork';
 import type { WorkItemDto } from '../lib/api';
@@ -95,6 +96,8 @@ export function ChatWindow({
   );
   const chat = useChatSessionFromContext(agent.name, sessionId);
   const { question: pendingQuestion, refresh: refreshQuestion } = useSessionQuestion(agent.name, sessionId, true, chat.streaming);
+  // An open ask_user card shows its question; the row for that call waits.
+  const openQuestionText = pendingQuestion && pendingQuestion.source !== 'codex' ? pendingQuestion.question : null;
   // Keep the header's model/thinking honest: re-read on a model switch
   // made elsewhere, and around every turn (a turn is where the model is
   // actually resolved — fallback, override, persona default).
@@ -533,11 +536,20 @@ export function ChatWindow({
       // that suddenly dropped (2026-10-19 report).
       const isSomoraRow =
         m.role === 'engine_meta' && (m.meta.engine === 'somora' || m.meta.itemType === 'context_compacted');
+      // A question the agent asked (ask_user) is part of the conversation,
+      // not an engine internal: it stays once its card is answered. While
+      // the card is still open it shows the question itself, so the row
+      // waits until then (2026-11-14 report).
+      if (m.role === 'tool_call' && isAskUserTool(m.toolCall.tool)) {
+        if (!openQuestionText) return true;
+        const asked = askedQuestionFrom(m.toolCall);
+        return asked?.question !== openQuestionText;
+      }
       if (!showTools && !isVoiceRow && !isSomoraRow && (m.role === 'tool_call' || m.role === 'tool_result' || m.role === 'engine_meta')) return false;
       if (!showMemory && m.role === 'memory_inject') return false;
       return true;
     });
-  }, [chat.messages, showTools, showMemory]);
+  }, [chat.messages, showTools, showMemory, openQuestionText]);
 
   // Run a slash command resolved by the popup. Returns nothing — the
   // result is communicated via systemNotice (transient banner above

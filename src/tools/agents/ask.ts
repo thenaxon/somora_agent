@@ -274,7 +274,8 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     'agent_ask is REQUEST-RESPONSE, not a message bus: if YOU received a question via agent_ask ' +
     '(a user_message with from_agent set), your answer is your normal turn output — the asking ' +
     'agent receives it automatically as the result of their pending call. Never agent_ask your ' +
-    'caller back to deliver an answer; circular calls are rejected (deadlock guard). ' +
+    'caller back to deliver an answer: an agent_ask to the session whose question you are answering is ' +
+    'refused (another session of that agent is another conversation and is allowed). ' +
     'If you answer "I am working on it with sub-agents and will report back", you do not have to: ' +
     'when work you started while answering finishes later, somora sends its result to the asker ' +
     'on its own as a follow-up message from you. Likewise, a target that told YOU it would report ' +
@@ -387,9 +388,24 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     let targetSession = input.session ?? (external ? `a2a-${ctx.agent}` : 'main');
     const externalDefault = Boolean(external && !input.session);
     let sessionInferred = false;
-    if (!input.session && ctx.session && !external) {
-      const origin = await lookupTurnOrigin(base, ctx.agent, ctx.session);
-      if (origin && origin.agent === targetAgent && origin.session) {
+    const origin = ctx.session && !external ? await lookupTurnOrigin(base, ctx.agent, ctx.session) : null;
+    // Answering a question from targetAgent/<session> and asking that same
+    // session back: the answer already goes there as this turn's output.
+    // Refused whether or not the asker still waits — with wait:false the
+    // deadlock guard let it through and the asker got the result twice,
+    // once as this message and once as the [agent answer] (2026-11-13
+    // report). Another session of the same agent is another conversation
+    // and stays open.
+    if (origin && origin.kind === 'a2a' && origin.agent === targetAgent && origin.session && sameSession(input.session ?? origin.session, origin.session)) {
+      logger.info({ msg: 'agent_ask.ask_back_refused', from: ctx.agent, from_session: ctx.session, to: targetAgent, session: origin.session });
+      throw new Error(
+        `agent_ask: you are answering a question from ${targetAgent} (session '${origin.session}'), and your ` +
+          `reply goes back to it on its own when this turn ends. Put the result — and any question you have ` +
+          `about the task — into your reply instead of sending it with agent_ask.`,
+      );
+    }
+    if (!input.session && origin) {
+      if (origin.agent === targetAgent && origin.session) {
         targetSession = origin.session;
         sessionInferred = true;
         logger.info({
@@ -703,6 +719,11 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     }
   },
 };
+
+/** A session named by slug (`research`) or by id (`20260906-172957_research`). */
+function sameSession(named: string, id: string): boolean {
+  return named === id || id.endsWith(`_${named}`);
+}
 
 interface TurnOriginInfo {
   agent: string;

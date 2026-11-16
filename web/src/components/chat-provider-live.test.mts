@@ -25,9 +25,18 @@ g.IS_REACT_ACT_ENVIRONMENT = true;
 
 type Listener = (ev: { data: string }) => void;
 const sources = new Map<string, FakeEventSource>();
+let streamsOpened = 0;
 class FakeEventSource {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
+  // Like a stream whose connection just broke: the browser is retrying.
+  readyState = FakeEventSource.CONNECTING;
   listeners = new Map<string, Set<Listener>>();
   constructor(public url: string) {
+    // A runaway reconnect loop would never yield; stop it here so the
+    // test fails instead of hanging.
+    if (++streamsOpened > 1000) throw new Error('reconnect loop: over 1000 streams opened');
     sources.set(url, this);
   }
   addEventListener(type: string, fn: Listener): void {
@@ -198,6 +207,19 @@ await t('a session under the ceiling is left alone', async () => {
   });
   assert(historyCalls.length === calls, 'no history read for a small session');
   assert(rows.get('s1') === 2, `s1 shows ${rows.get('s1')} rows, expected 2`);
+});
+
+await t('"online" after a broken connection reopens each stream once', async () => {
+  // 2026-11-14: the reopen re-set the key while the watchdog walked the
+  // live Map, the fresh (not yet open) stream matched again — a
+  // synchronous loop that took the tab to ~21 GB.
+  const before = streamsOpened;
+  await act(async () => {
+    dom.window.dispatchEvent(new dom.window.Event('online'));
+  });
+  await flush();
+  const opened = streamsOpened - before;
+  assert(opened === 2, `"online" opened ${opened} streams for 2 sessions, expected 2`);
 });
 
 await act(async () => root.unmount());

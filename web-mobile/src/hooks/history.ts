@@ -11,6 +11,7 @@
 // the SAME turn or to a fresh row — never to another turn's.
 
 // Origin types are shared with the desktop client — one source.
+import { askedQuestionFrom, type AskedQuestion } from '../../../web/src/lib/asked-question';
 import type { FromSystem, TurnOrigin } from '../../../web/src/types/origin';
 import { addCall, closeActivity, joinActivities, newActivity, settleCall, stepLabel, type Activity } from './activity';
 
@@ -45,7 +46,10 @@ export interface ChatMessage {
    *  `memory`: the notes recalled for the turn that follows (`memory`),
    *  shown when the session's memory switch is on. Live only, like the
    *  web client's memory line: history does not carry it. */
-  role: 'user' | 'agent' | 'error' | 'note' | 'activity' | 'memory';
+  role: 'user' | 'agent' | 'error' | 'note' | 'activity' | 'memory' | 'asked';
+  /** asked rows: a question the agent asked with ask_user, kept readable
+   *  once its card is answered (2026-11-14 report). */
+  asked?: AskedQuestion;
   /** memory rows: how many notes were recalled, the best score, their
    *  references and the text the agent was given. */
   memory?: { count: number; topScore?: number; refs: string[]; fullText?: string };
@@ -275,6 +279,8 @@ export function historyEventsToMessages(events: readonly HistoryEvent[]): ChatMe
         actIdx = out.length - 1;
       }
       updateAct((a) => addCall(a, { tool, label: stepLabel(tool, ev.input), ts, ...(ev.callId ? { callId: ev.callId } : {}) }));
+      const asked = askedQuestionFrom({ tool: ev.tool, input: ev.input });
+      if (asked) out.push(askedRow(asked, ts, currentTurnId));
       continue;
     }
     if (ev.kind === 'tool_result') {
@@ -442,6 +448,14 @@ export interface LiveToolEvent {
  * sent, like the compaction note.
  */
 export function applyLiveTool(prev: readonly ChatMessage[], d: LiveToolEvent, now: number, turnId: string | null): ChatMessage[] {
+  const next = foldLiveTool(prev, d, now, turnId);
+  // The call goes into the turn's activity as usual; a question the agent
+  // asked also gets its own row after it.
+  const asked = d.phase === 'call' ? askedQuestionFrom({ tool: d.tool, ...(d.details ? { details: d.details } : {}) }) : null;
+  return asked ? [...next, askedRow(asked, now, turnId ?? undefined)] : next;
+}
+
+function foldLiveTool(prev: readonly ChatMessage[], d: LiveToolEvent, now: number, turnId: string | null): ChatMessage[] {
   const tool = d.tool.replace(/^mcp__[^_]+__/, '');
   let idx = -1;
   for (let i = prev.length - 1; i >= 0; i -= 1) {
@@ -530,4 +544,8 @@ export function closeLiveActivities(prev: ChatMessage[], now: number): ChatMessa
     return { ...m, activity: closeActivity(m.activity, now) };
   });
   return changed ? next : prev;
+}
+
+function askedRow(asked: AskedQuestion, ts: number, turnId: string | undefined): ChatMessage {
+  return { id: newId('q'), role: 'asked', text: asked.question, ts, asked, ...(turnId ? { turnId } : {}) };
 }

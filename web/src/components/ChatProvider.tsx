@@ -1384,7 +1384,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // asked or answered elsewhere stayed unseen (review 2026-10-26).
     const checkAll = (networkBack = false) => {
       const now = Date.now();
-      for (const [key, entry] of sourcesRef.current.entries()) {
+      // Over a copy: reopenStream deletes the key and sets it again, and
+      // a live Map iterator visits an entry set during the walk. With
+      // `online` the fresh EventSource (CONNECTING, so not open) matched
+      // again, and again — a synchronous loop opening streams and
+      // history/project fetches until the tab died at ~21 GB
+      // (2026-11-14 report, Chrome "error code 5").
+      for (const [key, entry] of [...sourcesRef.current.entries()]) {
         const last = lastEventAtRef.current.get(key) ?? 0;
         const notOpen = entry.es.readyState !== EventSource.OPEN;
         if (now - last <= STALE_MS && !(networkBack && notOpen) && entry.es.readyState !== EventSource.CLOSED) continue;

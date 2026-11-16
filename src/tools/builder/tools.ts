@@ -154,7 +154,8 @@ export const askUser: ToolDefinition<z.infer<typeof AskInput>> = {
     'and returns {answered, answers[], text?}; when unanswered, decide yourself and say what you decided. ' +
     'If you recommend an option, put it first and add "(Recommended)" to its label. When they approve or pick ' +
     'content — a text to post or send, drafts, a plan — put that content in full into details: the card may be ' +
-    'answered where your other text is not in view.',
+    'answered where your other text is not in view. Question, details and options stay in the conversation ' +
+    'after the answer, so do not repeat them in your reply.',
   inputSchema: AskInput,
   jsonSchema: {
     type: 'object',

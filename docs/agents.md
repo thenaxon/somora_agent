@@ -397,6 +397,11 @@ circle, even through three or more agents, is refused with an error
 that says so. Sub-agents waiting on their parents are part of the same
 check.
 
+An agent answering a question does not `agent_ask` the asker back: its
+reply already goes there. Such a call to the session the question came
+from is refused, also when the asker did not wait. Another session of
+the same agent is another conversation and can be asked as usual.
+
 ## Sub-agents
 
 `spawn_subagent` delegates a sealed task. The sub runs in a fresh

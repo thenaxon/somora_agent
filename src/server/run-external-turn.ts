@@ -74,9 +74,11 @@ export async function runExternalChatTurn(args: RunChatTurnArgs, ext: ExternalAg
     ...(args.fromSystem ? { from_system: args.fromSystem } : {}),
     ...(args.agentAskCallId ? { agent_ask_call_id: args.agentAskCallId } : {}),
   };
+  // Same ts for the record and the live event (see run-turn.ts).
+  const userMessageTs = Date.now();
   await appendEvent(agent, session, {
     kind: 'user_message',
-    ts: Date.now(),
+    ts: userMessageTs,
     engine: delegated ? A2A_ENGINE : ACP_ENGINE,
     text,
     ...from,
@@ -84,7 +86,7 @@ export async function runExternalChatTurn(args: RunChatTurnArgs, ext: ExternalAg
     ...(args.attachments && args.attachments.length > 0 ? { attachments: args.attachments } : {}),
   });
   if (publishSse) {
-    await publishSse({ event: 'user_message', data: { text, ts: Date.now(), turnId, ...from, ...(args.origin ? { origin: args.origin } : {}) } });
+    await publishSse({ event: 'user_message', data: { text, ts: userMessageTs, turnId, ...from, ...(args.origin ? { origin: args.origin } : {}) } });
     await publishSse({ event: 'agent', data: { phase: 'start', provider, model, external: { system: ext.system, ...(delegated ? { via: 'a2a' } : {}) } } });
   }
 

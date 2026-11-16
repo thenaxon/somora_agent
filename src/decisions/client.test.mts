@@ -3,7 +3,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { effectiveInputLimit, estimateInputTokens, evaluateDecision, fromWireAnswers, serverInputLimit } from './client.ts';
+import { effectiveInputLimit, estimateInputTokens, evaluateDecision, fromWireAnswers, serverInfo, serverInputLimit } from './client.ts';
 import type { DecisionModel } from '../config/types.ts';
 
 type Handler = (req: IncomingMessage, body: Record<string, unknown>, res: ServerResponse) => void;
@@ -156,4 +156,100 @@ test('images to a text-only model: refused without a request', async () => {
   const o = await evaluateDecision(model({ capabilities: ['text'] }), { state: 's', questions, images: [{ base64: 'x', width: 1, height: 1 }] });
   assert.equal((o as { reason: string }).reason, 'images-unsupported');
   assert.equal(sent, false);
+});
+
+// Flide (OneJev and the models it serves) reads images as `media` with a
+// `<image:N>` placeholder each and ignores `images` without a word
+// (2026-11-14 report). Its /v1/models lists `models[].name`.
+test('a Flide server gets media with placeholders; Clef keeps images', async () => {
+  const flide = createServer((req, res) => {
+    let raw = '';
+    req.on('data', (d) => (raw += d)).on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      if (req.url === '/v1/models') { res.end(JSON.stringify({ models: [{ name: 'onejev', description: 'd', release_date: '' }] })); return; }
+      lastBody = JSON.parse(raw);
+      res.end(JSON.stringify({ model: 'onejev', answers: { down: { type: 'noul', noul: 0.9 } }, usage: { input_tokens: 195, output_tokens: 1 } }));
+    });
+  });
+  await new Promise<void>((r) => flide.listen(0, '127.0.0.1', r));
+  try {
+    const entry: DecisionModel = { name: 'onejev', baseUrl: `http://127.0.0.1:${(flide.address() as AddressInfo).port}`, model: 'onejev', capabilities: ['text', 'image'], timeoutMs: 5000 };
+    const img = { base64: 'AAAA', width: 10, height: 10, mime: 'image/jpeg' };
+    const one = { down: questions.down };
+    const out = await evaluateDecision(entry, { state: { note: 'see it' }, questions: one, images: [img, img] });
+    assert.equal(out.status, 'ok');
+    assert.equal(lastBody.images, undefined, 'no images field for Flide');
+    assert.deepEqual(lastBody.media, [{ type: 'image', data: 'data:image/jpeg;base64,AAAA' }, { type: 'image', data: 'data:image/jpeg;base64,AAAA' }]);
+    assert.deepEqual(lastBody.state, { note: 'see it', images: ['<image:1>', '<image:2>'] });
+    await evaluateDecision(entry, { state: 'A screenshot.', questions: one, images: [img] });
+    assert.equal(lastBody.state, 'A screenshot.\n\nAttached: <image:1>');
+    await evaluateDecision(entry, { state: { images: 'mine', attached_images: 'also mine' }, questions: one, images: [img] });
+    assert.deepEqual(lastBody.state, { state: { images: 'mine', attached_images: 'also mine' }, images: ['<image:1>'] }, 'the state\'s own keys stay');
+    await evaluateDecision(entry, { state: 'text only', questions: one });
+    assert.equal(lastBody.media, undefined, 'no media without images');
+    assert.equal(lastBody.state, 'text only');
+  } finally {
+    flide.close();
+  }
+  handler = (_req, _body, res) => json(res, 200, okAnswers);
+  await evaluateDecision(model(), { state: 's', questions, images: [{ base64: 'BBBB', width: 10, height: 10, mime: 'image/png' }] });
+  assert.deepEqual(lastBody.images, ['BBBB'], 'Clef: images as before');
+  assert.equal(lastBody.media, undefined);
+  assert.equal(lastBody.state, 's');
+});
+
+test('Flide errors: its detail is the message, "limit is N" is too-long', async () => {
+  handler = (_req, _body, res) => json(res, 422, { detail: 'state plus longest question is 34880 tokens, limit is 32768' });
+  const long = await evaluateDecision(model(), { state: 's', questions });
+  assert.equal(long.status === 'unavailable' && long.reason, 'too-long');
+  assert.match((long as { detail: string }).detail, /limit is 32768/);
+  handler = (_req, _body, res) => json(res, 422, { detail: [{ loc: ['body'], msg: 'media must be referenced once each', type: 'value_error' }] });
+  const bad = await evaluateDecision(model(), { state: 's', questions });
+  assert.equal(bad.status === 'unavailable' && bad.reason, 'unsupported-input');
+  assert.match((bad as { detail: string }).detail, /media must be referenced/);
+  handler = (_req, _body, res) => json(res, 404, { detail: "model 'clef' is not served; available: onejev" });
+  const gone = await evaluateDecision(model(), { state: 's', questions });
+  assert.match((gone as { detail: string }).detail, /is not served/);
+});
+
+test('the image form is never guessed: a known one survives a failed list, an unknown one sends no images', async () => {
+  let listing: 'flide' | 'down' | 'missing' = 'flide';
+  const srv = createServer((req, res) => {
+    let raw = '';
+    req.on('data', (d) => (raw += d)).on('end', () => {
+      if (req.url === '/v1/models') {
+        if (listing === 'down') { res.writeHead(503); res.end(); return; }
+        if (listing === 'missing') { res.writeHead(404); res.end(); return; }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ models: [{ name: 'm' }] }));
+        return;
+      }
+      lastBody = JSON.parse(raw);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ model: 'm', answers: { down: { type: 'noul', noul: 0.5 } }, usage: { input_tokens: 300, output_tokens: 1 } }));
+    });
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  try {
+    const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    const img = { base64: 'AAAA', width: 10, height: 10, mime: 'image/png' };
+    const one = { down: questions.down };
+    const known: DecisionModel = { name: 'k', baseUrl: base, model: 'known', capabilities: ['text', 'image'], timeoutMs: 5000 };
+    const t0 = Date.now();
+    assert.equal((await serverInfo(known, t0)).dialect, 'flide');
+    listing = 'down';
+    assert.equal((await serverInfo(known, t0 + 11 * 60_000)).dialect, 'flide', 'a failed list keeps what was learned');
+    const fresh: DecisionModel = { ...known, model: 'fresh' };
+    lastBody = {};
+    const refused = await evaluateDecision(fresh, { state: 's', questions: one, images: [img] });
+    assert.equal(refused.status === 'unavailable' && refused.reason, 'transport');
+    assert.deepEqual(lastBody, {}, 'nothing was sent');
+    const text = await evaluateDecision(fresh, { state: 's', questions: one });
+    assert.equal(text.status, 'ok', 'text needs no form');
+    listing = 'missing';
+    const noList: DecisionModel = { ...known, model: 'nolist' };
+    assert.equal((await serverInfo(noList)).dialect, 'systemone', 'a server without a list (404) reads the Clef form');
+  } finally {
+    srv.close();
+  }
 });

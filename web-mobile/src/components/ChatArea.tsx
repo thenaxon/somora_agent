@@ -5,6 +5,9 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { AskedQuestion } from '../../../web/src/lib/asked-question';
+
+const ASKED_REMARK_PLUGINS = [remarkGfm];
 import { ChatImage, chatImageUrl } from '../../../web/src/components/ChatImage';
 
 // Agents reference local files by bare absolute path (FileView convention
@@ -42,6 +45,9 @@ import { resolveAgentColor } from '../hooks/agentColors';
 import { originPresentation, type OriginPresentation } from '../../../web/src/lib/origin';
 
 interface Props {
+  /** The question of the open card, if any: its row in the conversation
+   *  waits until the card is answered. */
+  openQuestionText?: string | null;
   agent: string;
   messages: ChatMessage[];
   streaming: boolean;
@@ -96,6 +102,7 @@ export function ChatArea({
   busy = false,
   liveStartedAt,
   builder,
+  openQuestionText = null,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
@@ -191,6 +198,9 @@ export function ChatArea({
         )}
         {messages.map((m) => m.role === 'memory' ? (
           showMemory && m.memory ? <MemoryLine key={m.id} memory={m.memory} /> : null
+        ) : m.role === 'asked' ? (
+          // While its card is open, the card shows the question.
+          m.asked && m.asked.question !== openQuestionText ? <AskedQuestionRow key={m.id} asked={m.asked} /> : null
         ) : m.role === 'activity' ? (
           showTools && m.activity ? (
             <ActivityBlock
@@ -733,6 +743,33 @@ function MemoryLine({ memory }: { memory: NonNullable<ChatMessage['memory']> }) 
         {memory.fullText && <span className="memory-line-dim memory-line-toggle">{open ? 'hide' : 'show'}</span>}
       </button>
       {open && memory.fullText && <pre className="memory-line-text">{memory.fullText}</pre>}
+    </div>
+  );
+}
+
+/** A question the agent asked (ask_user), as it stays in the conversation
+ *  once its card is answered: question, details and options, read-only.
+ *  The answer is the person's message after it. */
+function AskedQuestionRow({ asked }: { asked: AskedQuestion }) {
+  return (
+    <div className="asked-question" data-testid="asked-question">
+      <div className="asked-question-head">{asked.header ?? 'Question'}</div>
+      <div className="question-card-text">{asked.question}</div>
+      {asked.details && (
+        <div className="question-card-details">
+          <ReactMarkdown remarkPlugins={ASKED_REMARK_PLUGINS}>{asked.details}</ReactMarkdown>
+        </div>
+      )}
+      {asked.options.length > 0 && (
+        <ul className="asked-question-options">
+          {asked.options.map((o) => (
+            <li key={o.label}>
+              <strong>{o.label}</strong>
+              {o.description && <span className="asked-question-desc"> · {o.description}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

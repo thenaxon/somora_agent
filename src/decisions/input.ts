@@ -55,7 +55,7 @@ export async function prepareDecisionImages(
     if (fitted.bytes.length > MAX_IMAGE_BYTES) return `images: ${label} is ${Math.round(fitted.bytes.length / 1024)} KB after scaling, more than 4 MB`;
     total += fitted.bytes.length;
     if (total > MAX_IMAGES_BYTES) return 'images: together more than 8 MB after scaling — send fewer';
-    out.push({ base64: fitted.bytes.toString('base64'), width: dims.width, height: dims.height });
+    out.push({ base64: fitted.bytes.toString('base64'), width: dims.width, height: dims.height, mime: fitted.mimeType });
   }
   return out;
 }

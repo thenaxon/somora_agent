@@ -4,8 +4,17 @@
 // returns typed answers with probabilities. The wire calls a yes/no
 // question `noul`; agents see `boolean` (a word every model knows), and
 // this module translates both ways. Checked against Clef (Cloudflare's
-// open decision model, self-hosted); Jev (TypeSafe, hosted) speaks the
-// same API by its public description but was not tested live.
+// open decision model, self-hosted) and OneJev on a Flide server; Jev
+// (TypeSafe, hosted) speaks the same API by its public description but
+// was not tested live.
+//
+// Text is the same on every server, images are not: Clef reads
+// `images: [base64]`, Flide (OneJev and the other models it serves)
+// reads `media: [{type, data: data-URL}]` with a `<image:N>` placeholder
+// for each in the state, and ignores an `images` field without a word —
+// the model then judged a picture it never saw (2026-11-14 report). Which
+// server it is shows in its GET /v1/models: Flide lists `models[].name`,
+// Clef `data[].id`.
 //
 // Kept free of tool concerns (paths, agents) so other callers — Sentinel
 // phase 2 — can use it as is.
@@ -26,7 +35,7 @@ export interface DecisionRequest {
   state: unknown;
   questions: Record<string, DecisionQuestion>;
   /** Base64 (no data: prefix), already scaled; PNG, JPEG or WebP. */
-  images?: { base64: string; width: number; height: number }[];
+  images?: { base64: string; width: number; height: number; mime?: string }[];
 }
 
 export type DecisionAnswer =
@@ -91,15 +100,29 @@ function headers(entry: DecisionModel): Record<string, string> {
 // ─── input limit ────────────────────────────────────────────────────
 
 const LIMIT_TTL_MS = 10 * 60_000;
-const limitCache = new Map<string, { value: number | null; at: number }>();
 
-/** `max_input_tokens` the server reports for the model, or null. Read at
- *  most every ten minutes: the operator of the server may change it. */
-export async function serverInputLimit(entry: DecisionModel, now = Date.now()): Promise<number | null> {
+/** How the server takes images: `images` (Clef) or `media` + placeholders
+ *  (Flide); `unknown` when GET /v1/models could not be read. */
+export type ServerDialect = 'systemone' | 'flide' | 'unknown';
+interface ServerInfo {
+  inputLimit: number | null;
+  dialect: ServerDialect;
+}
+const infoCache = new Map<string, { value: ServerInfo; at: number }>();
+
+/** What GET /v1/models says about the server: the model's
+ *  `max_input_tokens` and which image form it reads. Read at most every
+ *  ten minutes: the operator of the server may change it. A server that
+ *  answers without a list (404) reads the Clef form. When the list cannot
+ *  be read (no answer, 5xx, not JSON), what was learned before stays and
+ *  the next call asks again; with nothing learned before, the form is
+ *  `unknown` and a request with images is refused rather than sent in a
+ *  form the server may ignore. */
+export async function serverInfo(entry: DecisionModel, now = Date.now()): Promise<ServerInfo> {
   const key = `${root(entry.baseUrl)}|${entry.model}`;
-  const hit = limitCache.get(key);
+  const hit = infoCache.get(key);
   if (hit && now - hit.at < LIMIT_TTL_MS) return hit.value;
-  let value: number | null = null;
+  let value: ServerInfo | null = null;
   try {
     const r = await undiciFetch(`${root(entry.baseUrl)}/v1/models`, {
       headers: headers(entry),
@@ -107,21 +130,54 @@ export async function serverInputLimit(entry: DecisionModel, now = Date.now()): 
       signal: AbortSignal.timeout(5_000),
     });
     if (r.ok) {
-      const j = (await r.json()) as { data?: { id?: string; max_input_tokens?: unknown }[] };
+      const j = (await r.json()) as { data?: { id?: string; max_input_tokens?: unknown }[]; models?: unknown };
+      value = { inputLimit: null, dialect: !Array.isArray(j.data) && Array.isArray(j.models) ? 'flide' : 'systemone' };
       const models = j.data ?? [];
       const m = models.find((x) => x.id === entry.model) ?? (models.length === 1 ? models[0] : undefined);
-      if (typeof m?.max_input_tokens === 'number' && m.max_input_tokens > 0) value = m.max_input_tokens;
+      if (typeof m?.max_input_tokens === 'number' && m.max_input_tokens > 0) value.inputLimit = m.max_input_tokens;
+    } else if (r.status === 404) {
+      value = { inputLimit: null, dialect: 'systemone' };
     }
   } catch {
-    /* no limit from the server: the server's own 413 still guards */
+    /* not read: below */
   }
-  limitCache.set(key, { value, at: now });
+  if (!value) return hit?.value ?? { inputLimit: null, dialect: 'unknown' };
+  infoCache.set(key, { value, at: now });
   return value;
+}
+
+/** `max_input_tokens` the server reports for the model, or null. */
+export async function serverInputLimit(entry: DecisionModel, now = Date.now()): Promise<number | null> {
+  return (await serverInfo(entry, now)).inputLimit;
 }
 
 /** The server limit last read, without asking (for tool descriptions). */
 export function cachedServerInputLimit(entry: DecisionModel): number | null {
-  return limitCache.get(`${root(entry.baseUrl)}|${entry.model}`)?.value ?? null;
+  return infoCache.get(`${root(entry.baseUrl)}|${entry.model}`)?.value.inputLimit ?? null;
+}
+
+/** The images of a request in the server's form. Flide wants each one
+ *  named once, in order, by `<image:N>` in the state: an object state
+ *  gets an `images` list of them, a text state gets them appended, and
+ *  anything else — an object with an `images` key of its own too — is
+ *  wrapped as `{state, images}`, so nothing of the caller's is replaced. */
+export function imagePayload(
+  dialect: Exclude<ServerDialect, 'unknown'>,
+  state: unknown,
+  images: NonNullable<DecisionRequest['images']>,
+): { state: unknown; fields: Record<string, unknown> } {
+  if (images.length === 0) return { state, fields: {} };
+  if (dialect === 'systemone') return { state, fields: { images: images.map((i) => i.base64) } };
+  const refs = images.map((_, i) => `<image:${i + 1}>`);
+  let withRefs: unknown;
+  if (typeof state === 'string') withRefs = `${state}\n\nAttached: ${refs.join(' ')}`;
+  else if (state && typeof state === 'object' && !Array.isArray(state) && !('images' in state)) {
+    withRefs = { ...(state as Record<string, unknown>), images: refs };
+  } else withRefs = { state, images: refs };
+  return {
+    state: withRefs,
+    fields: { media: images.map((i) => ({ type: 'image', data: `data:${i.mime ?? 'image/png'};base64,${i.base64}` })) },
+  };
 }
 
 /** Ours when configured, the server's when not; the lower when both. */
@@ -204,11 +260,19 @@ function unavailable(reason: UnavailableReason, detail?: string): DecisionOutcom
 }
 
 /** The server's own error message, when it sends one as JSON
- *  (`{"error":{"message"}}`); never the raw body, which may echo input. */
-function serverMessage(body: string): string | undefined {
+ *  (`{"error":{"message"}}`, Flide: `{"detail": "…"}` or
+ *  `{"detail": [{"msg"}]}`); never the raw body, which may echo input. */
+export function serverMessage(body: string): string | undefined {
   try {
-    const m = (JSON.parse(body) as { error?: { message?: unknown } }).error?.message;
-    return typeof m === 'string' ? m : undefined;
+    const j = JSON.parse(body) as { error?: { message?: unknown }; detail?: unknown };
+    const m = j.error?.message;
+    if (typeof m === 'string') return m;
+    if (typeof j.detail === 'string') return j.detail;
+    if (Array.isArray(j.detail)) {
+      const msgs = j.detail.map((d) => (d && typeof d === 'object' ? (d as { msg?: unknown }).msg : undefined)).filter((x): x is string => typeof x === 'string');
+      if (msgs.length > 0) return msgs.join('; ');
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -235,18 +299,23 @@ export async function evaluateDecision(
 
   if ((req.images?.length ?? 0) > 0 && !entry.capabilities.includes('image')) return done(unavailable('images-unsupported'));
 
-  const serverLimit = await serverInputLimit(entry);
+  const info = await serverInfo(entry);
+  const serverLimit = info.inputLimit;
   const limit = effectiveInputLimit(entry.maxInputTokens, serverLimit);
   const estimate = estimateInputTokens(req);
   if (limit && estimate > limit) {
     return done(unavailable('too-long', `estimated ${estimate} tokens, limit is ${limit}; nothing was sent`), { estimate, limit });
   }
 
+  if ((req.images?.length ?? 0) > 0 && info.dialect === 'unknown') {
+    return done(unavailable('transport', `could not read ${root(entry.baseUrl)}/v1/models, so it is unknown which image form the server reads; nothing was sent`));
+  }
+  const wireImages = imagePayload(info.dialect === 'unknown' ? 'systemone' : info.dialect, req.state, req.images ?? []);
   const body = JSON.stringify({
     model: entry.model,
-    state: req.state,
+    state: wireImages.state,
     questions: toWireQuestions(req.questions),
-    ...(req.images && req.images.length > 0 ? { images: req.images.map((i) => i.base64) } : {}),
+    ...wireImages.fields,
   });
   const timeout = AbortSignal.timeout(entry.timeoutMs);
   const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
@@ -268,6 +337,8 @@ export async function evaluateDecision(
     if (status === 401 || status === 403) return done(unavailable('authentication'), { http: status });
     if (status === 429) return done(unavailable('rate-limited'), { http: status });
     if (status === 413) return done(unavailable('too-long', msg ?? `the server reported HTTP 413 (limit ${limit ?? 'unknown'})`), { http: status });
+    // Flide says an input over its limit with 422 and "… limit is N".
+    if (status === 422 && msg && /\blimit is \d+/.test(msg) && /tokens/.test(msg)) return done(unavailable('too-long', msg), { http: status });
     if (status === 400 || status === 422) return done(unavailable('unsupported-input', msg), { http: status });
     if (status === 502 || status === 503 || status === 504 || status === 529) return done(unavailable('not-ready', msg ?? `HTTP ${status}`), { http: status });
     return done(unavailable('transport', msg ?? `HTTP ${status}`), { http: status });

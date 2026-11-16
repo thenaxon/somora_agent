@@ -641,6 +641,7 @@ export function MobileApp() {
             showTools={showTools}
             showMemory={showMemory}
             busy={sessionBusy}
+            openQuestionText={question.question && question.question.source !== 'codex' ? question.question.question : null}
             {...(work?.active?.startedAt !== undefined ? { liveStartedAt: work.active.startedAt } : {})}
             builder={builderTurn}
             onRecall={(id) => {

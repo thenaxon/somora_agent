@@ -1813,3 +1813,38 @@ button { cursor: pointer; }
 .acc-failed { color: var(--danger); }
 .acc-open, .acc-not_run { color: var(--warn); }
 .activity-more { margin-top: 4px; color: var(--text-3); font-size: 11px; }
+
+/* A question the agent asked, kept in the conversation once its card is
+   answered (ChatArea AskedQuestionRow): the card's content, quiet and
+   read-only. */
+.asked-question {
+  margin: 6px 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  color: var(--text-0);
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.asked-question-head {
+  color: var(--text-2);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.asked-question-options {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-1);
+}
+.asked-question-desc { color: var(--text-2); }

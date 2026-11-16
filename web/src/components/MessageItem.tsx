@@ -47,6 +47,8 @@ import {
 } from 'lucide-react';
 import type { AssistantMedia, AttachmentDisplay, ChatMessage, ThinkingContent } from '../types/chat';
 import { AssistantMarkdown } from './AssistantMarkdown';
+import { AskedQuestionBlock } from './AskedQuestionBlock';
+import { askedQuestionFrom } from '../lib/asked-question';
 import { ToolCallBlock, ToolResultBlock } from './ToolBlocks';
 import { EngineMetaBlock } from './EngineMetaBlock';
 import { originPresentation, type OriginPresentation, type OriginRowKind } from '../lib/origin';
@@ -104,6 +106,9 @@ export const MessageItem = memo(function MessageItem({
   showThinking = true,
 }: Props) {
   if (msg.role === 'tool_call') {
+    // A question the agent asked: readable once its card is gone.
+    const asked = askedQuestionFrom(msg.toolCall);
+    if (asked) return <AskedQuestionBlock asked={asked} />;
     return <ToolCallBlock toolCall={msg.toolCall} />;
   }
   if (msg.role === 'error') {
