@@ -1,0 +1,18 @@
+{
+ "id": "codex",
+ "note": "somora's additions to herdr's codex rules. Recorded 2026-11-16 on Codex 0.169 (src/tmux/__fixtures__/codex/blocked-startup-daemon).",
+ "rules": [
+  {
+   "id": "somora_daemon_settings_dialog",
+   "state": "blocked",
+   "priority": 950,
+   "region": "bottom_non_empty_lines(20)",
+   "visible_blocker": true,
+   "contains": ["background server has incompatible feature settings"],
+   "any": [
+    { "contains": ["run without daemon this time"] },
+    { "contains": ["restart with these settings"] }
+   ]
+  }
+ ]
+}

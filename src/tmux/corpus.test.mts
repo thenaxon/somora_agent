@@ -1,9 +1,8 @@
 // The recorded coding-agent screens (src/tmux/__fixtures__, README there)
-// against the tmux state detector. Etappe 0 of the herdr-style rework:
-// the corpus is complete and well formed, and today's detector keeps what
-// it gets right (working / idle of Claude Code, Codex and OpenCode). Its
-// known gaps — no `blocked` state, no Pi — are listed exactly, so the
-// rework has to shrink this list, never grow it.
+// against the tmux state detectors. The corpus is complete and well
+// formed; the herdr-rule detector (detection/) reads every screen right;
+// the older marker detector (tui-markers.ts) keeps what it got right
+// while it is still in use, with its known gaps listed exactly.
 //
 // Table of every case: SOMORA_CORPUS_TABLE=1 node scripts/run-tests.mjs src/tmux/corpus.test.mts
 import { test } from 'node:test';
@@ -11,6 +10,8 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { detectTuiState } from './tui-markers.ts';
+import { detectAgentState } from './detection/manifests.ts';
+import { detectionScreen } from './detection/engine.ts';
 import type { TmuxSessionKind } from './origin-store.ts';
 
 const root = new URL('./__fixtures__/', import.meta.url).pathname;
@@ -74,4 +75,25 @@ test("today's detector: working and idle of Claude Code, Codex and OpenCode stay
     'pi/working-tool',
     'pi/working-with-queued',
   ]);
+});
+
+test('the herdr-rule detector reads every recorded screen right', () => {
+  const wrong: string[] = [];
+  for (const c of cases) {
+    const d = detectAgentState(c.agent, { screen: detectionScreen(c.text, c.height), title: c.title });
+    if (process.env.SOMORA_CORPUS_TABLE) console.log(`${d?.state === c.expected ? 'ok  ' : 'MISS'} ${`${c.agent}/${c.case}`.padEnd(34)} expected ${c.expected.padEnd(8)} got ${String(d?.state).padEnd(8)} ${d?.rule?.id ?? d?.fallback ?? ''}`);
+    if (d?.state !== c.expected) wrong.push(`${c.agent}/${c.case}: expected ${c.expected}, got ${d?.state} (${d?.rule?.id ?? d?.fallback})`);
+  }
+  assert.deepEqual(wrong, []);
+});
+
+test('Codex working in a narrow window: the title decides first, the screen agrees on its own', () => {
+  const c = cases.find((x) => x.agent === 'codex' && x.case === 'narrow-working')!;
+  const screen = detectionScreen(c.text, c.height);
+  const withTitle = detectAgentState('codex', { screen, title: c.title })!;
+  assert.equal(withTitle.state, 'working');
+  assert.equal(withTitle.rule?.id, 'osc_title_working');
+  const screenOnly = detectAgentState('codex', { screen, title: '' })!;
+  assert.equal(screenOnly.state, 'working');
+  assert.notEqual(screenOnly.rule?.region, 'osc_title');
 });

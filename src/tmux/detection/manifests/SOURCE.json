@@ -1,0 +1,119 @@
+{
+ "repository": "https://github.com/herdrdev/herdr",
+ "path": "distribution/agent-detection",
+ "commit": "ee5bfb5041bb3e4a49d591c72308aae3c81ecdde",
+ "date": "2026-10-29",
+ "license": "Apache-2.0",
+ "agents": [
+  {
+   "id": "amp",
+   "version": "2026.07.09.1",
+   "rules": 6
+  },
+  {
+   "id": "agy",
+   "version": "2026.10.05.1",
+   "rules": 6
+  },
+  {
+   "id": "claude",
+   "version": "2026.10.11.1",
+   "rules": 17
+  },
+  {
+   "id": "cline",
+   "version": "2026.09.11.1",
+   "rules": 6
+  },
+  {
+   "id": "codex",
+   "version": "2026.10.11.1",
+   "rules": 9
+  },
+  {
+   "id": "cursor",
+   "version": "2026.08.03.1",
+   "rules": 5
+  },
+  {
+   "id": "devin",
+   "version": "2026.06.15.1",
+   "rules": 7
+  },
+  {
+   "id": "droid",
+   "version": "2026.06.10.1",
+   "rules": 4
+  },
+  {
+   "id": "gemini",
+   "version": "2026.06.10.1",
+   "rules": 2
+  },
+  {
+   "id": "grok",
+   "version": "2026.10.05.1",
+   "rules": 13
+  },
+  {
+   "id": "hermes",
+   "version": "2026.07.24.1",
+   "rules": 9
+  },
+  {
+   "id": "kilo",
+   "version": "2026.06.10.1",
+   "rules": 2
+  },
+  {
+   "id": "kimi",
+   "version": "2026.06.10.1",
+   "rules": 6
+  },
+  {
+   "id": "kiro",
+   "version": "2026.09.19.1",
+   "rules": 8
+  },
+  {
+   "id": "letta",
+   "version": "2026.08.24.1",
+   "rules": 10
+  },
+  {
+   "id": "maki",
+   "version": "2026.07.09.2",
+   "rules": 5
+  },
+  {
+   "id": "muse",
+   "version": "2026.08.26.1",
+   "rules": 7
+  },
+  {
+   "id": "opencode",
+   "version": "2026.06.10.1",
+   "rules": 3
+  },
+  {
+   "id": "pi",
+   "version": "2026.10.01.1",
+   "rules": 2
+  },
+  {
+   "id": "qodercli",
+   "version": "2026.06.10.1",
+   "rules": 3
+  },
+  {
+   "id": "qwen",
+   "version": "2026.08.14.1",
+   "rules": 10
+  },
+  {
+   "id": "copilot",
+   "version": "2026.08.29.1",
+   "rules": 3
+  }
+ ]
+}

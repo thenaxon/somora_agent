@@ -1,0 +1,107 @@
+{
+ "id": "maki",
+ "version": "2026.07.09.2",
+ "min_engine_version": 1,
+ "updated_at": "2026-07-09T00:00:00Z",
+ "rules": [
+  {
+   "id": "permission_prompt",
+   "state": "blocked",
+   "priority": 980,
+   "region": "whole_recent",
+   "visible_blocker": true,
+   "contains": [
+    "permission required"
+   ],
+   "any": [
+    {
+     "contains": [
+      "y allow",
+      "n deny"
+     ]
+    },
+    {
+     "contains": [
+      "confirm allow"
+     ]
+    },
+    {
+     "contains": [
+      "confirm deny"
+     ]
+    },
+    {
+     "contains": [
+      "enter deny",
+      "esc cancel"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "plan_complete_form",
+   "state": "blocked",
+   "priority": 970,
+   "region": "whole_recent",
+   "visible_blocker": true,
+   "contains": [
+    "plan complete",
+    "enter confirm"
+   ],
+   "any": [
+    {
+     "contains": [
+      "space toggle parallel"
+     ]
+    },
+    {
+     "contains": [
+      "edit plan"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "status_bar_spinner_working",
+   "state": "working",
+   "priority": 900,
+   "region": "bottom_non_empty_lines(1)",
+   "visible_working": true,
+   "line_regex": [
+    "^( [\\x{2800}-\\x{28FF}]){1,2} \\[(BUILD|PLAN|BASH)\\]"
+   ]
+  },
+  {
+   "id": "status_bar_idle",
+   "state": "idle",
+   "priority": 850,
+   "region": "bottom_non_empty_lines(1)",
+   "visible_idle": true,
+   "line_regex": [
+    "^ \\[(BUILD|PLAN|BASH)\\]"
+   ]
+  },
+  {
+   "id": "prompt_box_idle",
+   "state": "idle",
+   "priority": 840,
+   "region": "bottom_non_empty_lines(3)",
+   "visible_idle": true,
+   "line_regex": [
+    "^❯ "
+   ],
+   "not": [
+    {
+     "contains": [
+      "queue another prompt"
+     ]
+    },
+    {
+     "line_regex": [
+      "^( [\\x{2800}-\\x{28FF}]){1,2} "
+     ]
+    }
+   ]
+  }
+ ]
+}
