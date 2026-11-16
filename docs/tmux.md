@@ -437,8 +437,10 @@ The `tmux` app in the web client lists the sessions on the somora
 machine and refreshes every 5 seconds. Each row shows the agent and
 chat session that created it. A session started outside somora is
 labelled "orphan". Open a row to attach in a terminal window and type
-into the same pane the agent uses. The window takes the size of the
-agent's session and does not change it.
+into the same pane the agent uses. For a session somora created, the
+window shows all of it, every column and row, and sets the font as large
+as the window allows; it never changes the session's size. A session
+started by hand follows the window instead.
 
 When the session ends, the window says so and checks every 3 seconds.
 A session started anew under the same name is attached again by itself.

@@ -12,6 +12,27 @@ import { config } from '../server-state.ts';
 import { upgradeWebSocket } from '@hono/node-server';
 import { homedir } from 'node:os';
 import { resolve as resolvePath } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileP = promisify(execFile);
+
+/** A session's window size plus its status line: the client size that
+ *  shows all of it. null when tmux cannot say. */
+async function fullViewSize(session: string): Promise<{ cols: number; rows: number } | null> {
+  try {
+    const { stdout } = await execFileP('tmux', ['display-message', '-p', '-t', `=${session}:`, '#{window_width} #{window_height} #{status}'], { timeout: 3_000 });
+    const [w, h, status] = stdout.trim().split(' ');
+    const cols = Number(w);
+    const rows = Number(h);
+    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols < 2 || rows < 2) return null;
+    // status: on, off, or the number of status lines (2 to 5).
+    const statusRows = status === 'off' ? 0 : status === 'on' ? 1 : Number(status) || 1;
+    return { cols, rows: rows + statusRows };
+  } catch {
+    return null;
+  }
+}
 
 export interface TerminalRoutesDeps {
   readonly TERMINAL_WS_DEAD_MS: typeof Server.TERMINAL_WS_DEAD_MS;
@@ -223,6 +244,9 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
             ws.close(1008, `tmux session '${session}' not found`);
             return;
           }
+          // A session somora created keeps its own size; the viewer shows
+          // all of it (scaled to fit) instead of a cut-out.
+          const fixedSize = getTmuxOrigin(session) ? await fullViewSize(session) : null;
           try {
             const pty = await import('node-pty');
             const term = pty.spawn(
@@ -247,7 +271,16 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
             // session started anew under the same name (new id) from the
             // same one taken over by another client.
             try {
-              ws.send(JSON.stringify({ type: 'attached', sessionId: found.sessionId ?? null, createdEpoch: found.createdEpoch }));
+              ws.send(
+                JSON.stringify({
+                  type: 'attached',
+                  sessionId: found.sessionId ?? null,
+                  createdEpoch: found.createdEpoch,
+                  // Show exactly this many columns and rows (the window plus
+                  // its status line); absent: follow the viewer's size.
+                  ...(fixedSize ? { fixedCols: fixedSize.cols, fixedRows: fixedSize.rows } : {}),
+                }),
+              );
             } catch {
               /* socket closed mid-write */
             }

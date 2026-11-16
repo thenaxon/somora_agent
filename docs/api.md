@@ -3056,7 +3056,7 @@ its size.
 | server to client | binary | Terminal output. |
 | client to server | binary | Keyboard input. |
 | client to server | text `{"type":"resize","cols":N,"rows":N}` | The terminal's size. Send it on open and when it changes; one sent before the server's terminal is up is applied when it starts. |
-| server to client | text `{"type":"attached","sessionId":"$N","createdEpoch":N}` | Attached; names the session (tmux's id and start second), so a client can tell a session started anew under the same name. |
+| server to client | text `{"type":"attached","sessionId":"$N","createdEpoch":N,"fixedCols":N,"fixedRows":N}` | Attached; names the session (tmux's id and start second), so a client can tell a session started anew under the same name. `fixedCols` and `fixedRows` come for a session somora created: show exactly that size, the window plus its status line. |
 | server to client | text `{"type":"ping"}` | Sent every 25 seconds. |
 
 Any message from the client counts as a sign of life. After 80 seconds

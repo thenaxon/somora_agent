@@ -39,6 +39,12 @@ interface Props {
 /** How often a closed terminal asks whether its session is back. */
 const BACK_CHECK_MS = 3_000;
 
+/** The terminal's font size, and the range used to fit a session of a
+ *  fixed size into its window. */
+const DEFAULT_FONT = 13;
+const MIN_FONT = 5;
+const MAX_FIXED_FONT = 16;
+
 type Status = 'connecting' | 'open' | 'reconnecting' | 'closed' | 'error';
 
 // Server pings every 25s; two missed pings + slack = stale. Checked
@@ -63,7 +69,7 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal', isBack, onAtta
 
     const term = new Terminal({
       fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace',
-      fontSize: 13,
+      fontSize: DEFAULT_FONT,
       lineHeight: 1.2,
       cursorBlink: true,
       theme: {
@@ -79,6 +85,44 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal', isBack, onAtta
     term.loadAddon(fit);
     term.open(el);
     fit.fit();
+
+    // A session with a size of its own (an agent's session somora
+    // created): show all of it — exactly its columns and rows, with the
+    // font made as large as the window allows — instead of a cut-out.
+    // null: the terminal follows the window (fit).
+    let fixed: { cols: number; rows: number } | null = null;
+
+    /** Font size at which `fixed` fills the box without spilling. */
+    function fitFont(): void {
+      if (!fixed) return;
+      const screen = el!.querySelector('.xterm-screen') as HTMLElement | null;
+      const box = el!.getBoundingClientRect();
+      const style = getComputedStyle(el!);
+      const w = box.width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const h = box.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+      if (!screen || w <= 0 || h <= 0) return;
+      const now = term.options.fontSize ?? DEFAULT_FONT;
+      const r = screen.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return;
+      // Cell size scales with the font: one measurement gives the factor.
+      const next = Math.floor(Math.min((now * w) / r.width, (now * h) / r.height) * 4) / 4;
+      const size = Math.max(MIN_FONT, Math.min(MAX_FIXED_FONT, next));
+      if (Math.abs(size - now) >= 0.25) term.options.fontSize = size;
+    }
+
+    function layout(): void {
+      if (fixed) {
+        if (term.cols !== fixed.cols || term.rows !== fixed.rows) term.resize(fixed.cols, fixed.rows);
+        fitFont();
+        // Rounding of the cell size: measure once more after the paint.
+        requestAnimationFrame(() => {
+          if (!disposed) fitFont();
+        });
+      } else {
+        if ((term.options.fontSize ?? DEFAULT_FONT) !== DEFAULT_FONT) term.options.fontSize = DEFAULT_FONT;
+        fit.fit();
+      }
+    }
 
     const wsOrigin = window.location.origin.replace(/^http/, 'ws');
     const url = `${wsOrigin}${attachPath}`;
@@ -194,6 +238,10 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal', isBack, onAtta
             const msg = JSON.parse(data) as { type?: string } & Record<string, unknown>;
             if (msg.type === 'attached') {
               onAttachedRef.current?.(msg);
+              const cols = Number(msg.fixedCols);
+              const rows = Number(msg.fixedRows);
+              fixed = cols >= 2 && rows >= 2 ? { cols, rows } : null;
+              layout();
               // The server's terminal exists now: send the size again in
               // case the first one beat it (older servers dropped it).
               sendResize();
@@ -272,7 +320,7 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal', isBack, onAtta
 
     const ro = new ResizeObserver(() => {
       try {
-        fit.fit();
+        layout();
         sendResize();
       } catch {
         /* dimensions briefly invalid during animation */
