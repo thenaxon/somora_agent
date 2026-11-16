@@ -6,11 +6,14 @@
 // clicks + taskbar focus + per-window drag/resize all coordinate.
 
 import { AGENT_RENAMED_EVENT } from './RenameAgent';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Bell, BookOpen, Globe, ImagePlus, MessagesSquare, Mic, ScrollText, Square, Terminal, Users, Wrench } from 'lucide-react';
 import { DesktopIcons, type DesktopIcon } from './DesktopIcons';
 import { AgentTile } from './AgentTile';
 import { AgentContextMenu } from './AgentContextMenu';
+import { StartMenu, type StartApp } from './StartMenu';
+import { signOut } from './KeyGate';
+import { readHidden, toggled, writeHidden } from '../lib/start-menu';
 import { AppTile } from './AppTile';
 import { Taskbar } from './Taskbar';
 import { Window } from './Window';
@@ -120,6 +123,22 @@ export function Desktop() {
   // sessions / New session… / All sessions…). One menu at a time; the
   // menu closes itself on outside press, Esc, resize.
   const [agentMenu, setAgentMenu] = useState<{ agent: AgentInfo; x: number; y: number } | null>(null);
+
+  // Start menu (koala in the taskbar) and the tiles taken off the
+  // desktop — per browser, like the tile positions.
+  const [startOpen, setStartOpen] = useState(false);
+  const [startAnchor, setStartAnchor] = useState<HTMLElement | null>(null);
+  const [hiddenTiles, setHiddenTiles] = useState<Set<string>>(readHidden);
+  function toggleDesktop(id: string) {
+    setHiddenTiles((prev) => {
+      const next = toggled(prev, id);
+      writeHidden(next);
+      return next;
+    });
+  }
+  const closeStart = useCallback(() => setStartOpen(false), []);
+  const closeAgentMenu = useCallback(() => setAgentMenu(null), []);
+
   function handleAgentContextMenu(agent: AgentInfo, e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
@@ -157,6 +176,68 @@ export function Desktop() {
   // DEFAULT placement (fills the left column top-down, i.e. the old
   // dock); each icon keeps whatever cell the user drags it to, and
   // agents/apps are freely interleavable (see DesktopIcons.tsx).
+  // Every app once, for the desktop tiles and the start menu alike — an
+  // app added here shows up in both. Optional apps only when enabled.
+  const lucidTitle =
+    `${lucidPending} lucid finding${lucidPending === 1 ? '' : 's'} awaiting review` +
+    (lucidOldestPendingAt ? ` (oldest run from ${lucidOldestPendingAt.slice(0, 10)})` : '') +
+    ' — review with any agent via dream_review';
+  const apps: Array<StartApp & { tileGlyph: React.ReactNode }> = [
+    { id: 'app:tmux', label: 'tmux', glyph: <Terminal size={15} />, tileGlyph: <Terminal size={28} />, active: activeApps.has('tmux'), open: () => wm.openTmuxList() },
+    // Non-singleton: every click spawns another independent terminal
+    // window, so it never shows an active state.
+    { id: 'app:terminal', label: 'terminal', glyph: <Square size={14} strokeWidth={1.5} />, tileGlyph: <Square size={26} strokeWidth={1.5} />, active: false, open: () => wm.openShellTerm() },
+    { id: 'app:sessions', label: 'sessions', glyph: <MessagesSquare size={14} />, tileGlyph: <MessagesSquare size={26} />, active: activeApps.has('sessions'), open: () => wm.openSessionsList() },
+    { id: 'app:sentinel', label: 'sentinel', glyph: <Bell size={14} />, tileGlyph: <Bell size={26} />, active: activeApps.has('sentinel'), open: () => wm.openSentinelList() },
+    { id: 'app:tools', label: 'abilities', glyph: <Wrench size={14} />, tileGlyph: <Wrench size={26} />, active: activeApps.has('tools'), open: () => wm.openTools() },
+    { id: 'app:team', label: 'team', glyph: <Users size={14} />, tileGlyph: <Users size={26} />, active: activeApps.has('team'), open: () => wm.openTeam() },
+    { id: 'app:logs', label: 'log', glyph: <ScrollText size={14} />, tileGlyph: <ScrollText size={26} />, active: activeApps.has('logs'), open: () => wm.openLogs() },
+    // Realtime voice — only when a provider is configured AND at least
+    // one agent may be called.
+    ...(voice.enabled
+      ? [{ id: 'app:voice', label: 'voice', glyph: <Mic size={14} />, tileGlyph: <Mic size={26} />, active: activeApps.has('voice'), open: () => wm.openVoice() }]
+      : []),
+    // Shared browser (docs/browser.md) — only when browser.enabled.
+    ...(browserEnabled
+      ? [
+          {
+            id: 'app:browser',
+            label: 'browser',
+            glyph: <Globe size={14} color={browserWaiting.length ? 'var(--warn, #d29922)' : undefined} />,
+            tileGlyph: <Globe size={26} color={browserWaiting.length ? 'var(--warn, #d29922)' : undefined} />,
+            active: activeApps.has('browser'),
+            open: () => wm.openBrowserList(),
+          },
+        ]
+      : []),
+    // Only when imageGen/videoGen is configured — probe-driven, like wiki.
+    ...(media.any
+      ? [{ id: 'app:images', label: 'media', glyph: <ImagePlus size={14} />, tileGlyph: <ImagePlus size={26} />, active: activeApps.has('images'), open: () => wm.openImages() }]
+      : []),
+    // Lucid is platform-wide wiki cleanup, so its pending-review badge
+    // lives on the wiki and not on any single agent (2026-07-29
+    // feedback: pending lucid runs were invisible in the UI).
+    ...(wikiEnabled
+      ? [
+          {
+            id: 'app:wiki',
+            label: 'wiki',
+            glyph: <BookOpen size={14} />,
+            tileGlyph: <BookOpen size={26} />,
+            active: activeApps.has('wiki'),
+            open: () => wm.openWiki(),
+            ...(lucidPending > 0 ? { badge: lucidPending } : {}),
+          },
+        ]
+      : []),
+  ];
+
+  // One flat icon list — agents first, then apps. That is only the
+  // DEFAULT placement (fills the left column top-down, i.e. the old
+  // dock); each icon keeps whatever cell the user drags it to, and
+  // agents/apps are freely interleavable (see DesktopIcons.tsx). Tiles
+  // taken off the desktop (start menu, agent menu) are left out; their
+  // cell is kept for when they come back.
   const desktopIcons: DesktopIcon[] = [
     ...agents.map((agent) => ({
       id: `agent:${agent.name}`,
@@ -174,173 +255,27 @@ export function Desktop() {
         />
       ),
     })),
-    {
-      id: 'app:tmux',
+    ...apps.map((app) => ({
+      id: app.id,
       node: (
         <AppTile
-          label="tmux"
-          icon={<Terminal size={28} />}
-          active={activeApps.has('tmux')}
-          onClick={() => wm.openTmuxList()}
+          label={app.label}
+          icon={app.tileGlyph}
+          active={app.active}
+          onClick={app.open}
+          {...(app.badge
+            ? {
+                badge: (
+                  <span className="rem-badge lucid" title={lucidTitle}>
+                    {app.badge > 9 ? '9+' : app.badge}
+                  </span>
+                ),
+              }
+            : {})}
         />
       ),
-    },
-    {
-      id: 'app:terminal',
-      node: (
-        <AppTile
-          label="terminal"
-          icon={<Square size={26} strokeWidth={1.5} />}
-          // Non-singleton: every click spawns another independent
-          // terminal window, so the tile never shows an active state.
-          active={false}
-          onClick={() => wm.openShellTerm()}
-        />
-      ),
-    },
-    {
-      id: 'app:sessions',
-      node: (
-        <AppTile
-          label="sessions"
-          icon={<MessagesSquare size={26} />}
-          active={activeApps.has('sessions')}
-          onClick={() => wm.openSessionsList()}
-        />
-      ),
-    },
-    {
-      id: 'app:sentinel',
-      node: (
-        <AppTile
-          label="sentinel"
-          icon={<Bell size={26} />}
-          active={activeApps.has('sentinel')}
-          onClick={() => wm.openSentinelList()}
-        />
-      ),
-    },
-    {
-      id: 'app:tools',
-      node: (
-        <AppTile
-          label="abilities"
-          icon={<Wrench size={26} />}
-          active={activeApps.has('tools')}
-          onClick={() => wm.openTools()}
-        />
-      ),
-    },
-    {
-      id: 'app:team',
-      node: (
-        <AppTile
-          label="team"
-          icon={<Users size={26} />}
-          active={activeApps.has('team')}
-          onClick={() => wm.openTeam()}
-        />
-      ),
-    },
-    {
-      id: 'app:logs',
-      node: (
-        <AppTile
-          label="log"
-          icon={<ScrollText size={26} />}
-          active={activeApps.has('logs')}
-          onClick={() => wm.openLogs()}
-        />
-      ),
-    },
-    // Realtime voice — hidden unless a provider is configured AND at
-    // least one agent may be called.
-    ...(voice.enabled
-      ? [
-          {
-            id: 'app:voice',
-            node: (
-              <AppTile
-                label="voice"
-                icon={<Mic size={26} />}
-                active={activeApps.has('voice')}
-                onClick={() => wm.openVoice()}
-              />
-            ),
-          },
-        ]
-      : []),
-    // Shared browser (docs/browser.md) — hidden unless browser.enabled.
-    ...(browserEnabled
-      ? [
-          {
-            id: 'app:browser',
-            node: (
-              <AppTile
-                label="browser"
-                icon={<Globe size={26} color={browserWaiting.length ? 'var(--warn, #d29922)' : undefined} />}
-                active={activeApps.has('browser')}
-                onClick={() => wm.openBrowserList()}
-              />
-            ),
-          },
-        ]
-      : []),
-    // Hidden unless imageGen is configured — same probe-driven gate as
-    // the wiki tile below.
-    ...(media.any
-      ? [
-          {
-            id: 'app:images',
-            node: (
-              <AppTile
-                label="media"
-                icon={<ImagePlus size={26} />}
-                active={activeApps.has('images')}
-                onClick={() => wm.openImages()}
-              />
-            ),
-          },
-        ]
-      : []),
-    // Lucid is platform-wide wiki cleanup, so its pending-review badge
-    // lives on the wiki tile and not on any single agent (2026-07-29
-    // feedback: pending lucid runs were invisible in the UI).
-    ...(wikiEnabled
-      ? [
-          {
-            id: 'app:wiki',
-            node: (
-              <AppTile
-                label="wiki"
-                icon={<BookOpen size={26} />}
-                active={activeApps.has('wiki')}
-                onClick={() => wm.openWiki()}
-                {...(lucidPending > 0
-                  ? {
-                      badge: (
-                        <span
-                          className="rem-badge lucid"
-                          title={
-                            `${lucidPending} lucid finding${lucidPending === 1 ? '' : 's'} ` +
-                            `awaiting review${
-                              lucidOldestPendingAt
-                                ? ` (oldest run from ${lucidOldestPendingAt.slice(0, 10)})`
-                                : ''
-                            } — review with any agent via dream_review`
-                          }
-                        >
-                          {lucidPending > 9 ? '9+' : lucidPending}
-                        </span>
-                      ),
-                    }
-                  : {})}
-              />
-            ),
-          },
-        ]
-      : []),
-  ];
+    })),
+  ].filter((icon) => !hiddenTiles.has(icon.id));
 
   return (
     <ActivityProvider value={activity}>
@@ -700,10 +635,39 @@ export function Desktop() {
           agent={agentMenu.agent}
           x={agentMenu.x}
           y={agentMenu.y}
-          onClose={() => setAgentMenu(null)}
-          onOpenSession={openAgentSession}
-          onOpenSessionsTool={() => wm.openSessionsList()}
-          onOpenConfig={(a) => wm.openAgentConfig(a.name)}
+          onClose={closeAgentMenu}
+          onOpenSession={(a, sessionId, label) => {
+            openAgentSession(a, sessionId, label);
+            setStartOpen(false);
+          }}
+          onOpenSessionsTool={() => {
+            wm.openSessionsList();
+            setStartOpen(false);
+          }}
+          onOpenConfig={(a) => {
+            wm.openAgentConfig(a.name);
+            setStartOpen(false);
+          }}
+          onDesktop={!hiddenTiles.has(`agent:${agentMenu.agent.name}`)}
+          onToggleDesktop={() => toggleDesktop(`agent:${agentMenu.agent.name}`)}
+        />
+      )}
+      {startOpen && (
+        <StartMenu
+          agents={agents.map((agent) => ({
+            agent,
+            working: streamingAgents.has(agent.name),
+            unread: activity.unreadAgents.has(agent.name),
+          }))}
+          apps={apps}
+          hidden={hiddenTiles}
+          onToggleDesktop={toggleDesktop}
+          onOpenAgent={handleAgentClick}
+          onAgentMenu={(agent, x, y) => setAgentMenu({ agent, x, y })}
+          onOpenSettings={wm.openSettings}
+          onSignOut={() => void signOut()}
+          onClose={closeStart}
+          anchor={startAnchor}
         />
       )}
       <Taskbar
@@ -716,6 +680,13 @@ export function Desktop() {
         onSaveLayout={wm.saveLayout}
         onRestoreLayout={wm.restoreLayout}
         onOpenSettings={wm.openSettings}
+        startOpen={startOpen}
+        onToggleStart={(anchor) => {
+          setStartAnchor(anchor);
+          setStartOpen((o) => !o);
+        }}
+        desktopShown={wm.desktopShown}
+        onShowDesktop={wm.toggleShowDesktop}
       />
     </div>
     </FileViewProvider>

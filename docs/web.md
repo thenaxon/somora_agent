@@ -101,6 +101,7 @@ restart. Dream states refresh every 30 seconds.
 | **New session…** | Type a name: letters, digits, `-` and `_`. The field says what is wrong while you type. Enter creates and opens it, Esc cancels. |
 | **All sessions…** | Opens the Sessions window. |
 | **Configure…** | Opens the Agent window. |
+| **On the desktop** | Puts the agent's icon on the desktop or takes it off. The agent stays in the start menu. |
 
 ### App icons
 
@@ -121,6 +122,24 @@ restart. Dream states refresh every 30 seconds.
 The `wiki` icon carries a violet badge when Lucid findings wait for
 review. Its tooltip names the oldest waiting run. Review them with any
 agent through `dream_review`.
+
+### The start menu
+
+Click the koala at the left of the taskbar. The start menu opens above
+every window, so agents and apps stay one click away when windows cover
+the desktop.
+
+| Part | What it does |
+|---|---|
+| Search | Has the cursor when the menu opens. Type part of a name or role; Enter opens the first match, the arrow keys move between matches. |
+| Agents | Click to open the `main` chat. A dot shows a running turn (accent) or unread replies (amber). The `›` button or a right-click opens the agent menu beside the start menu. |
+| Apps | Click to open. A grey dot marks an open window. The pin puts the icon on the desktop or takes it off. |
+| Settings…, Sign out | The settings window, and the same sign-out as in the gear menu. |
+
+Esc or a click outside closes it; with the agent menu open, Esc closes
+that first. Which icons are on the desktop is remembered per browser,
+like their places. An icon put back returns to its old cell when that
+cell is still free.
 
 ### Windows
 
@@ -156,7 +175,7 @@ The bar at the bottom always stays on top. From left to right:
 
 | Part | What it does |
 |---|---|
-| Koala, name and version | The somora mascot and the server version. |
+| Koala, name and version | Opens the start menu. Shows the server version. |
 | Inbox | Updates, messages from somora.ai and things that need you, with a count of what is new. See "Inbox". |
 | Gear | Server menu: reload config, restart, sign out. |
 | Screen | **Arrange windows**, **Save layout** and **Restore layout** (a snapshot of the layout, brought back later), **Full screen** where the browser can do it, and the theme: **somora** or one of your own, and **Dark**, **Light** or **Auto**. |
@@ -164,6 +183,7 @@ The bar at the bottom always stays on top. From left to right:
 | Window buttons | One per open window, in the agent's colour. Click to focus or bring back a minimized window. |
 | `cpu` and `mem` | Load and memory of the host, refreshed every 5 seconds. |
 | Clock | Time and date. |
+| Strip at the right end | **Show desktop**: minimizes every open window. Click it again, and exactly those windows come back. It stays lit while the desktop is shown. |
 
 **Arrange windows** fills the whole desktop. Counts that fill a grid (1, 2, 4,
 6) become an even grid. With 3, 5 or 7 windows the leftmost one takes

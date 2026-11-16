@@ -2,7 +2,7 @@
 // Mirrors the click-dummy desktop.jsx state model in TS-strict form,
 // with a few quality-of-life additions (auto-arrange, save/restore).
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PersistedLayout, PinNote, WindowState } from '../types/window';
 import {
   ARRANGE_PAD,
@@ -138,6 +138,30 @@ export function useWindowManager() {
   const minimize = useCallback((id: string) => {
     setWindows((ws) => ws.map((w) => (w.id === id ? { ...w, minimized: true } : w)));
   }, []);
+
+  // "Show desktop": the first press minimizes every open window and
+  // remembers which; the second brings exactly those back, the one on
+  // top focused. A window brought back by hand in between starts over:
+  // the next press hides whatever is open then.
+  const peekRef = useRef<string[] | null>(null);
+  const toggleShowDesktop = useCallback(() => {
+    const open = windows.filter((w) => !w.minimized);
+    if (open.length > 0) {
+      peekRef.current = open.map((w) => w.id);
+      setWindows((ws) => ws.map((w) => (w.minimized ? w : { ...w, minimized: true })));
+      setFocusedId(null);
+      return;
+    }
+    const back = new Set(peekRef.current ?? []);
+    peekRef.current = null;
+    const restored = windows.filter((w) => back.has(w.id));
+    if (restored.length === 0) return;
+    setWindows((ws) => ws.map((w) => (back.has(w.id) ? { ...w, minimized: false } : w)));
+    const top = restored.reduce((a, b) => (b.z > a.z ? b : a));
+    setFocusedId(top.id);
+  }, [windows]);
+  /** True while the desktop is shown and a second press brings windows back. */
+  const desktopShown = peekRef.current !== null && windows.every((w) => w.minimized);
 
   const toggleMaximize = useCallback((id: string) => {
     setWindows((ws) => ws.map((w) => (w.id === id ? { ...w, maximized: !w.maximized } : w)));
@@ -773,6 +797,8 @@ export function useWindowManager() {
     focus,
     close,
     minimize,
+    toggleShowDesktop,
+    desktopShown,
     toggleMaximize,
     move,
     resize,

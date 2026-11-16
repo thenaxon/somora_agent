@@ -374,10 +374,192 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   align-items: center;
   gap: 8px;
   padding: 0 10px 0 4px;
+  border: 0;
   border-right: 1px solid var(--line);
   height: 36px;
   margin-right: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px 0 0 6px;
 }
+.taskbar-logo:hover,
+.taskbar-logo.open { background: rgba(var(--tint-rgb), 0.06); }
+.taskbar-logo:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+/* "Show desktop" — a thin strip at the right end, as on Windows. */
+.taskbar-show-desktop {
+  align-self: stretch;
+  width: 8px;
+  margin: 8px -8px 8px 8px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
+}
+.taskbar-show-desktop:hover { background: rgba(var(--tint-rgb), 0.1); }
+.taskbar-show-desktop.shown { background: rgba(var(--accent-rgb), 0.25); }
+
+/* ===== Start menu (koala) ===== */
+.start-menu {
+  position: fixed;
+  left: 8px;
+  bottom: 62px;
+  z-index: 9000;
+  width: 540px;
+  max-width: calc(100vw - 16px);
+  max-height: min(600px, calc(100vh - 80px));
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  background: var(--bg-1, #1c1d22);
+  border: 1px solid rgba(var(--tint-rgb), 0.1);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  color: var(--text-0);
+  font-size: 12px;
+  overflow: hidden;
+}
+.start-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 10px 6px;
+  padding: 0 10px;
+  height: 32px;
+  border-radius: 7px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-3);
+}
+.start-search:focus-within { border-color: var(--accent-dim); }
+.start-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-0);
+  font: inherit;
+  font-size: 13px;
+}
+.start-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;
+  flex: 1;
+}
+.start-column {
+  overflow-y: auto;
+  padding: 4px 6px 8px;
+  min-height: 0;
+}
+.start-column + .start-column { border-left: 1px solid var(--line); }
+.start-title {
+  padding: 6px 8px 4px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.start-empty { padding: 6px 8px; color: var(--text-3); }
+.start-row {
+  display: flex;
+  align-items: stretch;
+  border-radius: 6px;
+}
+.start-row:hover,
+.start-row.selected { background: rgba(var(--tint-rgb), 0.06); }
+.start-row.selected { box-shadow: inset 2px 0 0 var(--accent); }
+.start-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.start-row-icon {
+  width: 18px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 14px;
+  color: var(--text-1);
+  flex: none;
+}
+.start-row-name { white-space: nowrap; }
+.start-row-extra {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.start-row-off { color: var(--text-3); display: inline-flex; }
+.start-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.start-dot.working { background: var(--accent); box-shadow: 0 0 6px var(--accent-glow); }
+.start-dot.unread { background: var(--warn); }
+.start-dot.open { background: var(--text-3); margin-left: auto; }
+.start-badge {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--warn);
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.start-row-side {
+  flex: none;
+  width: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0 6px 6px 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.start-row-side:hover { color: var(--text-0); background: rgba(var(--tint-rgb), 0.08); }
+.start-pin.on { color: var(--accent); }
+.start-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--line);
+  background: rgba(var(--tint-rgb), 0.02);
+}
+.start-footer-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  cursor: pointer;
+}
+.start-footer-item:hover { background: rgba(var(--tint-rgb), 0.06); color: var(--text-0); }
 .taskbar-logo-mark {
   /* the koala of somora.ai on its own — no tile behind it */
   width: 34px;

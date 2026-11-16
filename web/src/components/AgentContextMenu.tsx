@@ -13,7 +13,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, Clock, List, MessageSquare, Plus, Settings } from 'lucide-react';
+import { AlertTriangle, Clock, List, MessageSquare, Pin, PinOff, Plus, Settings } from 'lucide-react';
 import { api, type AgentInfo, type SessionSummary } from '../lib/api';
 import { suggestSlug, validateSessionSlug } from '../lib/session-slug';
 
@@ -33,9 +33,13 @@ interface Props {
   onOpenSessionsTool: () => void;
   /** Open the Agent window (persona files, prompt budget). */
   onOpenConfig: (agent: AgentInfo) => void;
+  /** Whether the agent's tile is on the desktop; with onToggleDesktop
+   *  the menu shows the switch. */
+  onDesktop?: boolean;
+  onToggleDesktop?: () => void;
 }
 
-export function AgentContextMenu({ agent, x, y, onClose, onOpenSession, onOpenSessionsTool, onOpenConfig }: Props) {
+export function AgentContextMenu({ agent, x, y, onClose, onOpenSession, onOpenSessionsTool, onOpenConfig, onDesktop, onToggleDesktop }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [pos, setPos] = useState({ left: x, top: y });
@@ -79,7 +83,7 @@ export function AgentContextMenu({ agent, x, y, onClose, onOpenSession, onOpenSe
     const top = Math.max(4, Math.min(y, window.innerHeight - rect.height - 4));
     if (left !== pos.left || top !== pos.top) setPos({ left, top });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [x, y, naming, recent, submitError]);
+  }, [x, y, naming, recent, submitError, onDesktop]);
 
   // Close on outside press, Esc, another context menu, resize.
   useEffect(() => {
@@ -291,6 +295,15 @@ export function AgentContextMenu({ agent, x, y, onClose, onOpenSession, onOpenSe
           onClose();
         }}
       />
+      {onToggleDesktop && (
+        <MenuItem
+          icon={onDesktop ? <Pin size={13} /> : <PinOff size={13} />}
+          label="On the desktop"
+          hint={onDesktop ? 'yes' : 'no'}
+          testId="agent-menu-desktop"
+          onClick={onToggleDesktop}
+        />
+      )}
     </div>
   );
   return createPortal(node, document.body);

@@ -26,6 +26,12 @@ interface Props {
   onRestoreLayout: () => void;
   /** The settings window (config.yaml as a form). */
   onOpenSettings?: () => void;
+  /** The koala opens the start menu; `anchor` is the koala button. */
+  startOpen?: boolean;
+  onToggleStart?: (anchor: HTMLElement) => void;
+  /** "Show desktop" at the right end: minimize all, press again to bring them back. */
+  desktopShown?: boolean;
+  onShowDesktop?: () => void;
 }
 
 export function Taskbar({
@@ -38,6 +44,10 @@ export function Taskbar({
   onSaveLayout,
   onRestoreLayout,
   onOpenSettings,
+  startOpen = false,
+  onToggleStart,
+  desktopShown = false,
+  onShowDesktop,
 }: Props) {
   const browserState = useBrowsers();
   const waiting = browserState.browsers.filter((b) => b.handoff);
@@ -302,7 +312,15 @@ export function Taskbar({
 
   return (
     <div className="taskbar">
-      <div className="taskbar-logo">
+      <button
+        type="button"
+        className={`taskbar-logo${startOpen ? ' open' : ''}`}
+        aria-haspopup="dialog"
+        aria-expanded={startOpen}
+        title="Agents and apps"
+        data-testid="start-button"
+        onClick={(e) => onToggleStart?.(e.currentTarget)}
+      >
         <div className="taskbar-logo-mark">
           <Koala size={20} />
         </div>
@@ -310,7 +328,7 @@ export function Taskbar({
           <div className="taskbar-logo-text">somora</div>
           <div className="taskbar-logo-sub">{version ? `v${version}` : '—'}</div>
         </div>
-      </div>
+      </button>
 
 
       <div className="taskbar-tools">
@@ -584,6 +602,17 @@ export function Taskbar({
         <span>{time}</span>
         <small>{date}</small>
       </div>
+      {onShowDesktop && (
+        <button
+          type="button"
+          className={`taskbar-show-desktop${desktopShown ? ' shown' : ''}`}
+          aria-pressed={desktopShown}
+          title={desktopShown ? 'Bring the windows back' : 'Show desktop'}
+          aria-label="Show desktop"
+          data-testid="show-desktop"
+          onClick={onShowDesktop}
+        />
+      )}
     </div>
   );
 }
