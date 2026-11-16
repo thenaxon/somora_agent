@@ -93,7 +93,7 @@ first and the voice follows a moment later.
 
 ## The auto-play toggle
 
-The web chat header shows a `🔊`/`🔇` toggle when `tts.enabled` is
+The web chat header shows the **voice** toggle when `tts.enabled` is
 `true` and `allowUserOverride` is `true` for that client. On the phone it
 is the **Read replies aloud** switch in the header's settings sheet.
 
@@ -376,7 +376,7 @@ is the case on plain HTTP. Use HTTPS.
 answer or returned an error. Look for `stt.upstream_unreachable` or
 `stt.upstream_error` in the server log.
 
-**No 🔊 toggle in the header.** `GET /tts/config` returns
+**No voice toggle in the header.** `GET /tts/config` returns
 `enabled: false`, or `allowUserOverride` is `false` for this client.
 
 **No Play button on a dictated turn with auto-play on.** The reply was

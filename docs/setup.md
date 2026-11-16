@@ -439,7 +439,8 @@ Everything else, such as `providers`, `compaction`, `agentLoop` or
 ### A broken config file
 
 somora also picks up an edited `config.yaml` by itself on the next
-turn. When the edited file has a mistake, somora keeps running on the
+turn. A turn that is already running sees it too: its tools read the
+new version from their next call on. When the edited file has a mistake, somora keeps running on the
 last valid version. No turn fails because of it. Your edit is simply
 not in effect until the file is fixed.
 

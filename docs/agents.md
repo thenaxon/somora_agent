@@ -230,7 +230,7 @@ be deleted. In the TUI:
 | `/session <slug-or-id>` | Switches to a session. |
 | `/new <slug>` | Creates a session and switches to it. |
 | `/main` | Back to the main session. |
-| `/reset YES` | Archives the current session and starts it fresh. The archive can be resumed with `/session <id>`. |
+| `/reset YES` | Archives the current session and starts it fresh. `/unarchive <id>` brings the archive back. |
 | `/model` | Shows the model in use. |
 | `/model <alias>` | Uses that model for this session only. |
 | `/model default` | Drops the override. |

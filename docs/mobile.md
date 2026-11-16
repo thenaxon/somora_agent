@@ -68,7 +68,7 @@ Otherwise the link points at `127.0.0.1`, which the phone cannot open.
 |---|---|
 | **Header** | Shows `agent · session ▾ model`. Tap it to switch session or model. On the right: the work badge, in a builder session the **builder** button (a clipboard, with the number of open tasks), with realtime voice the **call** button (a phone), and the **settings** button (sliders). |
 | **Settings** | The sliders button opens a sheet with the settings of the chat on screen: tool activity, recalled notes and reading replies aloud, each where it applies. A dot on the button means at least one of them is not as it starts out. |
-| **This phone** | The koala in the top-left corner opens the settings of the phone itself, whatever chat is open: keeping the screen awake. A dot on the koala means it is on. |
+| **This phone** | Where the browser can keep the screen awake, the koala in the top-left corner opens the settings of the phone itself, whatever chat is open: keeping the screen awake. A dot on the koala means it is on. Elsewhere the koala is only the logo. |
 | **Avatar row** | One tile per agent. Tap to switch. The app remembers the last agent. Long-press a tile to change the order, see below. |
 | **Chat** | The history of the open session, newest first loaded. Scroll to the top, or tap **Load older messages**, for the next older part. Replies are rendered as Markdown. A wide code block scrolls sideways. |
 | **Input bar** | Paperclip, microphone, text field, Send. Enter sends, Shift+Enter starts a new line. |
@@ -171,6 +171,9 @@ message, or write anything else, which answers it too. A card with
 several questions, or one that allows several answers, has a **Send**
 button.
 
+The question stays in the chat with its options after the card
+closes, also with the tools switch off.
+
 A question that waits, such as an external agent's permission request,
 shows how long it still waits. The card is read again after
 a reload or a dropped connection.
@@ -252,6 +255,7 @@ the koala in the top-left corner to find it. It is off by default and remembered
 | `memory · N notes` line | The notes recalled for the turn, see "Recalled notes" below. Only with the memory switch on. |
 | `⇄ fallback · <model>` | A backup model answered. The tooltip names the models that failed and why. |
 | **⚠** block | The turn ended in an error. |
+| Question row | A question the agent asked you, with its options. Hidden only while its card is open. |
 | `◌ history compacted …` divider | The history was compacted: before a turn, by hand, or by the engine itself. When somora compacted, the line says by how much. |
 | Media line | The reply produced a picture or video. The phone shows a line naming it. Open the web client to see it. |
 | `Image from <host>` with **Show** and **Always show** | A picture from another website, held back until you allow it. See [Security](security.md#pictures-from-other-websites). |

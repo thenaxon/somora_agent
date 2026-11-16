@@ -320,7 +320,8 @@ providers:
 #       apiKey: <key>                           # leave out without authentication
 #       model: clef
 #       capabilities: [text, image]             # image: the tool takes up to four images
-#       # maxInputTokens: 16000                 # optional; the lower of this and the server's limit applies
+#       # maxInputTokens: 16000                 # optional; the lower of this and the server's limit applies.
+#                                               # A Flide server (OneJev) reports no limit: set it there.
 #       # timeoutMs: 90000                      # default
 
 # Image generation — text-to-image via an OpenAI-shaped image endpoint
@@ -433,7 +434,7 @@ providers:
 #   allowPrivate: []                        # LAN hosts/CIDRs agents may open,
 #                                           #  e.g. ["192.0.2.0/24", "nas.local"]
 #   deny: []                                # hostnames never opened, e.g. ["*.bank.at"]
-#   profiles: {}                            # shared profiles: { firma: { agents: [a, b] } }
+#   profiles: {}                            # shared profiles: { team: { agents: [a, b] } }
 
 # videoGen:
 #   enabled: true
@@ -501,19 +502,19 @@ providers:
 # the agent knows which paths matter for this conversation.
 #
 # `entities` is a CONTROLLED VOCABULARY — projects belong to one
-# entity (e.g. "privat", "acme"), and the agent picks FROM this list
+# entity (e.g. "personal", "acme"), and the agent picks FROM this list
 # at create time. Prevents STT mishearings from inventing phantom
 # entities ("enofhom" silently becoming a new category). Only edited
 # here — agents cannot extend it via tools.
 # projects:
 #   enabled: true
 #   entities:
-#     - slug: privat
-#       label: Privat
+#     - slug: personal
+#       label: Personal
 #     - slug: acme
-#       label: acme GmbH
-#     - slug: firma2
-#       label: Firma Zwei
+#       label: Acme Inc.
+#     - slug: other-co
+#       label: Other Co
 
 # Compaction tunables. All optional — built-in defaults apply
 # when omitted. SOMORA_COMPACTION_* env vars override these for ops/CI.
@@ -690,14 +691,14 @@ providers:
 #   h2PingIntervalMs: 30000        # HTTP/2 PING per client session (TLS listener) …
 #   h2PingTimeoutMs: 30000         # … no ACK within this time → session destroyed (tab closed, Wi-Fi gone)
 #   keepAliveDelayMs: 30000        # TCP keepalive on every socket (kernel probes on top)
-# tmux attention watcher — somora watches its own tmux sessions that were
-# created with kind "claude-code" or "codex" and detects when the CLI in
-# the pane goes from running to ready (finished OR waiting for input).
-# If the agent that started the session missed that moment (its wait_idle
-# timed out and its turn ended), somora dispatches a wake turn: "session X
-# became ready — read the output and continue". If the agent observed the
-# completion itself (capture/wait_idle after the event), NO wake fires.
-# One wake per completion, never repeated when ignored.
+# tmux attention watcher — somora watches the tmux sessions it created
+# that hold a coding agent it recognises (docs/tmux.md) and notices when
+# the agent stops working and is idle, or stops at a dialog. If the agent
+# that started the session missed that moment (its turn ended), somora
+# starts a wake turn: "session X (codex) stopped working and is idle
+# after 6 min" or "… needs an answer: it stopped at a dialog". If the
+# agent looked at the session itself after that, no wake fires. One wake
+# per event, never repeated when ignored.
 # tmux:
 #   attention:
 #     enabled: true              # watcher + needs_attention metadata/badge

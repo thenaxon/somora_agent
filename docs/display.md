@@ -241,7 +241,7 @@ A path only works after the format word.
 | `/new <slug>` | Creates a session and switches to it. |
 | `/main` | Returns to the `main` session. |
 | `/compact [what to keep]` | Compacts this session now and the conversation goes on. The sentence is the focus of the summary. See [Compact by hand](compaction.md#compact-by-hand). |
-| `/reset [YES]` | Without `YES`: explains what would happen. With `YES`: archives the current session and starts it fresh. `/unarchive` brings the archive back. |
+| `/reset [YES]` | Without `YES`: explains what would happen. With `YES`: archives the current session and starts it fresh; an open question of the archived conversation goes away. `/unarchive` brings the archive back. |
 | `/models` | Lists the configured models with alias, engine, context size and capabilities. |
 | `/model [<alias>\|default]` | No argument: shows the model in effect and where it comes from. An alias or `provider/id`: sets it for this session. `default` or `-`: back to the agent's own model. |
 | `/show [memory\|tools] [on\|off]` | Line visibility, see "The two switches". |

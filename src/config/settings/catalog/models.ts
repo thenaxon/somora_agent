@@ -41,7 +41,7 @@ export const MODELS: Catalog = {
   'providers.*.models.*.contextWindow': {
     label: 'Context window',
     help: 'How much text the model can take in at once, in tokens: the whole conversation, notes and tools must fit into it.',
-    more: 'A token is roughly three quarters of a word; typical windows are 128000, 200000 or 262144 tokens. Use the limit the server or provider states (for codex-cli the Codex session window, 258400). On openai-compatible, somora shortens the conversation when it nears this size. On every engine it is used to show how full a session is, to choose a model that can summarise a conversation, and to skip a backup model whose window is no larger than one the conversation already did not fit. On grok-cli the window Grok reports is shown instead.',
+    more: 'A token is roughly three quarters of a word; typical windows are 128000, 200000 or 262144 tokens. Use the limit the server or provider states (for codex-cli the window Codex reports for the model: 258400, or 475000 for gpt-6.1-terra). On openai-compatible, somora shortens the conversation when it nears this size. On every engine it is used to show how full a session is, to choose a model that can summarise a conversation, and to skip a backup model whose window is no larger than one the conversation already did not fit. On grok-cli the window Grok reports is shown instead.',
     level: 'basic',
     unit: 'tokens',
     docs: 'models.md#model-fields',

@@ -68,14 +68,14 @@ models Flide serves) takes them as `media`, each named once in the state
 by a `<image:N>` marker, and quietly ignores an `images` list.
 
 somora tells the two apart by the server's `GET <baseUrl>/v1/models`
-(Flide lists `models` with a `name`, Clef `data` with an `id`) and sends
-the form that server reads. For Flide it adds the markers itself: an
+(Flide lists `models` with a `name`, Clef `data` with an `id`; a server
+without that route counts as Clef) and sends the form that server reads. For Flide it adds the markers itself: an
 object state gets an `images` list of them, a text state gets them
 appended, and a state with an `images` key of its own is wrapped as
 `{state, images}`.
 
 When the list cannot be read and the server's form is not known yet, a
-call with images is refused and nothing is sent.
+call with images is refused as `transport` and nothing is sent.
 
 Flide's models list carries no input limit, so set `maxInputTokens` for
 a model there. An input over Flide's own limit comes back as `too-long`.
@@ -145,8 +145,10 @@ neither, the server decides. somora reads the server's value at most
 every ten minutes, so a change there takes effect without a restart.
 
 Before sending, somora estimates the size and refuses a clearly too long
-input. A server that rejects an input as too long (HTTP 413) passes its
-error message on, or the limit when it sends none. A server that cuts
+input.
+
+A server that rejects an input as too long (HTTP 413, or Flide's HTTP
+422 naming its limit) passes its error message on, or the limit when it sends none. A server that cuts
 the input off silently is caught too: when it reports exactly its limit
 as the tokens read, the answers are discarded. When the server allows
 more than your `maxInputTokens`, its exact count is checked against
@@ -189,8 +191,8 @@ A result is either `ok` or `unavailable`. An unavailable result names a
 | `authentication` | The server rejected the key. |
 | `rate-limited` | The server asks to slow down. |
 | `not-ready` | The server is up but the model is not, for example not loaded right now. |
-| `transport` | The server could not be reached, or answered with an unexpected HTTP error. |
-| `too-long` | The input exceeds the limit. Nothing was sent, or the server's answers were discarded because its exact count was above your `maxInputTokens`. |
+| `transport` | The server could not be reached, answered with an unexpected HTTP error, or its image form is unknown for a call with images. |
+| `too-long` | The input exceeds the limit. Nothing was sent, the server refused it as too long, or the server's answers were discarded because its exact count was above your `maxInputTokens`. |
 | `truncated` | The server cut the input off. The answers were discarded. |
 | `unsupported-input` | The request was rejected, or an image could not be used. |
 | `invalid-response` | The answers did not match the questions. |

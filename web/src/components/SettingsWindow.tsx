@@ -157,7 +157,7 @@ export function SettingsWindow() {
       !r.reload?.ok
         ? { tone: 'warn', text: `Saved, but the reload failed: ${r.reload?.error ?? 'unknown error'}` }
         : restart.length > 0
-          ? { tone: 'warn', text: `Saved. Takes effect after a restart: ${restart.join(', ')} — use Restart server in the gear menu.` }
+          ? { tone: 'warn', text: `Saved. Takes effect after a restart: ${restart.join(', ')} — use Restart somora in the gear menu.` }
           : { tone: 'ok', text: 'Saved and applied.' },
     );
     await load();
@@ -1008,7 +1008,7 @@ function BackupsView({ hash, onRestored }: { hash: string; onRestored: (text: st
     if (!window.confirm(`Go back to the version from ${new Date(at).toLocaleString()}? The current file is kept as a backup too.`)) return;
     const r = await api.restoreSettings(name, hash);
     if (!r.ok) return setErr(r.conflict ? 'config.yaml changed since this window read it — press Reload first.' : (r.error ?? 'not restored'));
-    onRestored(r.reload?.ok && (r.reload.restartRequired ?? []).length > 0 ? `Restored. ${r.reload.restartRequired!.join(', ')} applies after a restart — Restart server in the gear menu.` : 'Restored and applied.');
+    onRestored(r.reload?.ok && (r.reload.restartRequired ?? []).length > 0 ? `Restored. ${r.reload.restartRequired!.join(', ')} applies after a restart — Restart somora in the gear menu.` : 'Restored and applied.');
   };
   let body: ReactNode;
   if (err) body = <div className="settings-banner error">{err}</div>;

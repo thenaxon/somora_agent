@@ -100,7 +100,7 @@ restart. Dream states refresh every 30 seconds.
 | **Recent sessions** | The three most recently active other sessions. Click one to open it in its own window. |
 | **New session…** | Type a name: letters, digits, `-` and `_`. The field says what is wrong while you type. Enter creates and opens it, Esc cancels. |
 | **All sessions…** | Opens the Sessions window. |
-| **Configure…** | Opens the Agent window. |
+| **Configure…** | Opens the Agent window. For an external agent the entry reads **About…**. |
 | **On the desktop** | Puts the agent's icon on the desktop or takes it off. The agent stays in the start menu. |
 
 ### App icons
@@ -132,7 +132,7 @@ the desktop.
 | Part | What it does |
 |---|---|
 | Search | Has the cursor when the menu opens. Type part of a name or role; Enter opens the first match, the arrow keys move between matches. |
-| Agents | Click to open the `main` chat. A dot shows a running turn (accent) or unread replies (amber). The `›` button or a right-click opens the agent menu beside the start menu. |
+| Agents | Click to open the `main` chat. A dot shows a running turn (accent) or unread replies (amber), a crossed-out pin an agent that is not on the desktop. The `›` button or a right-click opens the agent menu beside the start menu. |
 | Apps | Click to open. A grey dot marks an open window. The pin puts the icon on the desktop or takes it off. |
 | Settings…, Sign out | The settings window, and the same sign-out as in the gear menu. |
 
@@ -177,7 +177,7 @@ The bar at the bottom always stays on top. From left to right:
 |---|---|
 | Koala, name and version | Opens the start menu. Shows the server version. |
 | Inbox | Updates, messages from somora.ai and things that need you, with a count of what is new. See "Inbox". |
-| Gear | Server menu: reload config, restart, sign out. |
+| Gear | Server menu: settings, reload config, restart, sign out. |
 | Screen | **Arrange windows**, **Save layout** and **Restore layout** (a snapshot of the layout, brought back later), **Full screen** where the browser can do it, and the theme: **somora** or one of your own, and **Dark**, **Light** or **Auto**. |
 | `Browser · N waiting for you` | Appears when an agent handed the shared browser to you. Opens the browser list. |
 | Window buttons | One per open window, in the agent's colour. Click to focus or bring back a minimized window. |
@@ -458,6 +458,7 @@ session too.
 | Pictures and videos under a reply | Media the turn generated. |
 | `Image from <host>` with **Show** and **Always show** | A picture from another website, held back until you allow it. See [Security](security.md#pictures-from-other-websites). |
 | Thumbnails on your message | Your attachments. |
+| Question block | A question the agent asked you, with its options. Hidden only while its card is open. |
 | Folded call record, `call · <length> · N lines · <reason>` | One voice call: open it for what you and the voice said, with interruptions, questions to the agent and notices, each with its time into the call. See [Realtime voice](realtime-voice.md#what-the-session-records). |
 
 A notice appears once when a backup model takes over and once when the
@@ -534,6 +535,10 @@ not hold the turn: the card stays until you answer, also after a
 reload. Click an option to send it as your next message, or write
 anything else, which answers it too. A card with several questions,
 or several answers allowed, has a **Send** button.
+
+The question also stays in the conversation, with its options, after
+the card closes, so you can see later what you answered. It shows even
+with **tools** off.
 
 A question that waits says how long it still waits:
 an external agent's permission request, or a question in a task from
@@ -681,7 +686,9 @@ is its own shell, and closing the window ends it.
 **tmux** lists the tmux sessions on the host and refreshes every 5
 seconds. A row shows which agent and session created it, or `orphan`
 for one started outside somora. Click a row to attach: output streams
-live and your keys go straight through. The tmux guide covers the rest.
+live and your keys go straight through. When the session ends and is
+started anew under the same name, the open window attaches again by
+itself. The tmux guide covers the rest.
 
 ## The Agent window
 
@@ -735,7 +742,7 @@ Changes collect at the bottom. **Apply** checks them against the
 schema, saves a backup and writes only the lines that changed: your
 comments, blank lines, order and indentation stay. Then the
 configuration is reloaded, and a message says which sections apply
-after a restart (**Restart server** in the gear menu).
+after a restart (**Restart somora** in the gear menu).
 
 - **Keys stay on the server.** A key or password shows as set or not
   set and can only be replaced.
@@ -843,6 +850,7 @@ the server.
 | Key in `localStorage` | Holds |
 |---|---|
 | `somora-desktop-icons` | Where you placed the icons. |
+| `somora-desktop-hidden` | The icons taken off the desktop. |
 | `somora-web-layout` | The open windows, saved as you go. |
 | `somora-web-layout-saved` | The snapshot made with **Save layout**. |
 | `somora-chat-zoom` | Text size per agent and session. |

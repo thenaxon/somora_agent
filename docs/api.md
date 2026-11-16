@@ -3047,13 +3047,16 @@ session created the tmux session, when somora did.
 
 ### `WS /tmux/attach?session=<name>`
 
-A WebSocket to `tmux attach-session -d -t <name>`.
+A WebSocket to `tmux attach-session -d -t <name>`. A session somora
+created is attached with `-f ignore-size`, so the viewer never changes
+its size.
 
 | Direction | Frame | Meaning |
 |---|---|---|
 | server to client | binary | Terminal output. |
 | client to server | binary | Keyboard input. |
-| client to server | text `{"type":"resize","cols":N,"rows":N}` | The terminal's size changed. |
+| client to server | text `{"type":"resize","cols":N,"rows":N}` | The terminal's size. Send it on open and when it changes; one sent before the server's terminal is up is applied when it starts. |
+| server to client | text `{"type":"attached","sessionId":"$N","createdEpoch":N}` | Attached; names the session (tmux's id and start second), so a client can tell a session started anew under the same name. |
 | server to client | text `{"type":"ping"}` | Sent every 25 seconds. |
 
 Any message from the client counts as a sign of life. After 80 seconds

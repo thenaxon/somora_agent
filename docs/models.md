@@ -174,9 +174,10 @@ move along.
 ### The Codex context window
 
 Codex runs a session against a window it sets itself and reports on
-every turn as `modelContextWindow`: 258,400 for every model it offers,
-while the API window of the same models is 1.05M. Configure
-`contextWindow: 258400`, not the number from the model card.
+every turn as `modelContextWindow`: 258,400 for most models it offers
+and 475,000 for `gpt-6.1-terra`, while the API window of the same models
+is larger. Configure the number Codex reports for each model, not the
+number from the model card.
 
 somora shows the reported number once the first turn has run. Until
 then the header uses the configured value. The configured value also
@@ -610,7 +611,7 @@ providers:
 
 | Field | Default | openai-compatible | claude-cli | codex-cli | grok-cli |
 |---|---|---|---|---|---|
-| `contextWindow` | required | compaction trigger, worker choice, display. Use the server's limit. | worker choice, display. The native window is right. | worker choice, display. Use the Codex session window, 258400. | display. Grok reports the window itself, and that number is shown. |
+| `contextWindow` | required | compaction trigger, worker choice, display. Use the server's limit. | worker choice, display. The native window is right. | worker choice, display. Use the window Codex reports for the model: 258400, or 475000 for `gpt-6.1-terra`. | display. Grok reports the window itself, and that number is shown. |
 | `capabilities` | `[text]` | `image` and `pdf` gate attachments, `reasoning` decides whether a thinking level is sent | same | same | same |
 | `alias` | none | short name for `model:` in `agent.yaml`, letters, digits, `-` and `_` | same | same | same |
 | `reasoning.default` | unset | the thinking level used when session and agent set none, in somora's words; sent explicitly and shown as the model's default | same | same | same |
@@ -678,7 +679,7 @@ update.
 | Symptom | Cause and fix |
 |---|---|
 | `400 ContextWindowExceededError` before somora compacts | `contextWindow` is above the server's limit. Set it to the server's `--context-length` or `--max-model-len`. |
-| The header says the context is over full on a Codex model | `contextWindow` is not 258400. |
+| The header says the context is over full on a Codex model | `contextWindow` is not the window Codex reports: 258400, or 475000 for `gpt-6.1-terra`. |
 | A Codex turn fails at once, or a compaction worker crashes | The model id is retired. Remove `gpt-5.4-mini` and `gpt-5.3-codex`. |
 | A chat row says the model rejected the reasoning effort | The model does not know the word. Map the level in `reasoning.levels`. The log line is `engine.reasoning_effort_rejected`. |
 | Every thinking level gives the same amount of reasoning | A router drops `reasoning_effort`. Allow the parameter in the router. |

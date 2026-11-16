@@ -361,7 +361,7 @@ enforces:
 
 | Engine | Set `contextWindow` to | Why |
 |---|---|---|
-| `codex-cli` | 258400 | Codex runs every session against its own window, which is smaller than the model's API window. |
+| `codex-cli` | 258400 (475000 for `gpt-6.1-terra`) | Codex runs every session against its own window, which is smaller than the model's API window. |
 | `claude-cli` | the model's real window | Claude Code sessions run against it: 1M for the Claude 5 family, 200k for Haiku 4.5. |
 | `openai-compatible` | the server's limit | Use vLLM `--max-model-len`, SGLang `--context-length` or oMLX's configured length, not the number on the model card. |
 

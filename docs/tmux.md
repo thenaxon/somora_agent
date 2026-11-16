@@ -127,7 +127,8 @@ per session. A shell has no `agent` field.
 somora reads the visible screen and the terminal title with herdr's
 detection rules. [herdr](https://github.com/herdrdev/herdr) is a
 terminal workspace for coding agents (Apache-2.0); its rule files come
-with somora unchanged, with the herdr version they are from. Each rule
+with somora converted to JSON but with the rules unchanged, together
+with the herdr version they are from and herdr's license. Each rule
 looks at one part of the screen, the bottom lines, the input box or the
 title. Of the matching rules the one with the highest priority decides.
 No match means `idle`.
@@ -144,8 +145,16 @@ that agent, for example `codex.json`. It uses herdr's rule format as
 JSON (`id`, `version`, `rules` with `id`, `state`, `priority`,
 `region`, `contains`, `regex`, `line_regex`, `all`, `any`, `not`). A
 file may also add an agent somora does not know. A file that does not
-parse or compile is skipped with a warning in the log, and the shipped
-rules stay in force. Changes apply after a restart of somora.
+parse or compile, or whose `id` is not its file name, is skipped with a
+warning in the log, and the shipped rules stay in force.
+
+Changes apply after a restart of somora.
+
+Your file replaces somora's own additions for that agent too. For
+Codex these are the rules for its background-server dialog and the
+worktree question after `/new`; copy them from the shipped
+`somora-rules/codex.json`, or `new_conversation` no longer answers that
+question.
 
 `explain` shows the rule that decided, every rule that matched, where
 the rules came from and their version:
@@ -153,8 +162,12 @@ the rules came from and their version:
 ```jsonc
 tmux({ action: "explain", name: "review-1" })
 // explain: { state, rule, fallback, rules_from: "bundled" | "override",
-//            version, title, matched_rules, rules_checked }
+//            version, path, title, matched_rules, rules_checked }
 ```
+
+`path` is your rule file when one is in use. When no agent is
+recognised, `explain` is `{ agent: null, processes, note }`: the
+processes in the pane and why none counts.
 
 ## Starting and prompting
 
@@ -167,6 +180,9 @@ screen that shows something). Errors:
   and answer with `send`, or ask the person.
 - `agent_not_ready` without a state: it did not come up within
   `wait_timeout_ms` (60 seconds by default).
+- `agent_busy`: an agent already runs in this pane.
+- `not_a_shell`: another program holds the pane, so nothing is typed.
+- `tmux_error`: the session could not be created or read.
 
 `prompt` pastes `text` as one message, line breaks kept, and presses
 Enter. With `wait: true` (the default) it returns when the agent is
@@ -178,7 +194,7 @@ idle again or blocked, at most `wait_timeout_ms` (5 minutes by default,
 | `error` | The agent is | Do |
 |---|---|---|
 | `agent_blocked` | at a dialog | Read it, decide or ask the person, answer with `send`, then prompt again. |
-| `agent_busy` | working | `wait_idle`, or interrupt with `send` `key: "Escape"`. Codex keeps text typed while it works in its input box. |
+| `agent_busy` | working | `wait_idle`, or interrupt with `send` `key: "Escape"`. Codex keeps text typed while it works in its input box. A moment of working (Codex right after `/new`) gets about three seconds to settle first. |
 | `agent_state_unknown` | showing something else | `capture` to look, `key: "Escape"` usually closes it. |
 | `no_agent` | not there | Use `start`, or `send` for a shell. |
 
@@ -325,7 +341,9 @@ The wake turn carries one of these texts:
 [tmux attention] Session '<name>' (<agent>) needs an answer: it stopped at a dialog.
 ```
 
-A session on an SSH resource adds ` on <resource>` after its name. The
+` after <time>` appears when the length of the task is known: seconds
+below 90 seconds (`45 s`), minutes above (`6 min`). A session on an SSH
+resource adds ` on <resource>` after its name. The
 turn comes with instructions: read the session first, never send a new
 prompt unread, never approve a dialog it does not understand. Web
 client, mobile app and TUI show the turn as a `tmux` divider.
@@ -419,7 +437,13 @@ The `tmux` app in the web client lists the sessions on the somora
 machine and refreshes every 5 seconds. Each row shows the agent and
 chat session that created it. A session started outside somora is
 labelled "orphan". Open a row to attach in a terminal window and type
-into the same pane the agent uses.
+into the same pane the agent uses. The window takes the size of the
+agent's session and does not change it.
+
+When the session ends, the window says so and checks every 3 seconds.
+A session started anew under the same name is attached again by itself.
+When the same session is still there, another client took it over, and
+the window stays closed.
 
 ## Settings
 
@@ -457,13 +481,13 @@ One tool, `tmux`. Only `action` is always required.
 | `command` | `start` | required | The command that starts the agent, for example `codex`, `claude`, `opencode --model <provider>/<model>`. |
 | `text` | `prompt` | required | The message, any length, line breaks kept. |
 | `wait` | `prompt` | `true` | `false` returns as soon as the agent took the message. |
-| `kind` | `create` | none | The agent, for a host whose `ps` cannot show it. |
+| `kind` | `create`, `start` | none | The agent, for a host whose `ps` cannot show it, or `shell`. |
 | `attention` | `create`, `start` | `true` | `false` keeps the watcher away from this session. |
 | `inherit_agent_env` | `create`, `start` | `false` | `true` keeps somora's internal variables. Local only. |
 | `keys` | `send` | none | Text to type. `\n` is Enter. |
 | `key` | `send` | none | Named keys, separated by spaces. Letters, digits, dash and underscore only. |
 | `multiline_safe` | `send` | `false` | `true` sends every `\n` inside `keys` as `M-Enter`. |
-| `lines` | `capture`, `read`, `prompt`, `start`, `wait_idle` | `200` (`prompt`, `start`: 60) | Lines from the end of the pane to return. 1 to 10000. |
+| `lines` | `capture`, `read`, `prompt`, `start`, `new_conversation`, `wait_idle` | `200` (`prompt`, `start`: 60; `new_conversation`: 40) | Lines from the end of the pane to return. 1 to 10000. |
 | `wait_pattern` | `capture` | none | Text to wait for. |
 | `wait_mode` | `capture` | `"auto"` | `auto`, `present` or `idle`. |
 | `wait_timeout_ms` | `prompt`, `start`, `new_conversation`, `capture`, `wait_idle` | `prompt` 300000, `start` 60000, others 30000 | Longest wait. 100 to 600000. |
@@ -493,7 +517,7 @@ wait at a dialog.
 | Route | What it does |
 |---|---|
 | `GET /tmux/sessions` | Lists local tmux sessions as `{ sessions: [...] }`. Each has `name`, `windows`, `activeCommand`, `activeTitle`, `createdEpoch`, `lastActivityEpoch`, `sessionId` (tmux's id, new for a session started anew under the same name) and, for sessions somora created, `origin` with `agent`, `session`, `kind` and `createdAt`. |
-| `WS /tmux/attach?session=<name>` | Attaches to a local session. Binary frames carry the terminal stream, text frames carry `{type:'resize',cols,rows}`. |
+| `WS /tmux/attach?session=<name>` | Attaches to a local session. Binary frames carry the terminal stream. Text frames: the client sends `{type:'resize',cols,rows}` and answers `{type:'ping'}` with `{type:'pong'}`; the server sends `{type:'attached',sessionId,createdEpoch}` once attached. Sessions somora created are attached with `ignore-size`, so the viewer never changes their size. |
 
 | File in `~/.somora/` | Content |
 |---|---|

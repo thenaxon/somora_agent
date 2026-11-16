@@ -143,7 +143,7 @@ Toolset `exec`.
 |---|---|
 | `exec` | Runs one shell command, waiting for it or in the background, locally or on an SSH resource. |
 | `process` | Handles background jobs: `action` is `list`, `poll`, `log`, `write` or `kill`. |
-| `tmux` | Keeps terminal sessions open across turns and drives coding agents in them: `action` is `create`, `start`, `prompt`, `send`, `capture`, `read`, `wait_idle`, `list`, `explain` or `kill`, against `target: local` or an SSH resource. |
+| `tmux` | Keeps terminal sessions open across turns and drives coding agents in them: `action` is `create`, `start`, `prompt`, `new_conversation`, `send`, `capture`, `read`, `wait_idle`, `list`, `explain` or `kill`, against `target: local` or an SSH resource. |
 
 Destructive command patterns are blocked in `exec` and in Sentinel
 check scripts. A resource can lift single blocks with `allowBlocked`,

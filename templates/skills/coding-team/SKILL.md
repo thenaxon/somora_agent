@@ -56,7 +56,8 @@ tmux({ action: "start", name: "review", cwd: "<project>", command: "codex" })
   finished or need an answer meanwhile.
 - A new task in a fresh conversation: `new_conversation` first (it
   sends the agent's own `/new` or `/clear` and answers Codex's worktree
-  question). Old context from a finished task leads agents astray.
+  question when the current worktree is preselected; otherwise it comes
+  back as `agent_blocked`). Old context from a finished task leads agents astray.
 - `list` shows how long each agent has been working (`working_for_s`):
   one far longer than the others is likely stuck — read it, and give a
   narrower task or interrupt it.

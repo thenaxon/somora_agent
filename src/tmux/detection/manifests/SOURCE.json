@@ -4,6 +4,7 @@
  "commit": "ee5bfb5041bb3e4a49d591c72308aae3c81ecdde",
  "date": "2026-10-29",
  "license": "Apache-2.0",
+ "changes": "Converted by somora from herdr's TOML manifests to JSON (one file per agent); the rules themselves are unchanged. somora's own additions live apart in ../somora-rules/.",
  "agents": [
   {
    "id": "amp",
