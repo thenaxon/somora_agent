@@ -55,11 +55,18 @@ export function configureTmuxAttention(args: {
 }
 
 /** The record line and, beside it, what to do (turn-framing.ts). */
+/** "6 min", "45 s" — the length of a task in the wake line. */
+export function taskLength(ms: number): string {
+  const s = Math.round(ms / 1000);
+  return s < 90 ? `${s} s` : `${Math.round(s / 60)} min`;
+}
+
 export function wakePrompt(
   name: string,
   agent: string,
   reason: 'ready' | 'blocked',
   target?: string,
+  taskMs?: number | null,
 ): { text: string; prefix: string } {
   const where = target && target !== 'local' ? ` on ${target}` : '';
   const ref = `name: "${name}"${target && target !== 'local' ? `, target: "${target}"` : ''}`;
@@ -75,7 +82,7 @@ export function wakePrompt(
     };
   }
   return {
-    text: `[tmux attention] Session '${name}'${where} (${agent}) stopped working and is idle.`,
+    text: `[tmux attention] Session '${name}'${where} (${agent}) stopped working and is idle${taskMs ? ` after ${taskLength(taskMs)}` : ''}.`,
     prefix:
       `The coding agent in the tmux session named below was working and is idle now. That usually means ` +
       `it finished — but a turn can also stop half-way (an error, a model that wrote a tool call as text). ` +
@@ -232,7 +239,7 @@ export class TmuxAttentionWatcher {
           origin: originRef,
           wakesToday: state.wakesToday,
         });
-        this.dispatchWake(origin, agentState.name, action.reason);
+        this.dispatchWake(origin, agentState.name, action.reason, state.lastTaskMs);
       }
     }
 
@@ -250,7 +257,7 @@ export class TmuxAttentionWatcher {
   }
 
   /** Fire-and-forget wake turn on the origin (agent, session). */
-  private dispatchWake(origin: TmuxOrigin, agentName: string, reason: 'ready' | 'blocked'): void {
+  private dispatchWake(origin: TmuxOrigin, agentName: string, reason: 'ready' | 'blocked', taskMs: number | null): void {
     const deps = injectedChatTurnDeps;
     const session = origin.session;
     if (!deps || !session) {
@@ -265,7 +272,7 @@ export class TmuxAttentionWatcher {
     }
     // Lock, abort registration, turn id and the SSE broadcast are
     // startTurn's; the wake only says who, where and what.
-    const wake = wakePrompt(origin.name, agentName, reason, origin.target);
+    const wake = wakePrompt(origin.name, agentName, reason, origin.target, reason === 'ready' ? taskMs : null);
     void startTurn({
       agent: origin.agent,
       session,

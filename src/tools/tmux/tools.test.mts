@@ -1,6 +1,8 @@
 // The tmux tool's bookkeeping around the calls: sessions waiting for the
 // caller are named in every result, and sessions the tool creates keep
 // a fixed size (window-size is a window option: `-w -t =name:`).
+// Own SOMORA_HOME: writes tmux origins and the attention mirror.
+import '../../testing/own-home.mts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmux } from './tools.ts';

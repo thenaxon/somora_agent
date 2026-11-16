@@ -9,6 +9,7 @@
 import assert from 'node:assert/strict';
 import {
   initialAttentionState,
+  toDisplay,
   stepAttention,
   type AttentionSessionState,
   type AttentionStepInput,
@@ -317,6 +318,36 @@ function step(
   check('unknown keeps running', r.state.lastState === 'running' && r.action.kind === 'none');
   r = step(r.state, { tuiState: 'ready', now: T0 + 6000, originBusy: true });
   check('then ready completes as usual', r.action.kind === 'event');
+}
+
+// ── task timing: from ready→running until ready again, dialogs included ──
+{
+  let r = step(initialAttentionState(), { tuiState: 'ready', now: T0 });
+  r = step(r.state, { tuiState: 'running', now: T0 + 3000 });
+  check('a task starts when the agent leaves ready', r.state.taskStartedAt === T0 + 3000);
+  r = step(r.state, { tuiState: 'blocked', now: T0 + 6000, originBusy: true });
+  r = step(r.state, { tuiState: 'running', now: T0 + 9000, originBusy: true });
+  check('a dialog in between does not restart the task', r.state.taskStartedAt === T0 + 3000);
+  r = step(r.state, { tuiState: 'ready', now: T0 + 63_000, originBusy: true });
+  check('ready again: the task took start → ready', r.state.lastTaskMs === 60_000 && r.state.taskStartedAt === null, JSON.stringify([r.state.lastTaskMs, r.state.taskStartedAt]));
+  const d = toDisplay(r.state);
+  check('the mirror carries the timing', d.last_task_ms === 60_000 && d.task_started_at === null);
+}
+{
+  // A task that begins at a dialog (ready → blocked → running) is timed from the dialog.
+  let r = step(initialAttentionState(), { tuiState: 'ready', now: T0 });
+  r = step(r.state, { tuiState: 'blocked', now: T0 + 3000, originBusy: true });
+  r = step(r.state, { tuiState: 'running', now: T0 + 6000, originBusy: true });
+  r = step(r.state, { tuiState: 'ready', now: T0 + 33_000, originBusy: true });
+  check('a task that starts at a dialog is timed from it', r.state.lastTaskMs === 30_000, String(r.state.lastTaskMs));
+  // At a startup dialog from the first look.
+  const b = step(initialAttentionState(), { tuiState: 'blocked', now: T0 });
+  check('first look blocked: timed from then', b.state.taskStartedAt === T0);
+}
+{
+  // Working at the first look: the task runs at least since then.
+  const r = step(initialAttentionState(), { tuiState: 'running', now: T0 });
+  check('first look working: task started then', r.state.taskStartedAt === T0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

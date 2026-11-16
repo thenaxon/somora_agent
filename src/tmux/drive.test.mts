@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { promptAgent, startAgent, type DriveClock } from './drive.ts';
+import { newConversation, promptAgent, startAgent, type DriveClock } from './drive.ts';
 import type { RunResult, Runner } from './observe.ts';
 
 const fx = (c: string) => readFileSync(new URL(`./__fixtures__/pi/${c}.txt`, import.meta.url), 'utf8');
@@ -169,4 +169,49 @@ test('prompt: a moment of working (Codex after /new) passes before agent_busy', 
   };
   const r = await promptAgent(run, 'p', { text: 'go', wait: false, timeoutMs: 60_000, lines: 20, clock: fakeClock() });
   assert.notEqual(r.error, 'agent_busy', JSON.stringify(r));
+});
+
+const CODEX_IDLE = { screen: '› Ask Codex to do anything', proc: 'codex', title: 'demo' };
+const worktreeDialog = (preselected: boolean): Pane => ({
+  screen: [
+    '  Where should the new conversation run?',
+    '',
+    `${preselected ? '›' : ' '} 1. Use current Git worktree`,
+    `${preselected ? ' ' : '›'} 2. Create new Git worktree`,
+    '',
+    '  enter select · esc back',
+  ].join('\n'),
+  proc: 'codex',
+  title: 'demo',
+});
+
+test('new_conversation: the agent\'s own command, back when idle', async () => {
+  const t = fakeTmux(pi(DONE), { paste: withText, enter: () => [pi(IDLE), pi(IDLE), pi(IDLE), pi(IDLE)] });
+  const r = await newConversation(t.run, 'p', { timeoutMs: 30_000, lines: 20, clock: fakeClock() });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.command, '/new');
+  assert.ok(t.sent.some((c) => c.includes("printf '%s' '/new'")));
+});
+
+test('new_conversation: Codex\'s worktree question is answered with the current worktree', async () => {
+  let enters = 0;
+  const t = fakeTmux(CODEX_IDLE, {
+    paste: withText,
+    enter: () => (++enters === 1 ? [worktreeDialog(true), worktreeDialog(true), worktreeDialog(true), worktreeDialog(true)] : [CODEX_IDLE, CODEX_IDLE, CODEX_IDLE, CODEX_IDLE]),
+  });
+  const r = await newConversation(t.run, 'cx', { timeoutMs: 30_000, lines: 20, clock: fakeClock() });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.agent?.state, 'idle');
+  assert.equal(t.sent.filter((c) => /send-keys -t '=cx:' Enter$/.test(c)).length, 2, 'Enter for /new, Enter for the dialog');
+});
+
+test('new_conversation: another choice preselected is handed back as blocked; an unknown agent is not_supported', async () => {
+  const t = fakeTmux(CODEX_IDLE, { paste: withText, enter: () => [worktreeDialog(false), worktreeDialog(false), worktreeDialog(false), worktreeDialog(false)] });
+  const r = await newConversation(t.run, 'cx', { timeoutMs: 30_000, lines: 20, clock: fakeClock() });
+  assert.equal(r.error, 'agent_blocked', JSON.stringify(r));
+  assert.equal(t.sent.filter((c) => /send-keys -t '=cx:' Enter$/.test(c)).length, 1, 'the dialog is not answered');
+  const g = fakeTmux({ screen: 'grok ready', proc: 'grok', title: '' }, {});
+  const u = await newConversation(g.run, 'g', { timeoutMs: 30_000, lines: 20, clock: fakeClock() });
+  assert.equal(u.error, 'not_supported');
+  assert.deepEqual(g.sent, []);
 });

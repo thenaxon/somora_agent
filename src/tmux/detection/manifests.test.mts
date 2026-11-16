@@ -2,6 +2,9 @@
 // additions are appended, a file of one's own in
 // <SOMORA_HOME>/tmux-detection wins, a broken one is skipped with a
 // warning and the shipped rules stay in force.
+// Own SOMORA_HOME: this file writes override rules that other test files
+// running at the same time must not see.
+import '../../testing/own-home.mts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

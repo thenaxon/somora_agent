@@ -54,9 +54,12 @@ tmux({ action: "start", name: "review", cwd: "<project>", command: "codex" })
   wakes you when an agent finishes or stops at a dialog. While you are
   busy, every tmux result lists `waiting_for_you`: the sessions that
   finished or need an answer meanwhile.
-- A new task in a fresh conversation: send the agent's own command for
-  it first (`/new` in OpenCode, Codex and Pi, `/clear` in Claude Code).
-  Old context from a finished task leads agents astray.
+- A new task in a fresh conversation: `new_conversation` first (it
+  sends the agent's own `/new` or `/clear` and answers Codex's worktree
+  question). Old context from a finished task leads agents astray.
+- `list` shows how long each agent has been working (`working_for_s`):
+  one far longer than the others is likely stuck — read it, and give a
+  narrower task or interrupt it.
 
 ## 5. Read the status and decide
 - `read` the session. Every agent ends with:

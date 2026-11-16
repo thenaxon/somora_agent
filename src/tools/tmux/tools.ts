@@ -41,7 +41,7 @@ import {
   type SeenState,
 } from '../../tmux/attention.ts';
 import { agentStateOf, observePane, type AgentStateField, type Runner } from '../../tmux/observe.ts';
-import { promptAgent, startAgent, waitSettled, type DriveResult } from '../../tmux/drive.ts';
+import { newConversation, promptAgent, startAgent, waitSettled, type DriveResult } from '../../tmux/drive.ts';
 import { explainAgentState, resolveAgent } from '../../tmux/detection/manifests.ts';
 
 // One or more tmux key tokens separated by whitespace. Each token is
@@ -63,7 +63,7 @@ const DEFAULT_START_TIMEOUT_MS = 60_000;
 /** Field texts, shared by the zod schema (Claude, Grok) and the JSON
  *  schema (Codex, OpenAI-compatible) so every engine reads the same. */
 const FIELD = {
-  action: 'create | start | prompt | send | capture | read | wait_idle | list | explain | kill.',
+  action: 'create | start | prompt | new_conversation | send | capture | read | wait_idle | list | explain | kill.',
   target:
     '"local" (default) = the somora server. Otherwise a resource name from resource_list. ' +
     'tmux must be installed there.',
@@ -119,7 +119,7 @@ const FIELD = {
 const TmuxInput = z
   .object({
     action: z
-      .enum(['create', 'start', 'prompt', 'send', 'capture', 'read', 'wait_idle', 'list', 'explain', 'kill'])
+      .enum(['create', 'start', 'prompt', 'new_conversation', 'send', 'capture', 'read', 'wait_idle', 'list', 'explain', 'kill'])
       .describe(FIELD.action),
     target: z.string().min(1).default('local').describe(FIELD.target),
     name: z.string().min(1).max(100).optional().describe(FIELD.name),
@@ -187,7 +187,7 @@ interface WaitingEntry {
   since: number | null;
 }
 /** prompt, start: what drive.ts reports, under its action. */
-type DriveActionResult = { action: 'prompt' | 'start'; target: string; name: string } & DriveResult;
+type DriveActionResult = { action: 'prompt' | 'start' | 'new_conversation'; target: string; name: string; command?: string } & DriveResult;
 
 interface CaptureResult {
   action: 'capture' | 'read';
@@ -231,7 +231,14 @@ interface ListResult {
     name: string;
     created_at: number;
     windows: number;
-    agent?: { name: string; state: AgentStateField['state'] };
+    agent?: {
+      name: string;
+      state: AgentStateField['state'];
+      /** Working on the current task for this long, in seconds. */
+      working_for_s?: number;
+      /** How long the last finished task took, in seconds. */
+      last_task_s?: number;
+    };
     attention?: AttentionDisplay;
   }>;
 }
@@ -412,7 +419,7 @@ function lookupSessionKind(target: string, name: string): string | undefined {
   }
 }
 
-const ACTIONS = ['create', 'start', 'prompt', 'send', 'capture', 'read', 'wait_idle', 'list', 'explain', 'kill'] as const;
+const ACTIONS = ['create', 'start', 'prompt', 'new_conversation', 'send', 'capture', 'read', 'wait_idle', 'list', 'explain', 'kill'] as const;
 
 export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
   name: 'tmux',
@@ -439,9 +446,11 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     '4. A long task: prompt with wait:false or let wait time out, then end your turn — somora wakes ' +
     'you with a [tmux attention] turn when the agent stops working or needs an answer. While you are ' +
     'busy, results carry waiting_for_you: your other sessions that finished or wait at a dialog.\n' +
-    'Coordinating several agents: one session per agent with a clear name and role, a fresh session ' +
-    'or the agent\'s /new for a new task, and ask each to end its work with a short status ' +
-    '(done | blocked, files changed, open questions).' +
+    '5. new_conversation: a fresh conversation before a new task (sends /new or /clear as the agent ' +
+    'needs, answers Codex\'s worktree question with the current one, returns when idle).\n' +
+    'Coordinating several agents: one session per agent with a clear name and role, a fresh ' +
+    'conversation per task, and ask each to end its work with a short status (done | blocked, files ' +
+    'changed, open questions). list shows each agent\'s state with working_for_s / last_task_s.' +
     '\n\n' +
     'Shells and REPLs: send types text (keys, \\n = Enter) or key names (key: Escape, C-c, C-u, Tab, ' +
     'F1, "C-x C-c"); capture reads the pane, with wait_pattern it waits for a text; wait_idle waits ' +
@@ -486,6 +495,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       return input.wait === false ? 30_000 : (input.wait_timeout_ms ?? DEFAULT_PROMPT_TIMEOUT_MS) + 15_000;
     }
     if (input.action === 'start') return (input.wait_timeout_ms ?? DEFAULT_START_TIMEOUT_MS) + 15_000;
+    if (input.action === 'new_conversation') return (input.wait_timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS) + 15_000;
     if (input.action === 'capture' && input.wait_pattern) return (input.wait_timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS) + 2_000;
     if (input.action === 'wait_idle') return (input.wait_timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS) + 5_000;
     if (input.action === 'list') return 30_000;
@@ -585,6 +595,19 @@ async function handle(input: z.infer<typeof TmuxInput>, ctx: { agent: string; se
       if (r.submitted) noteObservation(target, name, ctx, r.settled ? seen(r.agent) : undefined);
       logger.info({ msg: 'tmux.prompt', target, name, ok: r.ok, error: r.error, state: r.agent?.state, ms: r.ms, text_len: input.text.length });
       return { action: 'prompt', target, name, ...r };
+    }
+
+    if (input.action === 'new_conversation') {
+      const name = requireName(input, 'new_conversation');
+      const kind = lookupSessionKind(target, name) ?? input.kind;
+      const r = await newConversation(run, name, {
+        timeoutMs: input.wait_timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS,
+        lines: input.lines ?? 40,
+        ...(kind ? { kind } : {}),
+      });
+      if (r.ok) noteObservation(target, name, ctx, seen(r.agent));
+      logger.info({ msg: 'tmux.new_conversation', target, name, ok: r.ok, error: r.error, command: r.command, state: r.agent?.state, ms: r.ms });
+      return { action: 'new_conversation', target, name, ...r };
     }
 
     if (input.action === 'send') {
@@ -833,11 +856,20 @@ async function handle(input: z.infer<typeof TmuxInput>, ctx: { agent: string; se
           }
         }),
       );
-      const sessions = r.sessions.map((s) => ({
-        ...s,
-        ...(agents.has(s.name) ? { agent: agents.get(s.name)! } : {}),
-        ...(mirror[originKey(target, s.name)] ? { attention: mirror[originKey(target, s.name)] } : {}),
-      }));
+      const now = Date.now();
+      const sessions = r.sessions.map((s) => {
+        const att = mirror[originKey(target, s.name)];
+        const a = agents.get(s.name);
+        const timing = {
+          ...(a?.state === 'working' && att?.task_started_at ? { working_for_s: Math.round((now - att.task_started_at) / 1000) } : {}),
+          ...(att?.last_task_ms ? { last_task_s: Math.round(att.last_task_ms / 1000) } : {}),
+        };
+        return {
+          ...s,
+          ...(a ? { agent: { ...a, ...timing } } : {}),
+          ...(att ? { attention: att } : {}),
+        };
+      });
       return { action: 'list', ok: r.ok, target, count: sessions.length, sessions };
     }
 

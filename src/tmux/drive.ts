@@ -49,6 +49,7 @@ export type DriveError =
   | 'agent_prompt_stalled' // sent, but no sign the agent took it
   | 'agent_not_ready' // start: the agent did not come up ready
   | 'not_a_shell' // start: another program holds the pane
+  | 'not_supported' // new_conversation: no known command for this agent
   | 'timeout'
   | 'tmux_error';
 
@@ -88,6 +89,9 @@ const HINT: Record<Exclude<DriveError, 'tmux_error'>, string> = {
     'The text was sent but the agent showed no sign of taking it. Capture to look before sending again — ' +
     'it may sit in the input box. Do not send it twice blindly.',
   agent_not_ready: 'The agent did not come up ready. Capture to see why (a login, a dialog, an error).',
+  not_supported:
+    'somora does not know this agent\'s command for a fresh conversation. Send it yourself with prompt ' +
+    '(often /new or /clear), or kill the session and start it anew.',
   not_a_shell:
     'Another program (an editor, a REPL, a running command) holds this session, so the start command was not typed. ' +
     'Capture to see it; use a new session, or end that program first.',
@@ -295,4 +299,63 @@ export async function startAgent(run: Runner, name: string, opts: StartOptions):
     lastState = s === 'idle' && !shows ? null : (s ?? null);
   }
   return fail('agent_not_ready', start, clock, { ...(last?.agent ? { agent: last.agent } : {}), content: contentOf(last?.look, opts.lines) });
+}
+
+/** Each agent's own command for a fresh conversation. */
+export const NEW_CONVERSATION_COMMAND: Record<string, string> = {
+  claude: '/clear',
+  codex: '/new',
+  opencode: '/new',
+  pi: '/new',
+};
+
+export interface NewConversationOptions {
+  timeoutMs: number;
+  lines: number;
+  kind?: string;
+  clock?: DriveClock;
+}
+
+/** Give the agent a fresh conversation: its own command (/new, /clear),
+ *  Codex's follow-up question answered with the current worktree (only
+ *  when that is the preselected choice — anything else is handed back
+ *  as blocked), and back when the agent is idle again. */
+export async function newConversation(
+  run: Runner,
+  name: string,
+  opts: NewConversationOptions,
+): Promise<DriveResult & { command?: string }> {
+  const clock = opts.clock ?? realClock;
+  const start = clock.now();
+  const first = await look(run, name, LOOK_LINES, opts.kind);
+  if ('error' in first) return fail('tmux_error', start, clock, {}, first.error);
+  if (!first.agent) return fail('no_agent', start, clock, { content: contentOf(first.look, opts.lines) });
+  const command = NEW_CONVERSATION_COMMAND[first.agent.name];
+  if (!command) return fail('not_supported', start, clock, { agent: first.agent, content: contentOf(first.look, opts.lines) });
+
+  const sent = await promptAgent(run, name, {
+    text: command,
+    wait: true,
+    timeoutMs: opts.timeoutMs,
+    lines: opts.lines,
+    ...(opts.kind ? { kind: opts.kind } : {}),
+    clock,
+  });
+  if (!sent.ok) return { ...sent, command, ms: clock.now() - start };
+
+  // Codex asks where the new conversation runs.
+  if (sent.agent?.state === 'blocked' && sent.agent.rule === 'somora_new_conversation_dialog') {
+    const dlg = await look(run, name, LOOK_LINES, opts.kind);
+    if ('error' in dlg) return fail('tmux_error', start, clock, {}, dlg.error);
+    const currentPreselected = /^\s*›\s*1\.\s*Use current Git worktree/m.test(dlg.look.screen);
+    if (!currentPreselected) {
+      return { ...fail('agent_blocked', start, clock, { ...(dlg.agent ? { agent: dlg.agent } : {}), content: contentOf(dlg.look, opts.lines) }), command };
+    }
+    const enter = await run(`tmux send-keys -t ${shQuote(`=${name}:`)} Enter`);
+    if (!enter.ok) return fail('tmux_error', start, clock, {}, enter.stderr.trim() || 'Enter failed');
+    const remaining = Math.max(1_000, opts.timeoutMs - (clock.now() - start));
+    const w = await waitSettled(run, name, { timeoutMs: remaining, lines: opts.lines, ...(opts.kind ? { kind: opts.kind } : {}), clock });
+    return { ...w, submitted: true, command, ms: clock.now() - start };
+  }
+  return { ...sent, command, ms: clock.now() - start };
 }

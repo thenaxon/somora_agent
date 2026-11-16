@@ -55,6 +55,7 @@ toolset does not have the tool.
 | `create` | Starts a detached session with a shell in it. Fails when the name is taken, so the agent can reuse the session or pick another name. |
 | `start` | Starts a coding agent: creates the session if needed, types `command` into its shell and returns when the agent is ready. |
 | `prompt` | Hands the coding agent a message and, by default, waits until it is done or stops at a dialog. |
+| `new_conversation` | Gives the coding agent a fresh conversation for the next task and returns when it is ready. |
 | `send` | Types text (`keys`) or presses named keys (`key`). |
 | `capture` | Returns the end of the screen, at once or after waiting for a pattern. |
 | `read` | Like `capture`, with wrapped lines joined: for reading an answer. |
@@ -190,11 +191,31 @@ sending again: the text may still sit in the input box.
 longer with `wait_idle`, or end the turn: the attention watcher wakes
 the agent when it is done.
 
+### A fresh conversation
+
+`new_conversation` clears the agent's conversation before the next
+task, so old context from a finished task does not lead it astray. It
+sends the agent's own command (`/new` for Codex, OpenCode and Pi,
+`/clear` for Claude Code) and returns when the agent is idle again.
+
+Codex then asks where the new conversation runs; somora answers with
+the current worktree when that choice is preselected, otherwise it
+hands the dialog back as `agent_blocked`. An agent whose command somora
+does not know gets `not_supported`: send its command with `prompt`.
+
+### How long a task takes
+
+The attention watcher times every task: from the moment an agent leaves
+idle until it is idle again, a dialog in between included. `list`
+shows `working_for_s` for an agent at work and `last_task_s` for the
+last finished task. The wake line names it too: `… stopped working and
+is idle after 6 min`. A task that starts and ends between two looks of
+the watcher is not timed.
+
 ### Coordinating several agents
 
 One session per agent, each with a readable name and a clear role,
-works best. Give every task to a fresh agent session, or clear it with
-the agent's own command (`/new`, `/clear`). Ask each agent to end with a
+works best. Give every task a fresh conversation (`new_conversation`). Ask each agent to end with a
 short status: done or blocked, the files it changed, open questions.
 A file such as `AGENTS.md` in the project can carry these rules for all
 of them.
@@ -296,7 +317,7 @@ saw it:
 The wake turn carries one of these texts:
 
 ```
-[tmux attention] Session '<name>' (<agent>) stopped working and is idle.
+[tmux attention] Session '<name>' (<agent>) stopped working and is idle after <time>.
 [tmux attention] Session '<name>' (<agent>) needs an answer: it stopped at a dialog.
 ```
 
@@ -348,6 +369,8 @@ For watched sessions `capture`, `read`, `wait_idle` and `list` add:
 | `last_wake_at` | When the last wake turn was started, or `null`. |
 | `wakes_today` | Wake turns for this session today. |
 | `state` | What the watcher saw last: `running`, `ready` or `blocked`. |
+| `task_started_at` | When the current task started, in epoch milliseconds; `null` while idle. |
+| `last_task_ms` | How long the last finished task took. |
 
 ## The environment inside a session
 
@@ -419,7 +442,7 @@ One tool, `tmux`. Only `action` is always required.
 
 | Parameter | Used by | Default | Meaning |
 |---|---|---|---|
-| `action` | all | required | `create`, `start`, `prompt`, `send`, `capture`, `read`, `wait_idle`, `list`, `explain` or `kill`. |
+| `action` | all | required | `create`, `start`, `prompt`, `new_conversation`, `send`, `capture`, `read`, `wait_idle`, `list`, `explain` or `kill`. |
 | `target` | all | `"local"` | `"local"` or the name of an SSH resource. |
 | `name` | all except `list` | required | Session name, up to 100 characters. Use letters, digits, dash and underscore, for example `codex-bugfix-auth`. |
 | `cwd` | `create`, `start` | none | Working directory of a new session's shell. |
@@ -435,7 +458,7 @@ One tool, `tmux`. Only `action` is always required.
 | `lines` | `capture`, `read`, `prompt`, `start`, `wait_idle` | `200` (`prompt`, `start`: 60) | Lines from the end of the pane to return. 1 to 10000. |
 | `wait_pattern` | `capture` | none | Text to wait for. |
 | `wait_mode` | `capture` | `"auto"` | `auto`, `present` or `idle`. |
-| `wait_timeout_ms` | `prompt`, `start`, `capture`, `wait_idle` | `prompt` 300000, `start` 60000, others 30000 | Longest wait. 100 to 600000. |
+| `wait_timeout_ms` | `prompt`, `start`, `new_conversation`, `capture`, `wait_idle` | `prompt` 300000, `start` 60000, others 30000 | Longest wait. 100 to 600000. |
 | `idle_stable_ms` | `capture` in mode `idle`, `wait_idle` on a shell | `500` | How long the screen must stay unchanged. 100 to 10000. |
 | `include_ansi` | `capture` | `false` | `true` keeps colour and style codes in `content`. |
 
@@ -449,11 +472,11 @@ wait at a dialog.
 | Action | More fields |
 |---|---|
 | `create` | `hint`: a reminder of the next calls. |
-| `start`, `prompt` | `agent`, `content`, `ms`; `submitted` and `settled` (`prompt`), `settled` (`start`); on failure `error` (a code from the table above) and `hint`. |
+| `start`, `prompt`, `new_conversation` | `agent`, `content`, `ms`; `submitted` and `settled` (`prompt`, `new_conversation`), `settled` (`start`), `command` (`new_conversation`: the command it sent); on failure `error` (a code from the table above, or `not_supported`) and `hint`. |
 | `send` | `ms`, `agent` (the state a moment after the keys) |
 | `capture`, `read` | `content`, `matched_pattern` (`false` on a timeout or without a pattern), `wait_pattern` (echoed when set), `ms`, `agent`, `attention` |
 | `wait_idle` | `content`, `became_idle`, `ms`, `agent`, `hint`, `attention` |
-| `list` | `count`, `sessions`: each with `name`, `created_at` (epoch milliseconds), `windows`, `agent` (`name`, `state`) and `attention` |
+| `list` | `count`, `sessions`: each with `name`, `created_at` (epoch milliseconds), `windows`, `agent` (`name`, `state`, `working_for_s`, `last_task_s`) and `attention` |
 | `explain` | `agent`, `explain` |
 | `kill` | `was_running`: `false` when the session was already gone. |
 

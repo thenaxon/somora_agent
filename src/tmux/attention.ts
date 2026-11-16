@@ -137,6 +137,12 @@ export interface AttentionDisplay {
   /** Last state the watcher saw: running, ready, or blocked (a dialog
    *  waits for an answer). */
   state: 'running' | 'ready' | 'blocked' | null;
+  /** When the current task started (the agent went from ready to
+   *  running), while it is not ready again; null otherwise. A dialog in
+   *  between belongs to the task. */
+  task_started_at?: number | null;
+  /** How long the last finished task took, start to ready, in ms. */
+  last_task_ms?: number | null;
 }
 
 type AttentionMap = Record<string, AttentionDisplay>;
@@ -186,6 +192,10 @@ export interface AttentionSessionState {
   /** Display flag (see AttentionDisplay.needs_attention). */
   needsAttention: boolean;
   lastEventAt: number | null;
+  /** When the current task started (left ready); null when ready. */
+  taskStartedAt: number | null;
+  /** Duration of the last finished task (start → ready), in ms. */
+  lastTaskMs: number | null;
 }
 
 export function initialAttentionState(): AttentionSessionState {
@@ -201,6 +211,8 @@ export function initialAttentionState(): AttentionSessionState {
     disarmed: false,
     needsAttention: false,
     lastEventAt: null,
+    taskStartedAt: null,
+    lastTaskMs: null,
   };
 }
 
@@ -263,8 +275,17 @@ export function stepAttention(input: AttentionStepInput): {
     s.lastState = effective;
     s.seenRunning = effective === 'running';
     if (effective === 'running') s.lastRunningSeenAt = now;
+    if (effective !== 'ready') s.taskStartedAt = now; // at least since now
     if (effective !== 'blocked') s.lastNotBlockedSeenAt = now;
     return { state: s, action };
+  }
+
+  // Task timing: a task runs from the first look that is not ready (at
+  // work or at a dialog) until ready again.
+  if (effective !== 'ready' && s.taskStartedAt === null) s.taskStartedAt = now;
+  if (effective === 'ready' && s.lastState !== 'ready' && s.taskStartedAt !== null) {
+    s.lastTaskMs = now - s.taskStartedAt;
+    s.taskStartedAt = null;
   }
 
   if (effective !== 'blocked') s.lastNotBlockedSeenAt = now;
@@ -363,5 +384,7 @@ export function toDisplay(s: AttentionSessionState): AttentionDisplay {
     last_wake_at: s.lastWakeAt,
     wakes_today: s.wakesToday,
     state: s.lastState,
+    task_started_at: s.taskStartedAt,
+    last_task_ms: s.lastTaskMs,
   };
 }
