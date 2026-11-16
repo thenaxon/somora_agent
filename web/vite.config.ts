@@ -79,6 +79,18 @@ export default defineConfig({
       '/tmux': { target: proxyTarget, changeOrigin: true, secure: true, ws: true },
       // /terminal/attach is a WS upgrade (plain shell PTY).
       '/terminal': { target: proxyTarget, changeOrigin: true, secure: true, ws: true },
+      // Routes added since the list above was written (sign-in, inbox,
+      // settings window, media, wiki, voice …). Without /auth the sign-in
+      // page says "the server does not answer" and nothing else loads.
+      ...Object.fromEntries(
+        [
+          '/activity', '/auth', '/config', '/images', '/inbox', '/mcp', '/media', '/projects', '/sentinel',
+          '/server', '/sessions', '/settings', '/spawn-cancel', '/team', '/tts', '/video', '/wiki',
+        ].map((route) => [route, { target: proxyTarget, changeOrigin: true, secure: true }]),
+      ),
+      // Realtime voice and speech-to-text may upgrade to a WebSocket.
+      '/voice': { target: proxyTarget, changeOrigin: true, secure: true, ws: true },
+      '/stt': { target: proxyTarget, changeOrigin: true, secure: true, ws: true },
     },
   },
 });
