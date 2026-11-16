@@ -1,6 +1,8 @@
 // The chat's view settings behind one header button (docs/mobile.md
-// "Header"): tool activity, recalled notes, keeping the screen awake and
-// reading replies aloud. They used to be a button each in the header; with
+// "Header"): tool activity, recalled notes and reading replies aloud —
+// what belongs to the agent or session on screen. What belongs to the
+// phone (keeping the screen awake) opens from the koala instead, in the
+// same sheet with a title. They used to be a button each in the header; with
 // all of them shown on a phone they pushed the agent, session and model
 // aside (2026-11-16). What does something or reports something — the work
 // badge, the call button, a builder's lists — stays in the header.
@@ -45,17 +47,18 @@ export function SettingsButton({ open, changed, onToggle }: { open: boolean; cha
   );
 }
 
-export function SettingsSheet({ rows, onClose }: { rows: SettingRow[]; onClose: () => void }) {
+export function SettingsSheet({ rows, onClose, title, label = 'chat settings' }: { rows: SettingRow[]; onClose: () => void; title?: string; label?: string }) {
   return (
     <div className="work-sheet-backdrop" onClick={onClose} role="presentation">
       <div
         className="work-sheet settings-sheet"
         role="dialog"
-        aria-label="chat settings"
-        data-testid="settings-sheet"
+        aria-label={label}
+        data-testid={title ? 'device-sheet' : 'settings-sheet'}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="work-sheet-grip" aria-hidden="true" />
+        {title && <div className="settings-sheet-title">{title}</div>}
         {rows.map((r) => (
           <button
             key={r.id}

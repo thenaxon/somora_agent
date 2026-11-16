@@ -104,6 +104,7 @@ export function MobileApp() {
   const builderTurn = useBuilderTurn(activeAgent, session.id, activeKind === 'builder' && showTools, sessionBusy);
   const [builderOpen, setBuilderOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [deviceOpen, setDeviceOpen] = useState(false);
   const builderPanel = useBuilderPanel(activeAgent, session.id, activeKind === 'builder', builderOpen, sessionBusy);
   // Another agent or session: the sheet belongs to the one it was opened on.
   useEffect(() => setBuilderOpen(false), [activeAgent, session.id]);
@@ -384,6 +385,14 @@ export function MobileApp() {
           { id: 'memory', icon: '🧠', label: 'Recalled notes in chat', hint: 'what memory brought to each turn', on: showMemory, onToggle: toggleMemory, changed: memoryChanged },
         ]
       : []),
+    ...(ttsEnabled && autoPlayAllowOverride && activeAgent
+      ? [{ id: 'voice', icon: autoPlay ? '🔊' : '🔇', label: 'Read replies aloud', hint: 'when you spoke the message', on: autoPlay, onToggle: () => setAutoPlay((v) => !v), changed: autoPlay !== autoPlayDefault }]
+      : []),
+  ];
+
+  // What belongs to the phone, not to the chat on screen: opens from the
+  // koala (docs/mobile.md "Keeping the screen awake").
+  const deviceRows: SettingRow[] = [
     ...(!wakeLock.unsupported
       ? [{
           id: 'awake',
@@ -399,17 +408,35 @@ export function MobileApp() {
           changed: wakeLock.enabled,
         }]
       : []),
-    ...(ttsEnabled && autoPlayAllowOverride && activeAgent
-      ? [{ id: 'voice', icon: autoPlay ? '🔊' : '🔇', label: 'Read replies aloud', hint: 'when you spoke the message', on: autoPlay, onToggle: () => setAutoPlay((v) => !v), changed: autoPlay !== autoPlayDefault }]
-      : []),
   ];
 
   return (
     <div className="mobile-shell">
       <header className="mobile-header">
-        <span className="mobile-header-mark">
-          <Koala size={24} />
-        </span>
+        {deviceRows.length > 0 ? (
+          <button
+            type="button"
+            data-testid="device-button"
+            className="mobile-header-mark mobile-header-mark-button"
+            onClick={() => {
+              setWorkOpen(false);
+              setSessionSheetOpen(false);
+              setBuilderOpen(false);
+              setSettingsOpen(false);
+              setDeviceOpen((v) => !v);
+            }}
+            aria-haspopup="dialog"
+            aria-expanded={deviceOpen}
+            aria-label={deviceRows.some((r) => r.changed) ? 'this phone (some settings on)' : 'this phone'}
+          >
+            <Koala size={24} />
+            {deviceRows.some((r) => r.changed) && <span className="header-settings-dot" data-testid="device-dot" aria-hidden="true" />}
+          </button>
+        ) : (
+          <span className="mobile-header-mark">
+            <Koala size={24} />
+          </span>
+        )}
         {activeAgent ? (
           <button
             type="button"
@@ -417,6 +444,7 @@ export function MobileApp() {
             onClick={() => {
               setWorkOpen(false);
               setSettingsOpen(false);
+              setDeviceOpen(false);
               setBuilderOpen(false);
               setSessionSheetOpen((v) => !v);
             }}
@@ -445,6 +473,7 @@ export function MobileApp() {
           if (!workOpen) refreshWork();
           setSessionSheetOpen(false);
           setSettingsOpen(false);
+          setDeviceOpen(false);
           setBuilderOpen(false);
           setWorkOpen((v) => !v);
         }} />
@@ -456,6 +485,7 @@ export function MobileApp() {
             onToggle={() => {
               setWorkOpen(false);
               setSettingsOpen(false);
+              setDeviceOpen(false);
               setSessionSheetOpen(false);
               setBuilderOpen((v) => !v);
             }}
@@ -492,6 +522,7 @@ export function MobileApp() {
               setWorkOpen(false);
               setSessionSheetOpen(false);
               setBuilderOpen(false);
+              setDeviceOpen(false);
               setSettingsOpen((v) => !v);
             }}
           />
@@ -521,6 +552,7 @@ export function MobileApp() {
       )}
 
       {settingsOpen && settingRows.length > 0 && <SettingsSheet rows={settingRows} onClose={() => setSettingsOpen(false)} />}
+      {deviceOpen && deviceRows.length > 0 && <SettingsSheet title="This phone" label="this phone" rows={deviceRows} onClose={() => setDeviceOpen(false)} />}
       <WorkSheet
         open={workOpen}
         onClose={() => setWorkOpen(false)}

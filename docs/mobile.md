@@ -67,7 +67,8 @@ Otherwise the link points at `127.0.0.1`, which the phone cannot open.
 | Part | What it does |
 |---|---|
 | **Header** | Shows `agent · session ▾ model`. Tap it to switch session or model. On the right: the work badge, in a builder session the **builder** button (a clipboard, with the number of open tasks), with realtime voice the **call** button (a phone), and the **settings** button (sliders). |
-| **Settings** | The sliders button opens a sheet with the chat's view settings: tool activity, recalled notes, keeping the screen awake and reading replies aloud, each where it applies. A dot on the button means at least one of them is not as it starts out. |
+| **Settings** | The sliders button opens a sheet with the settings of the chat on screen: tool activity, recalled notes and reading replies aloud, each where it applies. A dot on the button means at least one of them is not as it starts out. |
+| **This phone** | The koala in the top-left corner opens the settings of the phone itself, whatever chat is open: keeping the screen awake. A dot on the koala means it is on. |
 | **Avatar row** | One tile per agent. Tap to switch. The app remembers the last agent. Long-press a tile to change the order, see below. |
 | **Chat** | The history of the open session, newest first loaded. Scroll to the top, or tap **Load older messages**, for the next older part. Replies are rendered as Markdown. A wide code block scrolls sideways. |
 | **Input bar** | Paperclip, microphone, text field, Send. Enter sends, Shift+Enter starts a new line. |
@@ -234,8 +235,8 @@ the screen follows. After a call ends: **call again** or **close**.
 
 ### Keeping the screen awake
 
-**Keep screen awake** in the settings sheet keeps the display on while
-the app is open. It is off by default and remembered per browser.
+**Keep screen awake** keeps the display on while the app is open. Tap
+the koala in the top-left corner to find it. It is off by default and remembered per browser.
 
 > **Note:** On an iPhone this needs iOS 18.4 or newer. Older versions
 > accept the request and let the screen sleep anyway. The switch still

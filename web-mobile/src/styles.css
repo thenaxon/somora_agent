@@ -1924,3 +1924,21 @@ button { cursor: pointer; }
   border-color: var(--accent-dim);
 }
 .settings-switch.on .settings-switch-knob { transform: translateX(18px); background: var(--accent); }
+
+/* The koala opens the phone's own settings (This phone). */
+.mobile-header-mark-button {
+  position: relative;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+}
+.mobile-header-mark-button:active { opacity: 0.6; }
+.settings-sheet-title {
+  padding: 2px 4px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
