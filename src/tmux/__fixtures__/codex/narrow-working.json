@@ -1,0 +1,10 @@
+{
+ "agent": "codex",
+ "case": "narrow-working",
+ "expected": "working",
+ "note": "64 columns, shell command running",
+ "title": "⠧ Create probe.txt file | cx",
+ "command": "bash",
+ "width": 64,
+ "height": 30
+}

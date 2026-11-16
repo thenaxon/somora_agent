@@ -1,0 +1,10 @@
+{
+ "agent": "claude",
+ "case": "working-writing",
+ "expected": "working",
+ "note": "model streaming a long answer",
+ "title": "✳ Sleep 30 echo command",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

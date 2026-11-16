@@ -1,0 +1,10 @@
+{
+ "agent": "codex",
+ "case": "blocked-startup-daemon",
+ "expected": "blocked",
+ "note": "startup dialog: background server has incompatible settings (choose 1/2/3)",
+ "title": "devbx",
+ "command": "node",
+ "width": 120,
+ "height": 40
+}

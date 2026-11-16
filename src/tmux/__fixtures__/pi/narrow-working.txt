@@ -1,0 +1,30 @@
+
+ The user wants me to run a command that sleeps 30 seconds. The
+ tool has a timeout param, default no timeout. Let me run it
+ with a timeout of maybe 60 seconds.
+
+
+ $ sleep 30; echo SLEPT (timeout 60s)
+
+ Command aborted
+
+ Took 14.9s
+
+
+ Operation aborted
+
+
+ Run 'sleep 20; echo DONE' in the shell and report the output.
+
+
+
+ $ sleep 20; echo DONE (timeout 45s)
+
+ Elapsed 3.0s
+
+
+── ⠋ Working ───────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────
+/tmp/claude-1000/-home-someone-Projects-devbx-somora/155dacd8...
+↑1.5k ↓427 R9.2k CH94.3% 0.3%/700k (auto)  deepseek-v4.1-flash •

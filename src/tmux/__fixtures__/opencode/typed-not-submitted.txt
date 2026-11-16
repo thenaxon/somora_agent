@@ -1,0 +1,40 @@
+
+
+
+
+
+
+
+
+
+
+
+                                                                          ▄
+                                         █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
+                                         █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀
+                                         ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀
+
+                                           /update to upgrade to OpenCode 2.0
+
+                       ┃
+                       ┃  Run the shell command 'sleep 30; echo SLEPT' and then tell me what it
+                       ┃  printed.
+                       ┃
+                       ┃  Build·DeepSeek V4.1 Flash (llmhost, profile flash-v41) Llmhost (
+                       ┃                                                         LiteLLM
+                       ┃                                                         router)
+                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                                                       tab agents  ctrl+p commands
+
+
+
+
+
+
+
+
+
+
+  /tmp/claude-1000/-home-someone-Projects-devbx-somora/155dacd8-85ee-4562-b64d-472d87ffadad/scratchpad/         1.19.5
+  corpus-work/oc
+

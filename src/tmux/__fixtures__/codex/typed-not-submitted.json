@@ -1,0 +1,10 @@
+{
+ "agent": "codex",
+ "case": "typed-not-submitted",
+ "expected": "idle",
+ "note": "text typed, Enter not pressed",
+ "title": "cx",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

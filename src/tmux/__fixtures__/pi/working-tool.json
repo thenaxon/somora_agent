@@ -1,0 +1,10 @@
+{
+ "agent": "pi",
+ "case": "working-tool",
+ "expected": "working",
+ "note": "bash tool running (sleep 30)",
+ "title": "π - demo",
+ "command": "pi",
+ "width": 120,
+ "height": 40
+}

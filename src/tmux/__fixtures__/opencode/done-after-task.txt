@@ -1,0 +1,40 @@
+  ┃
+
+  ┃
+  ┃  $ sleep 30; echo SLEPT
+  ┃
+  ┃  (no output)
+  ┃
+  ┃  <shell_metadata>
+  ┃  User aborted the command
+  ┃  </shell_metadata>
+  ┃
+
+     ▣  Build · DeepSeek V4.1 Flash (llmhost, profile flash-v41) · interrupted
+
+  ┃
+  ┃  Afterwards also print the current date.
+  ┃
+
+  ┃
+  ┃  Use your read tool to read the file /etc/os-release and tell me the PRETTY_NAME.
+  ┃
+
+  ┃
+  ┃  $ sleep 30; echo SLEPT
+  ┃
+  ┃  SLEPT
+  ┃
+
+     → Read /etc/os-release
+
+     ▣  Build · DeepSeek V4.1 Flash (llmhost, profile flash-v41)
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · DeepSeek V4.1 Flash (llmhost, profile flash-v41) Llmhost (LiteLLM router)
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /tmp/claude-1000/-home-someone-Projects-devbx-somora/155dacd8-85ee-4562-b64d-472d87ffadad/   11.5K (2%ctrl+p
+   scratchpad/corpus-work/oc                                                                             commands
+

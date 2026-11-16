@@ -1,0 +1,40 @@
+
+ $ python3 -c 'import calc; print(calc.mul(6,7))'
+
+ 42
+
+ Took 0.0s
+
+
+ Done. calc.py now has:
+
+ ```python
+   def mul(a, b):
+       """Return the product of a and b."""
+       return a * b
+ ```
+
+ Verification output: 42
+
+
+ Run the shell command 'sleep 30; echo SLEPT' and then tell me what it printed.
+
+
+ The user wants me to run a command that sleeps 30 seconds. The tool has a timeout param, default no timeout. Let me
+ run it with a timeout of maybe 60 seconds.
+
+
+ $ sleep 30; echo SLEPT (timeout 60s)
+
+ Command aborted
+
+ Took 14.9s
+
+
+ Operation aborted
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Afterwards also print the current date.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/claude-1000/-home-someone-Projects-devbx-somora/155dacd8-85ee-4562-b64d-472d87ffadad/scratchpad/corpus-work/demo
+↑1.4k ↓366 R7.3k 0.3%/700k (auto)                                                           deepseek-v4.1-flash • medium

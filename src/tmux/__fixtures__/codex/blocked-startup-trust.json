@@ -1,0 +1,10 @@
+{
+ "agent": "codex",
+ "case": "blocked-startup-trust",
+ "expected": "blocked",
+ "note": "startup dialog: trust this folder?",
+ "title": "devbx",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

@@ -1,0 +1,10 @@
+{
+ "agent": "pi",
+ "case": "typed-not-submitted",
+ "expected": "idle",
+ "note": "text typed in the editor, Enter not pressed",
+ "title": "π - demo",
+ "command": "pi",
+ "width": 120,
+ "height": 40
+}

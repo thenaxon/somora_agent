@@ -1,0 +1,10 @@
+{
+ "agent": "codex",
+ "case": "startup-idle",
+ "expected": "idle",
+ "note": "home screen after trust, empty prompt",
+ "title": "cx",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

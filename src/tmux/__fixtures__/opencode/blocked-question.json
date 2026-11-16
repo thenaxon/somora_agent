@@ -1,0 +1,10 @@
+{
+ "agent": "opencode",
+ "case": "blocked-question",
+ "expected": "blocked",
+ "note": "question tool with options (select/submit/dismiss)",
+ "title": "OC | Sleep command output check",
+ "command": "opencode",
+ "width": 120,
+ "height": 40
+}

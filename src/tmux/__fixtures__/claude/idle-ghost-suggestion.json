@@ -1,0 +1,10 @@
+{
+ "agent": "claude",
+ "case": "idle-ghost-suggestion",
+ "expected": "idle",
+ "note": "turn ended, dim suggestion \"! sleep 25; echo FG\" in the input line (not real input)",
+ "title": "✳ Sleep 30 echo command",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

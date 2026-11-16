@@ -1,0 +1,10 @@
+{
+ "agent": "claude",
+ "case": "blocked-question",
+ "expected": "blocked",
+ "note": "AskUserQuestion dialog with options",
+ "title": "✳ Sleep 30 echo command",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

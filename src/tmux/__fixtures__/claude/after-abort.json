@@ -1,0 +1,10 @@
+{
+ "agent": "claude",
+ "case": "after-abort",
+ "expected": "idle",
+ "note": "Escape stopped the essay; the queued message then ran and finished",
+ "title": "✳ Sleep 30 echo command",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

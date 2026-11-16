@@ -1,0 +1,10 @@
+{
+ "agent": "opencode",
+ "case": "startup-idle",
+ "expected": "idle",
+ "note": "home screen, empty prompt",
+ "title": "OpenCode",
+ "command": "opencode",
+ "width": 120,
+ "height": 40
+}

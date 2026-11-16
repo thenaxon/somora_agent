@@ -1,0 +1,40 @@
+
+ ▀▀█  v1.5.2
+ █▀ █ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+
+ fd not found. Downloading...
+ fd installed to /home/someone/.pi/agent/bin/fd
+
+ Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set -g extended-keys on` to ~/.tmux.conf
+ and restart tmux.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/claude-1000/-home-someone-Projects-devbx-somora/155dacd8-85ee-4562-b64d-472d87ffadad/scratchpad/corpus-work/demo
+0.0%/700k (auto)                                                                            deepseek-v4.1-flash • medium

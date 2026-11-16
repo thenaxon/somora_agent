@@ -1,0 +1,10 @@
+{
+ "agent": "opencode",
+ "case": "blocked-permission",
+ "expected": "blocked",
+ "note": "external directory permission dialog (Allow once / Allow always / Reject)",
+ "title": "OC | Sleep command output check",
+ "command": "opencode",
+ "width": 120,
+ "height": 40
+}

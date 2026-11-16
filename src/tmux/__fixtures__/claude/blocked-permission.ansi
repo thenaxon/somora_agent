@@ -1,0 +1,173 @@
+[38;5;174m ▐[48;5;16m▛███▛█[39m[49m   [1mClaude[0m [1mCode[0m [38;5;246mv2.1.325[39m
+[38;5;174m▝▜[48;5;16m█████[49m█▀[39m  [38;5;246mHaiku[39m [38;5;246m5.5[39m [38;5;246m·[39m [38;5;246mClaude[39m [38;5;246mUltra[39m
+[38;5;174m ▝▝[39m   [38;5;174m▝▝[39m   [38;5;246m/…/-home-someone-Projects-devbx-somora/155dacd8-85ee-4562-b64d-472d87ffadad/scratchpad/corpus-work/cc[39m
+
+[38;5;220m⚠[39m [38;5;220mYour[39m [38;5;220mlogin[39m [38;5;220mexpires[39m [38;5;220min[39m [38;5;220m3[39m [38;5;220mdays[38;5;246m ·[39m [38;5;246mrun[39m [38;5;246m/login[39m [38;5;246mto[39m [38;5;246mrenew[39m
+
+[38;5;246m[48;5;237m❯ [38;5;231mRun the shell command 'sleep 30; echo SLEPT' and then tell me what it printed.[39m
+
+[38;5;211m[49m●[39m [1mBash[0m(sleep 30; echo SLEPT)
+[38;5;246m  ⎿  [38;5;211mError: Blocked: sleep 30 followed by: echo SLEPT. To wait for a condition, use Monitor with an until-loop (e.g. [39m
+     [38;5;211m`until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain [39m
+     [38;5;211mshorter sleeps to work around this block.[39m
+
+[38;5;231m●[39m The harness blocked the foreground [38;5;153msleep 30[39m. Its suggested alternative is to run the command in the background, so
+  I'll do that.
+
+[38;5;114m●[39m [1mBash[0m(sleep 30; echo SLEPT)
+[38;5;246m  ⎿  Running in the background (↓ to manage)[39m
+[38;5;246m  ⎿  Allowed by auto mode[39m
+
+[38;5;231m●[39m The command is running in the background. I'll report its output when it finishes.
+
+[38;5;246m✻[39m [38;5;246mBaked for 6s · done 19:01[39m
+
+[38;5;114m●[39m Background command "Sleep 30 seconds then print SLEPT, in background" completed (exit code 0)
+
+  [38;5;246mRead [1m1[0m[38;5;246m file (ctrl+o to expand)[39m
+
+[38;5;231m●[39m It printed [38;5;153mSLEPT[39m. The foreground run was blocked by the harness, so I ran the same command in the background, and it
+  exited with code 0.
+
+[38;5;246m✻[39m [38;5;246mCooked for 3s · done 19:01[39m
+
+[38;5;246m[48;5;237m❯ [38;5;231mNow run 'sleep 25; echo FG' in the foreground, do not put it in the background, and wait for it.[39m
+
+[38;5;211m[49m●[39m [1mBash[0m(sleep 25; echo FG)
+[38;5;246m  ⎿  [38;5;211mError: Blocked: sleep 25 followed by: echo FG. To wait for a condition, use Monitor with an until-loop (e.g. `until
+[39m     [38;5;211m<check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter [39m
+     [38;5;211msleeps to work around this block.[39m
+
+[38;5;231m●[39m I couldn't run it in the foreground. The harness blocked [38;5;153msleep 25; echo FG[39m with the same rule as before: a [38;5;153msleep[39m
+  followed by an [38;5;153mecho[39m isn't allowed in the foreground. The block says to use Monitor for waiting on a condition or
+  background mode for commands I started. I didn't split the sleep into shorter pieces, because the block forbids that
+  too.
+
+  Options:
+  - Run it yourself with [38;5;153m! sleep 25; echo FG[39m in the prompt. The output will appear in this conversation.
+  - I can run it in the background again. That's the only way I can get the sleep to finish here, but it won't be a
+    foreground run.
+
+[38;5;246m✻[39m [38;5;246mCrunched for 5s · done 19:01[39m
+
+[38;5;246m[48;5;237m❯ [38;5;231mWrite a detailed 900-word technical essay about how terminal multiplexers work, with headings. Write it directly in [39m
+  [38;5;231myour reply.[39m
+[49m
+[38;5;231m●[39m [1;3;4mHow Terminal Multiplexers Work[0m
+
+  A terminal multiplexer such as tmux or GNU screen lets one terminal window host many independent shell sessions. Those
+  sessions keep running after you close the window, and you can reattach from another machine later. The mechanism is
+  less magical than it looks. It rests on three ideas: pseudo-terminals, a terminal emulator that lives inside the
+  multiplexer, and a client-server split connected by a Unix socket.
+
+  [1mThe Problem Being Solved[0m
+
+  A shell normally expects a terminal, and the terminal is the program that displays output and sends keystrokes. When
+  you close the window, the terminal emulator exits, the kernel delivers [38;5;153mSIGHUP[39m to the session leader, and the shell and
+  its jobs die. A multiplexer solves this by taking over the role of the terminal on the shell's behalf, so the shell's
+  lifetime is decoupled from any particular window.
+
+  [1mPseudo-Terminals: The Foundation[0m
+
+  Unix provides pseudo-terminals (PTYs) as pairs of file descriptors. The [1mmaster[0m side is held by a controlling program,
+  and the [1mslave[0m side is presented to a process as its terminal device ([38;5;153m/dev/pts/N[39m). Bytes written to the master appear
+  as input on the slave, and output written by the slave is readable from the master.
+
+  A multiplexer opens one PTY pair per window (called a "pane" or "window" depending on the tool). It forks, makes the
+  slave the controlling terminal of a new session with [38;5;153msetsid()[39m, and execs the user's shell. The shell believes it is
+  talking to a real terminal, and the multiplexer holds the master end. Because the server owns the master descriptors,
+  the shell's terminal does not disappear when any client disconnects.
+
+  [1mThe Client-Server Split[0m
+
+  Most multiplexers run as two kinds of process:
+
+  - [1mThe server[0m is a long-lived daemon. It owns all PTY masters, all shell processes, and the state of every window and
+    pane. It listens on a Unix domain socket, typically under [38;5;153m/tmp/tmux-UID/default[39m for tmux.
+  - [1mThe client[0m is the program you run in your real terminal. It connects to the socket, puts your terminal into raw
+    mode, forwards keystrokes to the server, and paints whatever the server sends back.
+
+  When you run [38;5;153mtmux attach[39m, you are starting a client. When you detach with [38;5;153mCtrl-b d[39m, the client exits and the server
+  continues. Because the server owns the processes, closing the client does not affect them. Starting a new client
+  against the same socket gives you the same sessions again. Multiple clients can attach to one session, and tmux
+  resizes the view to the smallest attached client by default.
+
+  [1mParsing Output: The Virtual Terminal[0m
+
+  Shell output is not simply copied to the screen. Programs emit escape sequences: cursor movement ([38;5;153mESC [ 10 ; 20 H[39m),
+  colors ([38;5;153mESC [ 31 m[39m), clearing lines, scroll regions, alternate-screen switching for editors like vim, and mouse
+  reporting. The multiplexer must understand these, because it has to maintain the correct contents of every pane even
+  when no client is watching.
+
+  So each pane has a [1mvirtual screen[0m: an in-memory grid of cells, each holding a character and its attributes, plus a
+  cursor position and a scrollback buffer. As bytes arrive from the PTY master, the server runs them through a
+  terminal-emulator state machine (following standards such as the DEC VT100 family and xterm). Printable characters are
+  written into the grid, and control sequences update the cursor, attributes, and scroll region. This is why a
+  multiplexer can restore a full-screen application exactly when you reattach, and why its scrollback and copy mode work
+  even though the outer terminal never saw that history.
+
+  [1mRendering to the Real Terminal[0m
+
+  The server composes all panes in a window into one logical screen, adds borders and a status line, and then has to
+  emit escape sequences that make your real terminal look the same. It does not redraw everything on each change. It
+  keeps a model of what the client terminal last displayed and computes a minimal diff, emitting only the cells that
+  changed. This keeps latency low over slow SSH links and avoids flicker.
+
+  Input flows the other way. The client forwards raw keystrokes to the server. The server checks them against its prefix
+  key ([38;5;153mCtrl-b[39m by default) and key bindings. Ordinary keys go to the active pane's PTY master, and prefix commands are
+  handled internally. Mouse events and bracketed paste are translated according to the active pane's requested modes.
+
+  [1mResizing and Signals[0m
+
+  When the terminal window changes size, the client sends the new dimensions to the server. The server resizes each
+  affected pane's virtual screen, calls [38;5;153mioctl(TIOCSWINSZ)[39m on the PTY master, and the kernel delivers [38;5;153mSIGWINCH[39m to the
+  foreground process group inside that pane. Programs like vim and less then redraw themselves. Because the server owns
+  the resize logic, each pane can have a different size from its neighbors.
+
+  [1mProcess Management and Cleanup[0m
+
+  Each pane's shell is its own session leader with its own controlling PTY, so job control ([38;5;153mCtrl-z[39m, [38;5;153mfg[39m) works normally
+  inside it. When a shell exits, the server notices the closed PTY, removes the pane, and rearranges the layout. If the
+  last pane in a window closes, the window closes. If the last window in a session closes, the session ends, and when
+  the server has no sessions left, it may exit.
+
+  [1mWhy the Design Matters[0m
+
+  The architecture trades a small amount of complexity for significant flexibility. The server holds the authoritative
+  state, so clients are disposable. Emulating the terminal inside the multiplexer allows features such as scrollback
+  search, synchronized panes, and reattachment to full-screen programs. The main costs are a second layer of
+  escape-sequence handling, which occasionally disagrees with the outer terminal on newer features, and the need to pass
+  through capabilities like true color and clipboard access carefully. Understanding the server, the PTY pairs, and the
+  virtual screen explains nearly every behavior users notice, from why detaching keeps programs running to why a pane's
+  colors may look slightly different from the window's.
+
+[38;5;246m✻[39m [38;5;246mBaked for 13s · done 19:02[39m
+
+[38;5;246m[48;5;237m❯ [38;5;231mAfterwards also add a one-line summary.[39m
+
+[38;5;231m[49m●[39m Terminal multiplexers keep shells alive by owning the PTY masters on a long-lived server, emulating each pane's screen
+  in memory, and letting disposable clients attach and detach over a Unix socket.
+
+[38;5;246m✻[39m [38;5;246mCogitated for 1s · done 19:02[39m
+
+[38;5;246m[48;5;237m❯ [38;5;231mCreate an empty file named probe.txt here with the Bash command: touch probe.txt[39m
+
+[38;5;246m[49m●[39m [1mBash[0m(touch probe.txt && ls -l probe.txt)
+[38;5;246m  ⎿  Waiting…[39m
+
+[38;5;153m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [1m[38;5;153mBash command[0m
+ [1mTip: auto mode handles these prompts for you — choose "switch to auto mode" below[0m
+ [38;5;246mCreate[39m [38;5;246mempty[39m [38;5;246mprobe.txt[39m [38;5;246min[39m [38;5;246mworking[39m [38;5;246mdirectory[39m [38;5;246mand[39m [38;5;246mconfirm[39m [38;5;246mit[39m [38;5;246mexists[39m
+[38;5;239m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+[39m touch probe.txt && ls -l probe.txt
+[38;5;239m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+[39m Do you want to proceed?
+ [38;5;153m❯[39m [38;5;246m1.[39m [38;5;153mYes[39m
+   [38;5;246m2.[39m Yes, and always allow access to [1m/tmp/claude-1000/-home-someone-Projects-devbx-somora/155dacd8-85ee-4562-b64d-472d[0m
+      [1m87ffadad/scratchpad/corpus-work/cc[0m from this project
+   [38;5;246m3.[39m Yes, and switch to auto mode[38;5;246m ·[39m [38;5;246mauto[39m [38;5;246mmode[39m [38;5;246mhandles[39m [38;5;246mthese[39m [38;5;246mprompts[39m [38;5;246mfor[39m [38;5;246myou[39m
+   [38;5;246m4.[39m No
+
+ [38;5;246mEsc[39m [38;5;246mto[39m [38;5;246mcancel[39m [38;5;246m·[39m [38;5;246mTab[39m [38;5;246mto[39m [38;5;246mamend[39m
+

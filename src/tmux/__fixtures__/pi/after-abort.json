@@ -1,0 +1,10 @@
+{
+ "agent": "pi",
+ "case": "after-abort",
+ "expected": "idle",
+ "note": "Escape pressed while working",
+ "title": "π - demo",
+ "command": "pi",
+ "width": 120,
+ "height": 40
+}

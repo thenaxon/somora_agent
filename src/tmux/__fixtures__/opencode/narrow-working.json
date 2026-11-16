@@ -1,0 +1,10 @@
+{
+ "agent": "opencode",
+ "case": "narrow-working",
+ "expected": "working",
+ "note": "64 columns wide, bash tool running",
+ "title": "OC | Sleep command output check",
+ "command": "opencode",
+ "width": 64,
+ "height": 30
+}

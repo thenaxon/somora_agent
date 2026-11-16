@@ -1,0 +1,10 @@
+{
+ "agent": "opencode",
+ "case": "done-after-task",
+ "expected": "idle",
+ "note": "turn finished, answer on screen",
+ "title": "OC | Sleep command output check",
+ "command": "opencode",
+ "width": 120,
+ "height": 40
+}

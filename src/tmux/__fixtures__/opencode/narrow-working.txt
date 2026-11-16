@@ -1,0 +1,30 @@
+  ┃  Which language should the next function be written in?
+  ┃  Python
+  ┃
+
+     You chose Python. I'll wait for your next instruction
+     before writing any code.
+
+     ▣  Build · DeepSeek V4.1 Flash (llmhost, profile flash-
+     v41) · 19.6s
+
+  ┃
+  ┃  Run 'sleep 20; echo DONE' in the shell and report the
+  ┃  output.
+  ┃
+
+  ┃
+  ┃  ⠋ sleep 20; echo DONE
+  ┃
+
+     ▣  Build · DeepSeek V4.1 Flash (llmhost, profile flash-
+     v41)
+
+  ┃
+  ┃
+  ┃
+  ┃  Buil·DeepSeek V4.1 Flash (llmhost, profile flash-v41) C
+  ┃  d                                                     e
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   ⬝⬝⬝⬝⬝⬝⬝⬝  esc interrupt         11.9K (2%)  ctrl+p commands
+

@@ -1,0 +1,10 @@
+{
+ "agent": "codex",
+ "case": "narrow-done",
+ "expected": "idle",
+ "note": "64 columns, answer finished",
+ "title": "Create probe.txt file | cx",
+ "command": "bash",
+ "width": 64,
+ "height": 30
+}

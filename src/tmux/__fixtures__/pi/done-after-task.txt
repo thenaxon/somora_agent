@@ -1,0 +1,40 @@
+
+
+ read calc.py
+
+
+
+ edit calc.py
+
+  1 def add(a, b):
+  2     return a + b
+ +3
+ +4
+ +5 def mul(a, b):
+ +6     """Return the product of a and b."""
+ +7     return a * b
+
+
+
+ $ python3 -c 'import calc; print(calc.mul(6,7))'
+
+ 42
+
+ Took 0.0s
+
+
+ Done. calc.py now has:
+
+ ```python
+   def mul(a, b):
+       """Return the product of a and b."""
+       return a * b
+ ```
+
+ Verification output: 42
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/claude-1000/-home-someone-Projects-devbx-somora/155dacd8-85ee-4562-b64d-472d87ffadad/scratchpad/corpus-work/demo
+↑1.3k ↓267 R5.5k CH97.6% 0.3%/700k (auto)                                                   deepseek-v4.1-flash • medium

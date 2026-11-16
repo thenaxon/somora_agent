@@ -1,0 +1,10 @@
+{
+ "agent": "codex",
+ "case": "working-with-queued",
+ "expected": "working",
+ "note": "text typed + Enter while working: NOT queued, stays in input (\"tab to queue message\")",
+ "title": "⠏ Run sleep command | cx",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

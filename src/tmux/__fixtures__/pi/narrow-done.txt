@@ -1,0 +1,30 @@
+
+ Command aborted
+
+ Took 14.9s
+
+
+ Operation aborted
+
+
+ Run 'sleep 20; echo DONE' in the shell and report the output.
+
+
+
+ $ sleep 20; echo DONE (timeout 45s)
+
+ DONE
+
+ Took 20.0s
+
+
+ It printed DONE.
+
+ Note: the previous sleep 30 command was aborted before
+ completing, so it produced no output.
+
+────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────
+/tmp/claude-1000/-home-someone-Projects-devbx-somora/155dacd8...
+↑1.6k ↓457 R11k CH97.1% 0.3%/700k (auto)  deepseek-v4.1-flash •

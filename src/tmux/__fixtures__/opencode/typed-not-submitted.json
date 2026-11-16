@@ -1,0 +1,10 @@
+{
+ "agent": "opencode",
+ "case": "typed-not-submitted",
+ "expected": "idle",
+ "note": "home screen, text typed, Enter not pressed",
+ "title": "OpenCode",
+ "command": "opencode",
+ "width": 120,
+ "height": 40
+}

@@ -1,0 +1,40 @@
+[38;5;174m ▐[48;5;16m▛███▛█[39m[49m   [1mClaude[0m [1mCode[0m [38;5;246mv2.1.325[39m
+[38;5;174m▝▜[48;5;16m█████[49m█▀[39m  [38;5;246mHaiku[39m [38;5;246m5.5[39m [38;5;246m·[39m [38;5;246mClaude[39m [38;5;246mUltra[39m
+[38;5;174m ▝▝[39m   [38;5;174m▝▝[39m   [38;5;246m/…/-home-someone-Projects-devbx-somora/155dacd8-85ee-4562-b64d-472d87ffadad/scratchpad/corpus-work/cc[39m
+
+[38;5;220m⚠[39m [38;5;220mYour[39m [38;5;220mlogin[39m [38;5;220mexpires[39m [38;5;220min[39m [38;5;220m3[39m [38;5;220mdays[38;5;246m ·[39m [38;5;246mrun[39m [38;5;246m/login[39m [38;5;246mto[39m [38;5;246mrenew[39m
+
+[38;5;246m[48;5;237m❯ [38;5;231mRun the shell command 'sleep 30; echo SLEPT' and then tell me what it printed.[39m
+
+[38;5;211m[49m●[39m [1mBash[0m(sleep 30; echo SLEPT)
+[38;5;246m  ⎿  [38;5;211mError: Blocked: sleep 30 followed by: echo SLEPT. To wait for a condition, use Monitor with an until-loop (e.g. [39m
+     [38;5;211m`until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain [39m
+     [38;5;211mshorter sleeps to work around this block.[39m
+
+[38;5;231m●[39m The harness blocked the foreground [38;5;153msleep 30[39m. Its suggested alternative is to run the command in the background, so
+  I'll do that.
+
+[38;5;114m●[39m [1mBash[0m(sleep 30; echo SLEPT)
+[38;5;246m  ⎿  Running in the background (↓ to manage)[39m
+[38;5;246m  ⎿  Allowed by auto mode[39m
+
+[38;5;231m●[39m The command is running in the background. I'll report its output when it finishes.
+
+[38;5;246m✻[39m [38;5;246mBaked for 6s · done 19:01 · 1 shell still running[39m
+
+[38;5;244m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯ 
+[38;5;244m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m  [38;5;220m⏵⏵[39m [38;5;220mauto[39m [38;5;220mmode[39m [38;5;220mon[38;5;246m ·[39m [38;5;44m1[39m [38;5;44mshell[38;5;246m ·[39m [38;5;246m↓ to manage[39m
+
+
+
+
+
+
+
+
+
+
+
+

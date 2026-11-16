@@ -1,0 +1,157 @@
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Haiku 5.5 · Claude Ultra
+ ▝▝   ▝▝   /…/-home-someone-Projects-devbx-somora/155dacd8-85ee-4562-b64d-472d87ffadad/scratchpad/corpus-work/cc
+
+⚠ Your login expires in 3 days · run /login to renew
+
+❯ Run the shell command 'sleep 30; echo SLEPT' and then tell me what it printed.
+
+● Bash(sleep 30; echo SLEPT)
+  ⎿  Error: Blocked: sleep 30 followed by: echo SLEPT. To wait for a condition, use Monitor with an until-loop (e.g.
+     `until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain
+     shorter sleeps to work around this block.
+
+● The harness blocked the foreground sleep 30. Its suggested alternative is to run the command in the background, so
+  I'll do that.
+
+● Bash(sleep 30; echo SLEPT)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  Allowed by auto mode
+
+● The command is running in the background. I'll report its output when it finishes.
+
+✻ Baked for 6s · done 19:01
+
+● Background command "Sleep 30 seconds then print SLEPT, in background" completed (exit code 0)
+
+  Read 1 file (ctrl+o to expand)
+
+● It printed SLEPT. The foreground run was blocked by the harness, so I ran the same command in the background, and it
+  exited with code 0.
+
+✻ Cooked for 3s · done 19:01
+
+❯ Now run 'sleep 25; echo FG' in the foreground, do not put it in the background, and wait for it.
+
+● Bash(sleep 25; echo FG)
+  ⎿  Error: Blocked: sleep 25 followed by: echo FG. To wait for a condition, use Monitor with an until-loop (e.g. `until
+     <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter
+     sleeps to work around this block.
+
+● I couldn't run it in the foreground. The harness blocked sleep 25; echo FG with the same rule as before: a sleep
+  followed by an echo isn't allowed in the foreground. The block says to use Monitor for waiting on a condition or
+  background mode for commands I started. I didn't split the sleep into shorter pieces, because the block forbids that
+  too.
+
+  Options:
+  - Run it yourself with ! sleep 25; echo FG in the prompt. The output will appear in this conversation.
+  - I can run it in the background again. That's the only way I can get the sleep to finish here, but it won't be a
+    foreground run.
+
+✻ Crunched for 5s · done 19:01
+
+❯ Write a detailed 900-word technical essay about how terminal multiplexers work, with headings. Write it directly in
+  your reply.
+
+● How Terminal Multiplexers Work
+
+  A terminal multiplexer such as tmux or GNU screen lets one terminal window host many independent shell sessions. Those
+  sessions keep running after you close the window, and you can reattach from another machine later. The mechanism is
+  less magical than it looks. It rests on three ideas: pseudo-terminals, a terminal emulator that lives inside the
+  multiplexer, and a client-server split connected by a Unix socket.
+
+  The Problem Being Solved
+
+  A shell normally expects a terminal, and the terminal is the program that displays output and sends keystrokes. When
+  you close the window, the terminal emulator exits, the kernel delivers SIGHUP to the session leader, and the shell and
+  its jobs die. A multiplexer solves this by taking over the role of the terminal on the shell's behalf, so the shell's
+  lifetime is decoupled from any particular window.
+
+  Pseudo-Terminals: The Foundation
+
+  Unix provides pseudo-terminals (PTYs) as pairs of file descriptors. The master side is held by a controlling program,
+  and the slave side is presented to a process as its terminal device (/dev/pts/N). Bytes written to the master appear
+  as input on the slave, and output written by the slave is readable from the master.
+
+  A multiplexer opens one PTY pair per window (called a "pane" or "window" depending on the tool). It forks, makes the
+  slave the controlling terminal of a new session with setsid(), and execs the user's shell. The shell believes it is
+  talking to a real terminal, and the multiplexer holds the master end. Because the server owns the master descriptors,
+  the shell's terminal does not disappear when any client disconnects.
+
+  The Client-Server Split
+
+  Most multiplexers run as two kinds of process:
+
+  - The server is a long-lived daemon. It owns all PTY masters, all shell processes, and the state of every window and
+    pane. It listens on a Unix domain socket, typically under /tmp/tmux-UID/default for tmux.
+  - The client is the program you run in your real terminal. It connects to the socket, puts your terminal into raw
+    mode, forwards keystrokes to the server, and paints whatever the server sends back.
+
+  When you run tmux attach, you are starting a client. When you detach with Ctrl-b d, the client exits and the server
+  continues. Because the server owns the processes, closing the client does not affect them. Starting a new client
+  against the same socket gives you the same sessions again. Multiple clients can attach to one session, and tmux
+  resizes the view to the smallest attached client by default.
+
+  Parsing Output: The Virtual Terminal
+
+  Shell output is not simply copied to the screen. Programs emit escape sequences: cursor movement (ESC [ 10 ; 20 H),
+  colors (ESC [ 31 m), clearing lines, scroll regions, alternate-screen switching for editors like vim, and mouse
+  reporting. The multiplexer must understand these, because it has to maintain the correct contents of every pane even
+  when no client is watching.
+
+  So each pane has a virtual screen: an in-memory grid of cells, each holding a character and its attributes, plus a
+  cursor position and a scrollback buffer. As bytes arrive from the PTY master, the server runs them through a
+  terminal-emulator state machine (following standards such as the DEC VT100 family and xterm). Printable characters are
+  written into the grid, and control sequences update the cursor, attributes, and scroll region. This is why a
+  multiplexer can restore a full-screen application exactly when you reattach, and why its scrollback and copy mode work
+  even though the outer terminal never saw that history.
+
+  Rendering to the Real Terminal
+
+  The server composes all panes in a window into one logical screen, adds borders and a status line, and then has to
+  emit escape sequences that make your real terminal look the same. It does not redraw everything on each change. It
+  keeps a model of what the client terminal last displayed and computes a minimal diff, emitting only the cells that
+  changed. This keeps latency low over slow SSH links and avoids flicker.
+
+  Input flows the other way. The client forwards raw keystrokes to the server. The server checks them against its prefix
+  key (Ctrl-b by default) and key bindings. Ordinary keys go to the active pane's PTY master, and prefix commands are
+  handled internally. Mouse events and bracketed paste are translated according to the active pane's requested modes.
+
+  Resizing and Signals
+
+  When the terminal window changes size, the client sends the new dimensions to the server. The server resizes each
+  affected pane's virtual screen, calls ioctl(TIOCSWINSZ) on the PTY master, and the kernel delivers SIGWINCH to the
+  foreground process group inside that pane. Programs like vim and less then redraw themselves. Because the server owns
+  the resize logic, each pane can have a different size from its neighbors.
+
+  Process Management and Cleanup
+
+  Each pane's shell is its own session leader with its own controlling PTY, so job control (Ctrl-z, fg) works normally
+  inside it. When a shell exits, the server notices the closed PTY, removes the pane, and rearranges the layout. If the
+  last pane in a window closes, the window closes. If the last window in a session closes, the session ends, and when
+  the server has no sessions left, it may exit.
+
+  Why the Design Matters
+
+  The architecture trades a small amount of complexity for significant flexibility. The server holds the authoritative
+  state, so clients are disposable. Emulating the terminal inside the multiplexer allows features such as scrollback
+  search, synchronized panes, and reattachment to full-screen programs. The main costs are a second layer of
+  escape-sequence handling, which occasionally disagrees with the outer terminal on newer features, and the need to pass
+  through capabilities like true color and clipboard access carefully. Understanding the server, the PTY pairs, and the
+  virtual screen explains nearly every behavior users notice, from why detaching keeps programs running to why a pane's
+  colors may look slightly different from the window's.
+
+✻ Baked for 13s · done 19:02
+
+❯ Afterwards also add a one-line summary.
+
+● Terminal multiplexers keep shells alive by owning the PTY masters on a long-lived server, emulating each pane's screen
+  in memory, and letting disposable clients attach and detach over a Unix socket.
+
+✻ Cogitated for 1s · done 19:02
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)
+

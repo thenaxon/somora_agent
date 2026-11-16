@@ -1,0 +1,10 @@
+{
+ "agent": "pi",
+ "case": "narrow-working",
+ "expected": "working",
+ "note": "64 columns wide, bash tool running",
+ "title": "π - demo",
+ "command": "pi",
+ "width": 64,
+ "height": 30
+}

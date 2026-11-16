@@ -1,0 +1,10 @@
+{
+ "agent": "pi",
+ "case": "working-with-queued",
+ "expected": "working",
+ "note": "second message sent while the bash tool runs",
+ "title": "π - demo",
+ "command": "pi",
+ "width": 120,
+ "height": 40
+}

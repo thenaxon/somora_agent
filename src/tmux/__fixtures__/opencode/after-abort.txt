@@ -1,0 +1,40 @@
+
+  ┃
+  ┃  Run the shell command 'sleep 30; echo SLEPT' and then tell me what it printed.
+  ┃
+
+  ┃
+  ┃  $ sleep 30; echo SLEPT
+  ┃
+  ┃  (no output)
+  ┃
+  ┃  <shell_metadata>
+  ┃  User aborted the command
+  ┃  </shell_metadata>
+  ┃
+
+     ▣  Build · DeepSeek V4.1 Flash (llmhost, profile flash-v41) · interrupted
+
+  ┃
+  ┃  Afterwards also print the current date.
+  ┃
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · DeepSeek V4.1 Flash (llmhost, profile flash-v41) Llmhost (LiteLLM router)
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /tmp/claude-1000/-home-someone-Projects-devbx-somora/155dacd8-85ee-4562-b64d-472d87ffadad/   tab      ctrl+p
+   scratchpad/corpus-work/oc                                                                    agents   commands
+

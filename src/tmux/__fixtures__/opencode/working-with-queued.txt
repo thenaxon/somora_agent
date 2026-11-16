@@ -1,0 +1,40 @@
+
+  ┃
+  ┃  Run the shell command 'sleep 30; echo SLEPT' and then tell me what it printed.
+  ┃
+
+  ┃
+  ┃  ⠴ sleep 30; echo SLEPT
+  ┃
+
+     ▣  Build · DeepSeek V4.1 Flash (llmhost, profile flash-v41)
+
+  ┃
+  ┃  Afterwards also print the current date.
+  ┃   QUEUED
+  ┃
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · DeepSeek V4.1 Flash (llmhost, profile flash-v41) Llmhost (LiteLLM router)
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   ⬝⬝■■■■■■  esc interrupt                                                                 tab agents  ctrl+p commands
+

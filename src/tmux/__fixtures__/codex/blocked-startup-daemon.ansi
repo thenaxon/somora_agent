@@ -1,0 +1,40 @@
+
+  [1mBackground server has incompatible feature settings[0m
+  This session requires api_key_model_discovery to be disabled
+  Restart will use these shared feature settings:
+  [2m  api_key_model_discovery = false[0m
+  [2m  auth_elicitation = true[0m
+  [2m  code_mode_host = true[0m
+  [2m  mcp_oauth_refresh_coordination = false[0m
+  These settings persist and can disable functionality for other clients. Restart may interrupt active or queued work.
+
+
+  1. Run without daemon this time
+  2. Restart with these settings
+[1;7m› 3. Cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

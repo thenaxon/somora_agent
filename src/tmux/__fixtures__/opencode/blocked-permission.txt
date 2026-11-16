@@ -1,0 +1,40 @@
+  ┃
+  ┃  $ sleep 30; echo SLEPT
+  ┃
+  ┃  (no output)
+  ┃
+  ┃  <shell_metadata>
+  ┃  User aborted the command
+  ┃  </shell_metadata>
+  ┃
+
+     ▣  Build · DeepSeek V4.1 Flash (llmhost, profile flash-v41) · interrupted
+
+  ┃
+  ┃  Afterwards also print the current date.
+  ┃
+
+  ┃
+  ┃  Use your read tool to read the file /etc/os-release and tell me the PRETTY_NAME.
+  ┃
+
+  ┃
+  ┃  ⠸ sleep 30; echo SLEPT
+  ┃
+
+     ⠸ Read /etc/os-release
+
+     ▣  Build · DeepSeek V4.1 Flash (llmhost, profile flash-v41)
+
+  ┃
+  ┃  △ Permission required
+  ┃    ← Access external directory /etc
+  ┃
+  ┃  Patterns
+  ┃
+  ┃  - /etc/*
+  ┃
+  ┃
+  ┃   Allow once   Allow always   Reject                                 ctrl+f fullscreen  ⇆ select  enter confirm
+  ┃
+

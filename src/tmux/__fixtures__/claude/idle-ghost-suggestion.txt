@@ -1,0 +1,58 @@
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Haiku 5.5 · Claude Ultra
+ ▝▝   ▝▝   /…/-home-someone-Projects-devbx-somora/155dacd8-85ee-4562-b64d-472d87ffadad/scratchpad/corpus-work/cc
+
+⚠ Your login expires in 3 days · run /login to renew
+
+❯ Run the shell command 'sleep 30; echo SLEPT' and then tell me what it printed.
+
+● Bash(sleep 30; echo SLEPT)
+  ⎿  Error: Blocked: sleep 30 followed by: echo SLEPT. To wait for a condition, use Monitor with an until-loop (e.g.
+     `until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain
+     shorter sleeps to work around this block.
+
+● The harness blocked the foreground sleep 30. Its suggested alternative is to run the command in the background, so
+  I'll do that.
+
+● Bash(sleep 30; echo SLEPT)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  Allowed by auto mode
+
+● The command is running in the background. I'll report its output when it finishes.
+
+✻ Baked for 6s · done 19:01
+
+● Background command "Sleep 30 seconds then print SLEPT, in background" completed (exit code 0)
+
+  Read 1 file (ctrl+o to expand)
+
+● It printed SLEPT. The foreground run was blocked by the harness, so I ran the same command in the background, and it
+  exited with code 0.
+
+✻ Cooked for 3s · done 19:01
+
+❯ Now run 'sleep 25; echo FG' in the foreground, do not put it in the background, and wait for it.
+
+● Bash(sleep 25; echo FG)
+  ⎿  Error: Blocked: sleep 25 followed by: echo FG. To wait for a condition, use Monitor with an until-loop (e.g. `until
+     <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter
+     sleeps to work around this block.
+
+● I couldn't run it in the foreground. The harness blocked sleep 25; echo FG with the same rule as before: a sleep
+  followed by an echo isn't allowed in the foreground. The block says to use Monitor for waiting on a condition or
+  background mode for commands I started. I didn't split the sleep into shorter pieces, because the block forbids that
+  too.
+
+  Options:
+  - Run it yourself with ! sleep 25; echo FG in the prompt. The output will appear in this conversation.
+  - I can run it in the background again. That's the only way I can get the sleep to finish here, but it won't be a
+    foreground run.
+
+✻ Crunched for 5s · done 19:01
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ ! sleep 25; echo FG
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)
+
+

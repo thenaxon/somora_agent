@@ -1,0 +1,10 @@
+{
+ "agent": "opencode",
+ "case": "working-with-queued",
+ "expected": "working",
+ "note": "second message sent while working",
+ "title": "OC | Sleep command output check",
+ "command": "opencode",
+ "width": 120,
+ "height": 40
+}

@@ -1,0 +1,10 @@
+{
+ "agent": "claude",
+ "case": "typed-not-submitted",
+ "expected": "idle",
+ "note": "text typed, Enter not pressed",
+ "title": "✳ Claude Code",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

@@ -1,0 +1,10 @@
+{
+ "agent": "pi",
+ "case": "done-after-task",
+ "expected": "idle",
+ "note": "task finished, answer on screen",
+ "title": "π - demo",
+ "command": "pi",
+ "width": 120,
+ "height": 40
+}

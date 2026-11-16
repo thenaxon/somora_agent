@@ -1,0 +1,10 @@
+{
+ "agent": "codex",
+ "case": "working-tool",
+ "expected": "working",
+ "note": "shell command running (sleep 30)",
+ "title": "⠧ Run sleep command | cx",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

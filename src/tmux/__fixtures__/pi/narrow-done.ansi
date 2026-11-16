@@ -1,0 +1,30 @@
+
+ [2mCommand aborted
+
+[0m [2mTook 14.9s[0m
+
+
+ [38;5;1mOperation aborted[39m
+
+
+ Run 'sleep 20; echo DONE' in the shell and report the output.
+
+
+
+ [1m$ sleep 20; echo DONE[0;2m (timeout 45s)[0m
+
+ [2mDONE[0m
+
+ [2mTook 20.0s[0m
+
+
+ It printed [38;5;5mDONE[39m.
+
+ Note: the previous [38;5;5msleep 30[39m command was aborted before
+ completing, so it produced no output.
+
+[38;5;6m────────────────────────────────────────────────────────────────
+[7m[39m [0m
+[38;5;6m────────────────────────────────────────────────────────────────
+[2m[39m/tmp/claude-1000/-home-someone-Projects-devbx-somora/155dacd8...
+↑1.6k ↓457 R11k CH97.1% 0.3%/700k (auto)  deepseek-v4.1-flash •

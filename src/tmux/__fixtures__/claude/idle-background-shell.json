@@ -1,0 +1,10 @@
+{
+ "agent": "claude",
+ "case": "idle-background-shell",
+ "expected": "idle",
+ "note": "turn ended, the Bash command keeps running in the background (\"1 shell still running\")",
+ "title": "✳ Sleep 30 echo command",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

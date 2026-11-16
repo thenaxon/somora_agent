@@ -1,0 +1,30 @@
+
+
+› Explain in three short paragraphs what a sandbox is. Take
+  your time.
+
+
+• A sandbox is an isolated environment where a program or
+  command can run with limited access to files, devices, or
+  networks. It helps contain mistakes and reduce the effects of
+  harmful or unintended actions.
+
+  In this session, the sandbox is set to read-only, so commands
+  can inspect files but cannot create or change them. That’s why
+  touch probe.txt failed.
+
+  A command can sometimes be requested to run outside the
+  sandbox with elevated permissions. That requires approval; the
+  earlier request was interrupted, so I can’t tell whether the
+  file was created.
+  └ Tip: Press ^t to open the full transcript.
+
+  Worked for 2s • 6:59 PM
+
+
+› Ask Codex to do anything
+
+  GPT-6-Luna default · /tmp/claude-1000/-home-someone-Projects-
+  devbx-somora/155dacd8-85ee-4562-b64d-472d87ffadad/scratchpad/
+  corpus-work/cx · Create probe.txt file
+  ← for agents · ? for shortcuts       ⚠ 1 warning · f2 to view

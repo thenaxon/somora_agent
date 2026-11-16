@@ -1,0 +1,10 @@
+{
+ "agent": "pi",
+ "case": "narrow-done",
+ "expected": "idle",
+ "note": "64 columns, task finished",
+ "title": "π - demo",
+ "command": "pi",
+ "width": 64,
+ "height": 30
+}

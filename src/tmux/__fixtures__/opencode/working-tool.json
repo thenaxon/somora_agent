@@ -1,0 +1,10 @@
+{
+ "agent": "opencode",
+ "case": "working-tool",
+ "expected": "working",
+ "note": "bash tool running (sleep 30)",
+ "title": "OC | Sleep command output check",
+ "command": "opencode",
+ "width": 120,
+ "height": 40
+}

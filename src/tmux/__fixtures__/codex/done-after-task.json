@@ -1,0 +1,10 @@
+{
+ "agent": "codex",
+ "case": "done-after-task",
+ "expected": "idle",
+ "note": "turn finished, answer on screen",
+ "title": "Run sleep command | cx",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

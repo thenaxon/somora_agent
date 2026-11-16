@@ -1,0 +1,10 @@
+{
+ "agent": "codex",
+ "case": "after-abort",
+ "expected": "idle",
+ "note": "Escape while working; the typed text is still in the input",
+ "title": "Run sleep command | cx",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

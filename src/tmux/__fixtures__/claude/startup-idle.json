@@ -1,0 +1,10 @@
+{
+ "agent": "claude",
+ "case": "startup-idle",
+ "expected": "idle",
+ "note": "home screen after trust, auto mode, empty prompt",
+ "title": "✳ Claude Code",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

@@ -1,0 +1,10 @@
+{
+ "agent": "codex",
+ "case": "blocked-approval",
+ "expected": "blocked",
+ "note": "command approval dialog (Yes / don't ask again / No)",
+ "title": "[ ! ] Action Required | Create probe.txt file | cx",
+ "command": "bash",
+ "width": 120,
+ "height": 40
+}

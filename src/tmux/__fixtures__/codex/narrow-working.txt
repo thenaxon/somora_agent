@@ -1,0 +1,30 @@
+› Explain in three short paragraphs what a sandbox is. Take yo…
+  harmful or unintended actions.
+
+  In this session, the sandbox is set to read-only, so commands
+  can inspect files but cannot create or change them. That’s why
+  touch probe.txt failed.
+
+  A command can sometimes be requested to run outside the
+  sandbox with elevated permissions. That requires approval; the
+  earlier request was interrupted, so I can’t tell whether the
+  file was created.
+
+  Worked for 2s • 6:59 PM
+
+
+› Run the read-only command 'sleep 20' in the shell, then say
+  DONE.
+
+
+• I’ll run sleep 20 in the current folder.
+
+◦ Working (5s • esc to interrupt) · 1 background terminal runni…
+
+
+› Ask Codex to do anything
+
+  GPT-6-Luna default · /tmp/claude-1000/-home-someone-Projects-
+  devbx-somora/155dacd8-85ee-4562-b64d-472d87ffadad/scratchpad/
+  corpus-work/cx · Create probe.txt file
+  ← for agents · ? for shortcuts       ⚠ 1 warning · f2 to view

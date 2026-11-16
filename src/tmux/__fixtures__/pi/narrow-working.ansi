@@ -1,0 +1,30 @@
+
+ [2;3mThe user wants me to run a command that sleeps 30 seconds. The
+[0m [2;3mtool has a timeout param, default no timeout. Let me run it
+[0m [2;3mwith a timeout of maybe 60 seconds.[0m
+
+
+ [1m$ sleep 30; echo SLEPT[0;2m (timeout 60s)[0m
+
+ [2mCommand aborted
+
+[0m [2mTook 14.9s[0m
+
+
+ [38;5;1mOperation aborted[39m
+
+
+ Run 'sleep 20; echo DONE' in the shell and report the output.
+
+
+
+ [1m$ sleep 20; echo DONE[0;2m (timeout 45s)[0m
+
+ [2mElapsed 3.0s[0m
+
+
+[38;5;6m── ⠋[39m [38;5;6mWorking ───────────────────────────────────────────────────
+[7m[39m [0m
+[38;5;6m────────────────────────────────────────────────────────────────
+[2m[39m/tmp/claude-1000/-home-someone-Projects-devbx-somora/155dacd8...
+↑1.5k ↓427 R9.2k CH94.3% 0.3%/700k (auto)  deepseek-v4.1-flash •
