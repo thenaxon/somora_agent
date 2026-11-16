@@ -111,6 +111,9 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal', isBack, onAtta
     }
 
     function layout(): void {
+      // Below the smallest font the session no longer fits: the window
+      // scrolls instead of hiding the rest.
+      el!.style.overflow = fixed ? 'auto' : '';
       if (fixed) {
         if (term.cols !== fixed.cols || term.rows !== fixed.rows) term.resize(fixed.cols, fixed.rows);
         fitFont();
