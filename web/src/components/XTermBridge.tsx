@@ -192,7 +192,12 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal', isBack, onAtta
           // the server knows we're alive; never render control frames.
           try {
             const msg = JSON.parse(data) as { type?: string } & Record<string, unknown>;
-            if (msg.type === 'attached') onAttachedRef.current?.(msg);
+            if (msg.type === 'attached') {
+              onAttachedRef.current?.(msg);
+              // The server's terminal exists now: send the size again in
+              // case the first one beat it (older servers dropped it).
+              sendResize();
+            }
             if (msg.type === 'ping') {
               try {
                 sock.send('{"type":"pong"}');

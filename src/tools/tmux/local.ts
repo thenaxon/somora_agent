@@ -112,10 +112,14 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
  *  tmux's default (window-size latest) the last client to attach — a
  *  small terminal window in the web client — shrank every agent's pane
  *  to 67×7, and its state was misread (2026-11-16 acceptance run).
- *  window-size manual keeps the size whoever attaches. */
+ *  window-size manual keeps the size whoever attaches. And while any
+ *  client is attached to the tmux server (a web view of another
+ *  session), new-session ignores -x/-y and takes that client's size
+ *  (seen 2026-11-16: 80x23), so after manual the size is set again. */
 export const AGENT_PANE_SIZE = '-x 160 -y 45';
 export function fixWindowSize(name: string): string {
-  return `tmux set-option -w -t ${shQuote(`=${name}:`)} window-size manual`;
+  const t = shQuote(`=${name}:`);
+  return `tmux set-option -w -t ${t} window-size manual && tmux resize-window -t ${t} ${AGENT_PANE_SIZE}`;
 }
 
 export interface TmuxLocalCreateOptions {

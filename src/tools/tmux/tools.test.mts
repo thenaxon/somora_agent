@@ -30,5 +30,5 @@ test('every result names the caller\'s other sessions that finished or wait at a
 
 test('a created session has a fixed size that attaching clients do not change', () => {
   assert.equal(AGENT_PANE_SIZE, '-x 160 -y 45');
-  assert.equal(fixWindowSize('codex-1'), "tmux set-option -w -t '=codex-1:' window-size manual");
+  assert.equal(fixWindowSize('codex-1'), "tmux set-option -w -t '=codex-1:' window-size manual && tmux resize-window -t '=codex-1:' -x 160 -y 45");
 });

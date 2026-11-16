@@ -35,6 +35,29 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
      *  the tmux list first) is killed at once instead of living on with
      *  its heartbeat (Fable review 2026-11-10 Nr. 26). */
     __closed?: boolean;
+    /** The client's size, when it arrived before the PTY was there
+     *  (onOpen awaits an import or the tmux list first): applied once
+     *  the PTY starts. Dropping it left the view at 80x24 for good —
+     *  the client only sends again when its window changes. */
+    __size?: { cols: number; rows: number };
+  }
+
+  /** Remember a resize that came before the PTY. */
+  function stashEarlySize(raw: PtyWsBag | undefined, data: unknown): void {
+    if (!raw || typeof data !== 'string') return;
+    try {
+      const msg = JSON.parse(data) as { type?: string; cols?: number; rows?: number };
+      if (msg.type === 'resize' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
+        raw.__size = { cols: Math.max(2, msg.cols), rows: Math.max(2, msg.rows) };
+      }
+    } catch {
+      /* not a control frame */
+    }
+  }
+
+  /** Give a just-started PTY the size its client sent before it existed. */
+  function applyEarlySize(raw: PtyWsBag): void {
+    if (raw.__pty && raw.__size) raw.__pty.resize(raw.__size.cols, raw.__size.rows);
   }
 
   function armTerminalHeartbeat(
@@ -116,6 +139,7 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
                 return;
               }
               raw.__pty = term;
+              applyEarlySize(raw);
               armTerminalHeartbeat(ws, raw, 'terminal.attach');
             }
             logger.info({ msg: 'terminal.attach.open', shell, cwd });
@@ -131,7 +155,10 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
           const raw = ws.raw as PtyWsBag | undefined;
           if (raw) raw.__lastSeenAt = Date.now();
           const term = raw?.__pty;
-          if (!term) return;
+          if (!term) {
+            stashEarlySize(raw, evt.data);
+            return;
+          }
           const data = evt.data;
           if (typeof data === 'string') {
             // Text frame = control message (JSON): resize, or the pong
@@ -252,6 +279,7 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
                 return;
               }
               raw.__pty = term;
+              applyEarlySize(raw);
               armTerminalHeartbeat(ws, raw, 'tmux.attach');
             }
             logger.info({ msg: 'tmux.attach.open', session });
@@ -268,7 +296,10 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
           const raw = ws.raw as PtyWsBag | undefined;
           if (raw) raw.__lastSeenAt = Date.now();
           const term = raw?.__pty;
-          if (!term) return;
+          if (!term) {
+            stashEarlySize(raw, evt.data);
+            return;
+          }
           const data = evt.data;
           if (typeof data === 'string') {
             // Text frame = control message (JSON): resize, or the pong
