@@ -5,7 +5,7 @@ import { useBrowsers } from './BrowserProvider';
 // tinted per agent) + live host CPU/mem from `/host-stats` + clock.
 
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Grid3x3, LogOut, Maximize, Minimize, Monitor, Pin, Power, RefreshCw, Settings, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { Check, ChevronDown, Grid3x3, LayersArrowDown, LayersArrowUp, LogOut, Maximize, Minimize, Monitor, Pin, Power, RefreshCw, Settings, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { Koala } from './Koala';
 import type { WindowState } from '../types/window';
 import { api, type AgentInfo } from '../lib/api';
@@ -605,13 +605,15 @@ export function Taskbar({
       {onShowDesktop && (
         <button
           type="button"
-          className={`taskbar-show-desktop${desktopShown ? ' shown' : ''}`}
+          className={`taskbar-tool taskbar-show-desktop${desktopShown ? ' shown' : ''}`}
           aria-pressed={desktopShown}
-          title={desktopShown ? 'Bring the windows back' : 'Show desktop'}
+          title={desktopShown ? 'Bring the windows back' : 'Show desktop — minimize all windows'}
           aria-label="Show desktop"
           data-testid="show-desktop"
           onClick={onShowDesktop}
-        />
+        >
+          {desktopShown ? <LayersArrowUp size={16} /> : <LayersArrowDown size={16} />}
+        </button>
       )}
     </div>
   );

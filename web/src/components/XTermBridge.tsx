@@ -25,7 +25,19 @@ interface Props {
    *  yet — usually "tmux" or "shell" so the user knows what's
    *  spinning up. Defaults to "terminal". */
   busyLabel?: string;
+  /** After the server closed the terminal on purpose (the tmux session
+   *  ended or does not exist), ask every few seconds whether it is back
+   *  and attach again when it is — an agent's session started anew
+   *  under the same name shows up in the window that is still open.
+   *  Without it a closed terminal stays closed (a plain shell). */
+  isBack?: () => Promise<boolean>;
+  /** Called when the server confirms the attach, with what it sent
+   *  (tmux: `{type:'attached', sessionId, createdEpoch}`). */
+  onAttached?: (msg: Record<string, unknown>) => void;
 }
+
+/** How often a closed terminal asks whether its session is back. */
+const BACK_CHECK_MS = 3_000;
 
 type Status = 'connecting' | 'open' | 'reconnecting' | 'closed' | 'error';
 
@@ -35,7 +47,12 @@ const STALE_AFTER_MS = 60_000;
 const STALE_CHECK_MS = 10_000;
 const RECONNECT_MAX_DELAY_MS = 15_000;
 
-export function XTermBridge({ attachPath, busyLabel = 'terminal' }: Props) {
+export function XTermBridge({ attachPath, busyLabel = 'terminal', isBack, onAttached }: Props) {
+  // A ref, so a new function each render does not reconnect the terminal.
+  const isBackRef = useRef(isBack);
+  isBackRef.current = isBack;
+  const onAttachedRef = useRef(onAttached);
+  onAttachedRef.current = onAttached;
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<Status>('connecting');
   const [statusDetail, setStatusDetail] = useState<string | null>(null);
@@ -69,6 +86,35 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal' }: Props) {
     let ws: WebSocket | null = null;
     let disposed = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let backTimer: ReturnType<typeof setInterval> | null = null;
+
+    /** Closed on purpose: wait for the session to come back, then
+     *  attach again on a clean screen. */
+    function waitForReturn(): void {
+      if (disposed || backTimer || !isBackRef.current) return;
+      let asking = false;
+      backTimer = setInterval(() => {
+        const check = isBackRef.current;
+        if (disposed || asking || !check) return;
+        asking = true;
+        check()
+          .then((back) => {
+            if (!back || disposed || !backTimer) return;
+            clearInterval(backTimer);
+            backTimer = null;
+            term.reset();
+            setStatus('connecting');
+            setStatusDetail(null);
+            connect();
+          })
+          .catch(() => {
+            /* server unreachable — ask again next time */
+          })
+          .finally(() => {
+            asking = false;
+          });
+      }, BACK_CHECK_MS);
+    }
     let attempt = 0;
     let lastMsgAt = 0;
     let announcedDrop = false;
@@ -123,6 +169,11 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal' }: Props) {
 
       sock.onopen = () => {
         if (disposed || ws !== sock) return;
+        // Connected — whatever path got here, stop waiting for a return.
+        if (backTimer) {
+          clearInterval(backTimer);
+          backTimer = null;
+        }
         attempt = 0;
         announcedDrop = false;
         lastMsgAt = Date.now();
@@ -140,7 +191,8 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal' }: Props) {
           // Text frame = control message (heartbeat). Answer pings so
           // the server knows we're alive; never render control frames.
           try {
-            const msg = JSON.parse(data) as { type?: string };
+            const msg = JSON.parse(data) as { type?: string } & Record<string, unknown>;
+            if (msg.type === 'attached') onAttachedRef.current?.(msg);
             if (msg.type === 'ping') {
               try {
                 sock.send('{"type":"pong"}');
@@ -165,6 +217,10 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal' }: Props) {
           setStatus('closed');
           setStatusDetail(ev.reason || `code ${ev.code}`);
           term.write(`\r\n\x1b[33m[somora] ${busyLabel} closed: ${ev.reason || `code ${ev.code}`}\x1b[0m\r\n`);
+          if (isBackRef.current) {
+            term.write(`\x1b[33m[somora] attaches again when the session is started anew…\x1b[0m\r\n`);
+            waitForReturn();
+          }
           return;
         }
         scheduleReconnect();
@@ -183,6 +239,10 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal' }: Props) {
 
     function onVisible(): void {
       if (document.visibilityState !== 'visible' || disposed) return;
+      // Closed on purpose and waiting for the session's return: that
+      // wait decides when to attach (attaching now could take the
+      // session from the client that took it over).
+      if (backTimer) return;
       // Coming back from a background tab / sleep: reconnect a dead or
       // stale socket immediately instead of waiting out the backoff.
       if (ws && ws.readyState === WebSocket.OPEN && Date.now() - lastMsgAt <= STALE_AFTER_MS) return;
@@ -222,6 +282,7 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal' }: Props) {
       document.removeEventListener('visibilitychange', onVisible);
       clearInterval(staleTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (backTimer) clearInterval(backTimer);
       ro.disconnect();
       dataDisposable.dispose();
       try {

@@ -389,19 +389,12 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .taskbar-logo.open { background: rgba(var(--tint-rgb), 0.06); }
 .taskbar-logo:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 
-/* "Show desktop" — a thin strip at the right end, as on Windows. */
+/* "Show desktop" — at the right end, after the clock. */
 .taskbar-show-desktop {
-  align-self: stretch;
-  width: 8px;
-  margin: 8px -8px 8px 8px;
-  padding: 0;
-  border: 0;
-  border-left: 1px solid var(--line);
-  background: transparent;
-  cursor: pointer;
+  margin-left: 6px;
+  padding: 0 9px;
 }
-.taskbar-show-desktop:hover { background: rgba(var(--tint-rgb), 0.1); }
-.taskbar-show-desktop.shown { background: rgba(var(--accent-rgb), 0.25); }
+.taskbar-show-desktop.shown { color: var(--accent); background: rgba(var(--accent-rgb), 0.12); }
 
 /* ===== Start menu (koala) ===== */
 .start-menu {

@@ -191,7 +191,8 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
             return;
           }
           const sessions = await listTmuxSessions();
-          if (!sessions.find((s) => s.name === session)) {
+          const found = sessions.find((s) => s.name === session);
+          if (!found) {
             ws.close(1008, `tmux session '${session}' not found`);
             return;
           }
@@ -215,6 +216,14 @@ export function registerTerminalRoutes(app: Hono, routeDeps: TerminalRoutesDeps)
                 env: { ...process.env, TERM: 'xterm-256color' },
               },
             );
+            // Which session this is: a client that sees it end can tell a
+            // session started anew under the same name (new id) from the
+            // same one taken over by another client.
+            try {
+              ws.send(JSON.stringify({ type: 'attached', sessionId: found.sessionId ?? null, createdEpoch: found.createdEpoch }));
+            } catch {
+              /* socket closed mid-write */
+            }
             // PTY → WS. node-pty data is a string; we send as binary so
             // xterm.js decodes the bytes verbatim (tmux emits UTF-8).
             term.onData((data: string) => {

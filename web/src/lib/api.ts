@@ -167,6 +167,8 @@ export interface TmuxSessionInfo {
   activeCommand: string | null;
   activeTitle: string | null;
   createdEpoch: number | null;
+  /** tmux's session id (`$12`); new for a session started anew under the same name. */
+  sessionId?: string;
   lastActivityEpoch: number | null;
   origin?: {
     name: string;

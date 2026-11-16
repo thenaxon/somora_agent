@@ -24,6 +24,9 @@ export interface TmuxSessionInfo {
   /** Unix epoch seconds of last user activity per tmux
    *  (`#{session_last_attached}` returns 0 if never attached). */
   lastActivityEpoch: number | null;
+  /** tmux's own id (`#{session_id}`, `$12`): a session started anew
+   *  under the same name gets a new one. */
+  sessionId?: string;
   /** Origin metadata when somora's `tmux create` produced this
    *  session. Absent → user/host-shell-created → "orphan" in UI. */
   origin?: TmuxOrigin;
@@ -39,7 +42,7 @@ export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
   // Format string fields are tab-separated to survive session names
   // with spaces in them. Order: name, windows, activeCmd, activeTitle,
   // created (epoch), lastAttached (epoch).
-  const fmt = '#{session_name}\t#{session_windows}\t#{pane_current_command}\t#{window_name}\t#{session_created}\t#{session_last_attached}';
+  const fmt = '#{session_name}\t#{session_windows}\t#{pane_current_command}\t#{window_name}\t#{session_created}\t#{session_last_attached}\t#{session_id}';
   let raw: string;
   try {
     // Do NOT pipe stderr to /dev/null — we want to read it in the
@@ -84,6 +87,7 @@ export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
       activeTitle: title || null,
       createdEpoch: created || null,
       lastActivityEpoch: lastAttached || null,
+      ...(parts[6] ? { sessionId: parts[6] } : {}),
       ...(origin ? { origin } : {}),
     });
   }

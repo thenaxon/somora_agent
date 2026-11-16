@@ -183,7 +183,7 @@ The bar at the bottom always stays on top. From left to right:
 | Window buttons | One per open window, in the agent's colour. Click to focus or bring back a minimized window. |
 | `cpu` and `mem` | Load and memory of the host, refreshed every 5 seconds. |
 | Clock | Time and date. |
-| Strip at the right end | **Show desktop**: minimizes every open window. Click it again, and exactly those windows come back. It stays lit while the desktop is shown. |
+| Layers button at the right end | **Show desktop**: minimizes every open window. Click it again, and exactly those windows come back. It stays lit while the desktop is shown. |
 
 **Arrange windows** fills the whole desktop. Counts that fill a grid (1, 2, 4,
 6) become an even grid. With 3, 5 or 7 windows the leftmost one takes

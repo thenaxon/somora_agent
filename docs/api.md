@@ -3041,7 +3041,7 @@ The tmux sessions on the server.
 curl -H "Authorization: Bearer $KEY" $BASE/tmux/sessions
 ```
 
-Returns `{sessions: [{name, windows, activeCommand, activeTitle, createdEpoch, lastActivityEpoch, origin?}]}`.
+Returns `{sessions: [{name, windows, activeCommand, activeTitle, createdEpoch, lastActivityEpoch, sessionId, origin?}]}`.
 The two `…Epoch` fields are in seconds. `origin` says which agent and
 session created the tmux session, when somora did.
 

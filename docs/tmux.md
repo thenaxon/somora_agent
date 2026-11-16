@@ -484,7 +484,7 @@ wait at a dialog.
 
 | Route | What it does |
 |---|---|
-| `GET /tmux/sessions` | Lists local tmux sessions as `{ sessions: [...] }`. Each has `name`, `windows`, `activeCommand`, `activeTitle`, `createdEpoch`, `lastActivityEpoch` and, for sessions somora created, `origin` with `agent`, `session`, `kind` and `createdAt`. |
+| `GET /tmux/sessions` | Lists local tmux sessions as `{ sessions: [...] }`. Each has `name`, `windows`, `activeCommand`, `activeTitle`, `createdEpoch`, `lastActivityEpoch`, `sessionId` (tmux's id, new for a session started anew under the same name) and, for sessions somora created, `origin` with `agent`, `session`, `kind` and `createdAt`. |
 | `WS /tmux/attach?session=<name>` | Attaches to a local session. Binary frames carry the terminal stream, text frames carry `{type:'resize',cols,rows}`. |
 
 | File in `~/.somora/` | Content |
