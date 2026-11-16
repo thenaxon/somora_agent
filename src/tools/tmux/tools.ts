@@ -36,8 +36,10 @@ import { getTmuxOrigin, listTmuxOrigins, originKey, recordTmuxOrigin, removeTmux
 import { shQuote as shellQuote } from '../../tmux/observe.ts';
 import {
   readAttentionMirror,
+  readTmuxObservations,
   recordTmuxObservation,
   type AttentionDisplay,
+  type ObservationExtra,
   type SeenState,
 } from '../../tmux/attention.ts';
 import { agentStateOf, observePane, type AgentStateField, type Runner } from '../../tmux/observe.ts';
@@ -184,6 +186,10 @@ interface WaitingEntry {
   name: string;
   target?: string;
   state: 'ready' | 'blocked' | 'running' | null;
+  /** finished: stopped working and is idle; dialog: waits at a dialog. */
+  reason: 'finished' | 'dialog';
+  /** For a dialog: the detection rule that matched (permission_required …). */
+  rule?: string;
   since: number | null;
 }
 /** prompt, start: what drive.ts reports, under its action. */
@@ -350,7 +356,14 @@ function waitingFor(ctx: { agent: string; session?: string }, target: string, na
       if (name !== undefined && key === originKey(target, name)) continue;
       const a = mirror[key];
       if (!a?.needs_attention) continue;
-      out.push({ name: o.name, ...(o.target ? { target: o.target } : {}), state: a.state, since: a.last_event_at });
+      out.push({
+        name: o.name,
+        ...(o.target ? { target: o.target } : {}),
+        state: a.state,
+        reason: a.state === 'blocked' ? 'dialog' : 'finished',
+        ...(a.state === 'blocked' && a.rule ? { rule: a.rule } : {}),
+        since: a.last_event_at,
+      });
     }
     return out;
   } catch {
@@ -385,13 +398,14 @@ function noteObservation(
   name: string,
   ctx: { agent: string; session?: string },
   sawState?: SeenState,
+  extra?: ObservationExtra,
 ): void {
   try {
     const origin = getTmuxOrigin(name, target);
     if (!origin) return;
     if (origin.agent !== ctx.agent) return;
     if (origin.session && ctx.session && origin.session !== ctx.session) return;
-    recordTmuxObservation(originKey(target, name), ctx.agent, ctx.session, sawState);
+    recordTmuxObservation(originKey(target, name), ctx.agent, ctx.session, sawState, extra);
   } catch {
     /* ledger must never break the tool */
   }
@@ -586,6 +600,10 @@ async function handle(input: z.infer<typeof TmuxInput>, ctx: { agent: string; se
       if (!input.text) throw new Error('tmux prompt: requires `text`');
       const kind = lookupSessionKind(target, name) ?? input.kind;
       const r = await promptAgent(run, name, {
+        // The task's start for the watcher, written when Enter went out,
+        // before the wait: the watcher looks every few seconds and may
+        // see the task begin and end while this call still waits.
+        onSubmitted: (at) => noteObservation(target, name, ctx, undefined, { promptedAt: at }),
         text: input.text,
         wait: input.wait !== false,
         timeoutMs: input.wait_timeout_ms ?? DEFAULT_PROMPT_TIMEOUT_MS,
@@ -600,13 +618,21 @@ async function handle(input: z.infer<typeof TmuxInput>, ctx: { agent: string; se
     if (input.action === 'new_conversation') {
       const name = requireName(input, 'new_conversation');
       const kind = lookupSessionKind(target, name) ?? input.kind;
+      // The agent working on its /new is no task: mark it the moment the
+      // command goes out (the watcher may see it end while this call
+      // still waits), close the mark after. Nothing sent, nothing marked.
+      let resetFrom: number | null = null;
       const r = await newConversation(run, name, {
+        onSubmitted: (at) => {
+          resetFrom = at;
+          noteObservation(target, name, ctx, undefined, { resetFrom: at, resetTo: undefined });
+        },
         timeoutMs: input.wait_timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS,
         lines: input.lines ?? 40,
         ...(kind ? { kind } : {}),
       });
-      if (r.ok) noteObservation(target, name, ctx, seen(r.agent));
-      logger.info({ msg: 'tmux.new_conversation', target, name, ok: r.ok, error: r.error, command: r.command, state: r.agent?.state, ms: r.ms });
+      if (resetFrom !== null) noteObservation(target, name, ctx, r.ok ? seen(r.agent) : undefined, { resetFrom, resetTo: Date.now() });
+      logger.info({ msg: 'tmux.new_conversation', target, name, ok: r.ok, error: r.error, command: r.command, dialog: r.dialog_answered, state: r.agent?.state, ms: r.ms });
       return { action: 'new_conversation', target, name, ...r };
     }
 
@@ -857,11 +883,18 @@ async function handle(input: z.infer<typeof TmuxInput>, ctx: { agent: string; se
         }),
       );
       const now = Date.now();
+      const observations = readTmuxObservations();
       const sessions = r.sessions.map((s) => {
         const att = mirror[originKey(target, s.name)];
         const a = agents.get(s.name);
+        // Handed a task the watcher has not seen yet (it looks every few
+        // seconds): the task runs since the prompt.
+        const prompted = observations[originKey(target, s.name)]?.promptedAt;
+        // Only a prompt newer than the last task's end is still unspent.
+        const unspent = prompted && now - prompted < 60_000 && prompted > (att?.task_ended_at ?? 0) && att?.state !== 'running';
+        const startedAt = att?.task_started_at ?? (unspent ? prompted : null);
         const timing = {
-          ...(a?.state === 'working' && att?.task_started_at ? { working_for_s: Math.round((now - att.task_started_at) / 1000) } : {}),
+          ...(a?.state === 'working' && startedAt ? { working_for_s: Math.round((now - startedAt) / 1000) } : {}),
           ...(att?.last_task_ms ? { last_task_s: Math.round(att.last_task_ms / 1000) } : {}),
         };
         return {

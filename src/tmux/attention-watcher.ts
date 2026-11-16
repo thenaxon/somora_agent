@@ -211,6 +211,7 @@ export class TmuxAttentionWatcher {
       const { state, action } = stepAttention({
         state: prev,
         tuiState: paneStateOf(agentState.state),
+        rule: agentState.rule ?? null,
         now,
         observation: observations[key] ?? null,
         origin: originRef,

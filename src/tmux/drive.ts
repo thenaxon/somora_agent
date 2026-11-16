@@ -173,6 +173,8 @@ export interface PromptOptions {
   lines: number;
   kind?: string;
   clock?: DriveClock;
+  /** Called the moment Enter went out — the task's start (epoch ms). */
+  onSubmitted?: (at: number) => void;
 }
 
 /** Hand a prompt to the agent in the pane. */
@@ -204,6 +206,7 @@ export async function promptAgent(run: Runner, name: string, opts: PromptOptions
   if ('error' in pasted) return fail('tmux_error', start, clock, {}, pasted.error);
   const enter = await run(`tmux send-keys -t ${shQuote(`=${name}:`)} Enter`);
   if (!enter.ok) return fail('tmux_error', start, clock, { content: contentOf(pasted.look, opts.lines) }, enter.stderr.trim() || 'Enter failed');
+  opts.onSubmitted?.(Date.now());
 
   // Activity gate.
   const gateEnd = clock.now() + ACTIVITY_GATE_MS;
@@ -314,6 +317,8 @@ export interface NewConversationOptions {
   lines: number;
   kind?: string;
   clock?: DriveClock;
+  /** Called the moment the command went out (epoch ms). */
+  onSubmitted?: (at: number) => void;
 }
 
 /** Give the agent a fresh conversation: its own command (/new, /clear),
@@ -324,7 +329,7 @@ export async function newConversation(
   run: Runner,
   name: string,
   opts: NewConversationOptions,
-): Promise<DriveResult & { command?: string }> {
+): Promise<DriveResult & { command?: string; dialog_answered?: string }> {
   const clock = opts.clock ?? realClock;
   const start = clock.now();
   const first = await look(run, name, LOOK_LINES, opts.kind);
@@ -340,6 +345,7 @@ export async function newConversation(
     lines: opts.lines,
     ...(opts.kind ? { kind: opts.kind } : {}),
     clock,
+    ...(opts.onSubmitted ? { onSubmitted: opts.onSubmitted } : {}),
   });
   if (!sent.ok) return { ...sent, command, ms: clock.now() - start };
 
@@ -355,7 +361,7 @@ export async function newConversation(
     if (!enter.ok) return fail('tmux_error', start, clock, {}, enter.stderr.trim() || 'Enter failed');
     const remaining = Math.max(1_000, opts.timeoutMs - (clock.now() - start));
     const w = await waitSettled(run, name, { timeoutMs: remaining, lines: opts.lines, ...(opts.kind ? { kind: opts.kind } : {}), clock });
-    return { ...w, submitted: true, command, ms: clock.now() - start };
+    return { ...w, submitted: true, command, dialog_answered: 'codex_worktree: use current', ms: clock.now() - start };
   }
   return { ...sent, command, ms: clock.now() - start };
 }

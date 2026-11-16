@@ -64,7 +64,17 @@ export interface ObservationRecord {
    *  lags the agent's own wait_idle by up to one poll interval).
    *  Undefined for send (typing proves driving, not knowing). */
   sawState?: SeenState;
+  /** When the origin last handed the agent a task (prompt submitted):
+   *  the task's start, before the watcher's next look sees it working. */
+  promptedAt?: number;
+  /** The last new_conversation, start and end: the agent working on
+   *  its /new is not a task. */
+  resetFrom?: number;
+  resetTo?: number;
 }
+
+/** What a tool call adds to the ledger besides "looked at it". */
+export type ObservationExtra = Pick<ObservationRecord, 'promptedAt' | 'resetFrom' | 'resetTo'>;
 
 type ObservationMap = Record<string, ObservationRecord>;
 
@@ -105,14 +115,21 @@ export function recordTmuxObservation(
   agent: string,
   session?: string,
   sawState?: SeenState,
+  extra?: ObservationExtra,
 ): void {
   try {
     const map = readJsonFile<ObservationMap>(OBSERVATIONS_PATH) ?? {};
+    const prev = map[name];
     map[name] = {
       lastObservedAt: Date.now(),
       agent,
       ...(session ? { session } : {}),
       ...(sawState ? { sawState } : {}),
+      // Task marks stay until replaced: a later look must not erase them.
+      ...(prev?.promptedAt ? { promptedAt: prev.promptedAt } : {}),
+      ...(prev?.resetFrom ? { resetFrom: prev.resetFrom } : {}),
+      ...(prev?.resetTo ? { resetTo: prev.resetTo } : {}),
+      ...(extra ?? {}),
     };
     writeJsonFile(OBSERVATIONS_PATH, pruneOldest(map));
   } catch {
@@ -141,6 +158,10 @@ export interface AttentionDisplay {
    *  running), while it is not ready again; null otherwise. A dialog in
    *  between belongs to the task. */
   task_started_at?: number | null;
+  /** While blocked: the detection rule that matched (permission_required …). */
+  rule?: string | null;
+  /** When the last task ended (idle again), or a prompt was found spent. */
+  task_ended_at?: number | null;
   /** How long the last finished task took, start to ready, in ms. */
   last_task_ms?: number | null;
 }
@@ -160,6 +181,11 @@ export function readAttentionMirror(): AttentionMap {
 }
 
 // ── pure state machine ────────────────────────────────────────────────
+
+/** A prompt is spent when the agent is seen idle this long after it
+ *  without having been seen at work: its task ran between two looks. A
+ *  fresh prompt the agent has not started on yet stays usable. */
+const PROMPT_SPENT_MS = 10_000;
 
 export interface AttentionSessionState {
   /** Last state seen by the watcher. null until the first look — the
@@ -196,6 +222,11 @@ export interface AttentionSessionState {
   taskStartedAt: number | null;
   /** Duration of the last finished task (start → ready), in ms. */
   lastTaskMs: number | null;
+  /** When the last task ended (ready again); a prompt sent before it
+   *  belongs to that task. */
+  taskEndedAt: number | null;
+  /** While blocked: the detection rule that matched. */
+  blockedRule: string | null;
 }
 
 export function initialAttentionState(): AttentionSessionState {
@@ -213,6 +244,8 @@ export function initialAttentionState(): AttentionSessionState {
     lastEventAt: null,
     taskStartedAt: null,
     lastTaskMs: null,
+    taskEndedAt: null,
+    blockedRule: null,
   };
 }
 
@@ -227,6 +260,8 @@ export interface AttentionStepInput {
   state: AttentionSessionState;
   /** The pane's state this tick (paneStateOf the detected agent state). */
   tuiState: PaneState;
+  /** The detection rule that matched, when there is one. */
+  rule?: string | null;
   now: number;
   /** Observation-ledger record for this tmux session, if any. */
   observation: ObservationRecord | null;
@@ -269,23 +304,44 @@ export function stepAttention(input: AttentionStepInput): {
   // unknown: the screen says nothing — keep what was there.
   if (tuiState === 'unknown') return { state: s, action };
   const effective: 'running' | 'ready' | 'blocked' = tuiState;
+  s.blockedRule = effective === 'blocked' ? (input.rule ?? null) : null;
 
   if (s.lastState === null) {
     // Baseline tick — record what we see, fire nothing.
     s.lastState = effective;
     s.seenRunning = effective === 'running';
     if (effective === 'running') s.lastRunningSeenAt = now;
-    if (effective !== 'ready') s.taskStartedAt = now; // at least since now
+    if (effective !== 'ready') {
+      // Since the prompt that handed it over (sent just before the
+      // watcher first looked), else at least since now.
+      const p = observation?.promptedAt;
+      const beforeReset = p !== undefined && observation?.resetFrom !== undefined && p < observation.resetFrom;
+      s.taskStartedAt = p && p <= now && now - p < 60_000 && !beforeReset ? p : now;
+    }
     if (effective !== 'blocked') s.lastNotBlockedSeenAt = now;
     return { state: s, action };
   }
 
   // Task timing: a task runs from the first look that is not ready (at
-  // work or at a dialog) until ready again.
-  if (effective !== 'ready' && s.taskStartedAt === null) s.taskStartedAt = now;
+  // work or at a dialog) until ready again — or from the moment it was
+  // handed over, when that came after the last task ended (the look
+  // lags the prompt by up to one poll).
+  // A prompt whose task began and ended between two looks (idle seen
+  // again well after it) is spent: it must not start a later task.
+  const p0 = observation?.promptedAt;
+  if (effective === 'ready' && s.taskStartedAt === null && p0 && now - p0 > PROMPT_SPENT_MS && p0 > (s.taskEndedAt ?? 0)) {
+    s.taskEndedAt = p0;
+  }
+  if (effective !== 'ready' && s.taskStartedAt === null) {
+    const p = observation?.promptedAt;
+    // A prompt from before the latest /new belongs to an earlier task.
+    const beforeReset = p !== undefined && observation?.resetFrom !== undefined && p < observation.resetFrom;
+    s.taskStartedAt = p && p <= now && p > (s.taskEndedAt ?? 0) && !beforeReset ? p : now;
+  }
   if (effective === 'ready' && s.lastState !== 'ready' && s.taskStartedAt !== null) {
-    s.lastTaskMs = now - s.taskStartedAt;
+    s.lastTaskMs = taskLengthOf(s.taskStartedAt, now, observation, s.lastTaskMs);
     s.taskStartedAt = null;
+    s.taskEndedAt = now;
   }
 
   if (effective !== 'blocked') s.lastNotBlockedSeenAt = now;
@@ -386,5 +442,23 @@ export function toDisplay(s: AttentionSessionState): AttentionDisplay {
     state: s.lastState,
     task_started_at: s.taskStartedAt,
     last_task_ms: s.lastTaskMs,
+    rule: s.blockedRule,
+    task_ended_at: s.taskEndedAt,
   };
+}
+
+/** How long a finished task took. The agent's own /new (new_conversation)
+ *  is no task: a run that began within it keeps the previous length —
+ *  unless a prompt followed the /new before the watcher saw it idle,
+ *  then the task ran from that prompt. */
+function taskLengthOf(start: number, end: number, obs: ObservationRecord | null, previous: number | null): number | null {
+  const from = obs?.resetFrom;
+  const to = obs?.resetTo;
+  // The watcher sees a run up to one poll late: a start shortly after
+  // the reset began still belongs to it.
+  const inReset = from !== undefined && start >= from - 1_000 && start <= (to ?? end);
+  if (!inReset) return end - start;
+  const p = obs?.promptedAt;
+  if (p && to !== undefined && p >= to && p <= end) return end - p;
+  return previous;
 }

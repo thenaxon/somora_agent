@@ -67,9 +67,11 @@ test('prompt: idle → taken → working → done, waited for', async () => {
 
 test('prompt: an answer faster than a look still counts (the screen moved on)', async () => {
   const t = fakeTmux(pi(IDLE), { paste: withText, enter: () => [pi(DONE)] });
-  const r = await promptAgent(t.run, 'p', { text: 'quick', wait: false, timeoutMs: 60_000, lines: 20, clock: fakeClock() });
+  let submittedAt = 0;
+  const r = await promptAgent(t.run, 'p', { text: 'quick', wait: false, timeoutMs: 60_000, lines: 20, clock: fakeClock(), onSubmitted: (at) => (submittedAt = at) });
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.submitted, true);
+  assert.ok(submittedAt > 0, 'the start is reported when Enter went out');
 });
 
 test('prompt: no sign of activity → agent_prompt_stalled, not sent twice', async () => {
@@ -90,9 +92,11 @@ test('prompt: a working, blocked, unknown agent or a shell gets nothing typed', 
     [{ screen: 'user@host:~$ ', proc: null }, 'no_agent'],
   ] as Array<[Pane, string]>) {
     const t = fakeTmux(pane, {});
-    const r = await promptAgent(t.run, 'p', { text: 'x', wait: true, timeoutMs: 60_000, lines: 20, clock: fakeClock() });
+    let submitted = false;
+    const r = await promptAgent(t.run, 'p', { text: 'x', wait: true, timeoutMs: 60_000, lines: 20, clock: fakeClock(), onSubmitted: () => (submitted = true) });
     assert.equal(r.error, error, JSON.stringify(r));
     assert.deepEqual(t.sent, [], `${error}: nothing sent`);
+    assert.equal(submitted, false, `${error}: no task start`);
     assert.ok(r.hint && r.hint.length > 20, 'a hint for the model');
   }
 });
@@ -203,6 +207,7 @@ test('new_conversation: Codex\'s worktree question is answered with the current 
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.agent?.state, 'idle');
   assert.equal(t.sent.filter((c) => /send-keys -t '=cx:' Enter$/.test(c)).length, 2, 'Enter for /new, Enter for the dialog');
+  assert.equal(r.dialog_answered, 'codex_worktree: use current');
 });
 
 test('new_conversation: another choice preselected is handed back as blocked; an unknown agent is not_supported', async () => {

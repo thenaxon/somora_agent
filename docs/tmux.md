@@ -199,15 +199,19 @@ sends the agent's own command (`/new` for Codex, OpenCode and Pi,
 `/clear` for Claude Code) and returns when the agent is idle again.
 
 Codex then asks where the new conversation runs; somora answers with
-the current worktree when that choice is preselected, otherwise it
-hands the dialog back as `agent_blocked`. An agent whose command somora
+the current worktree when that choice is preselected and says so in
+`dialog_answered`; otherwise it hands the dialog back as
+`agent_blocked`. An agent whose command somora
 does not know gets `not_supported`: send its command with `prompt`.
 
 ### How long a task takes
 
-The attention watcher times every task: from the moment an agent leaves
-idle until it is idle again, a dialog in between included. `list`
-shows `working_for_s` for an agent at work and `last_task_s` for the
+The attention watcher times every task: from the `prompt` that handed
+it over, or else the moment an agent leaves idle, until it is idle
+again, a dialog in between included. The agent's own `/new` from
+`new_conversation` is no task.
+
+`list` shows `working_for_s` for an agent at work and `last_task_s` for the
 last finished task. The wake line names it too: `… stopped working and
 is idle after 6 min`. A task that starts and ends between two looks of
 the watcher is not timed.
@@ -329,7 +333,9 @@ client, mobile app and TUI show the turn as a `tmux` divider.
 While the agent is busy in another turn, the wake waits. Meanwhile
 every `tmux` result it gets carries `waiting_for_you`: its other
 sessions that finished or wait at a dialog and were not looked at yet,
-each with `name`, `target` (remote only), `state` and `since`. Looking
+each with `name`, `target` (remote only), `state`, `reason`
+(`finished`, or `dialog` with the detection `rule`, such as
+`permission_required`) and `since`. Looking
 at such a session counts as having seen it, and its wake is dropped.
 
 ### Rules that keep it calm
@@ -371,6 +377,8 @@ For watched sessions `capture`, `read`, `wait_idle` and `list` add:
 | `state` | What the watcher saw last: `running`, `ready` or `blocked`. |
 | `task_started_at` | When the current task started, in epoch milliseconds; `null` while idle. |
 | `last_task_ms` | How long the last finished task took. |
+| `rule` | While `blocked`: the detection rule that matched. |
+| `task_ended_at` | When the last task ended, in epoch milliseconds. |
 
 ## The environment inside a session
 
@@ -472,7 +480,7 @@ wait at a dialog.
 | Action | More fields |
 |---|---|
 | `create` | `hint`: a reminder of the next calls. |
-| `start`, `prompt`, `new_conversation` | `agent`, `content`, `ms`; `submitted` and `settled` (`prompt`, `new_conversation`), `settled` (`start`), `command` (`new_conversation`: the command it sent); on failure `error` (a code from the table above, or `not_supported`) and `hint`. |
+| `start`, `prompt`, `new_conversation` | `agent`, `content`, `ms`; `submitted` and `settled` (`prompt`, `new_conversation`), `settled` (`start`), `command` and `dialog_answered` (`new_conversation`: the command it sent, the dialog it answered); on failure `error` (a code from the table above, or `not_supported`) and `hint`. |
 | `send` | `ms`, `agent` (the state a moment after the keys) |
 | `capture`, `read` | `content`, `matched_pattern` (`false` on a timeout or without a pattern), `wait_pattern` (echoed when set), `ms`, `agent`, `attention` |
 | `wait_idle` | `content`, `became_idle`, `ms`, `agent`, `hint`, `attention` |

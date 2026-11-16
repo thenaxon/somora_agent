@@ -350,6 +350,65 @@ function step(
   check('first look working: task started then', r.state.taskStartedAt === T0);
 }
 
+// ── task timing: from the prompt, and the agent's /new is no task ──
+{
+  const obs = (o: Record<string, number>) => ({ lastObservedAt: T0, agent: 'ada', ...o });
+  let r = step(initialAttentionState(), { tuiState: 'ready', now: T0 });
+  // prompted at +1 s, the watcher sees it working at +4 s: the task runs since +1 s
+  r = step(r.state, { tuiState: 'running', now: T0 + 4000, observation: obs({ promptedAt: T0 + 1000 }) });
+  check('a task runs since its prompt', r.state.taskStartedAt === T0 + 1000, String(r.state.taskStartedAt));
+  r = step(r.state, { tuiState: 'ready', now: T0 + 31_000, observation: obs({ promptedAt: T0 + 1000 }), originBusy: true });
+  check('its length counts from the prompt', r.state.lastTaskMs === 30_000, String(r.state.lastTaskMs));
+  // the old prompt does not start the next task
+  r = step(r.state, { tuiState: 'running', now: T0 + 40_000, observation: obs({ promptedAt: T0 + 1000 }), originBusy: true });
+  check('a prompt from before the last task ended is not this task\'s start', r.state.taskStartedAt === T0 + 40_000);
+  r = step(r.state, { tuiState: 'ready', now: T0 + 50_000, originBusy: true });
+  // new_conversation from +60 s to +62 s; the watcher sees the /new at +61 s
+  const reset = obs({ resetFrom: T0 + 60_000, resetTo: T0 + 62_000 });
+  r = step(r.state, { tuiState: 'running', now: T0 + 61_000, observation: reset, originBusy: true });
+  r = step(r.state, { tuiState: 'ready', now: T0 + 63_000, observation: reset, originBusy: true });
+  check('the agent\'s /new is no task: the last length stays', r.state.lastTaskMs === 10_000, String(r.state.lastTaskMs));
+  // /new and a prompt right after, the watcher never saw idle in between
+  const both = obs({ resetFrom: T0 + 70_000, resetTo: T0 + 72_000, promptedAt: T0 + 72_500 });
+  r = step(r.state, { tuiState: 'running', now: T0 + 71_000, observation: both, originBusy: true });
+  r = step(r.state, { tuiState: 'ready', now: T0 + 92_500, observation: both, originBusy: true });
+  check('/new then a prompt in one run: the task counts from the prompt', r.state.lastTaskMs === 20_000, String(r.state.lastTaskMs));
+}
+{
+  // A prompt whose task ran between two looks does not start a later one.
+  const o = { lastObservedAt: T0, agent: 'ada', promptedAt: T0 + 1000 };
+  let r = step(initialAttentionState(), { tuiState: 'ready', now: T0 });
+  r = step(r.state, { tuiState: 'ready', now: T0 + 3000, observation: o });
+  check('a fresh prompt the agent has not started on stays usable', r.state.taskEndedAt === null);
+  r = step(r.state, { tuiState: 'ready', now: T0 + 20_000, observation: o });
+  r = step(r.state, { tuiState: 'running', now: T0 + 600_000, observation: o, originBusy: true });
+  check('a spent prompt is not the start of a task begun by hand later', r.state.taskStartedAt === T0 + 600_000, String(r.state.taskStartedAt));
+}
+{
+  // A short task ran between two looks, then /new within seconds: the
+  // /new is still no task, the earlier prompt is not its start.
+  const o = { lastObservedAt: T0, agent: 'ada', promptedAt: T0 + 1000, resetFrom: T0 + 5000 };
+  let r = step(initialAttentionState(), { tuiState: 'ready', now: T0 });
+  r = step(r.state, { tuiState: 'ready', now: T0 + 4000, observation: o });
+  r = step(r.state, { tuiState: 'running', now: T0 + 6000, observation: o, originBusy: true });
+  check('a prompt before the /new is not the /new\'s start', r.state.taskStartedAt === T0 + 6000, String(r.state.taskStartedAt));
+  r = step(r.state, { tuiState: 'ready', now: T0 + 8000, observation: { ...o, resetTo: T0 + 7500 }, originBusy: true });
+  check('so the /new stays no task', r.state.lastTaskMs === null, String(r.state.lastTaskMs));
+}
+{
+  // First look already working, just after a prompt: timed from the prompt.
+  const r = step(initialAttentionState(), { tuiState: 'running', now: T0 + 3000, observation: { lastObservedAt: T0, agent: 'ada', promptedAt: T0 + 1000 } });
+  check('first look working after a prompt: since the prompt', r.state.taskStartedAt === T0 + 1000);
+}
+{
+  // The rule of a dialog is shown while blocked, and gone after.
+  let r = step(initialAttentionState(), { tuiState: 'ready', now: T0 });
+  r = step(r.state, { tuiState: 'blocked', rule: 'permission_required', now: T0 + 1000, originBusy: true });
+  check('blocked: the rule is shown', toDisplay(r.state).rule === 'permission_required');
+  r = step(r.state, { tuiState: 'running', now: T0 + 2000, originBusy: true });
+  check('not blocked: no rule', toDisplay(r.state).rule === null);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
 assert.ok(true);
