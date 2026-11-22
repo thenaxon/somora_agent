@@ -49,7 +49,7 @@ export function TurnView({
         />
       );
     case 'agent':
-      return <AgentTurn text={turn.text} agentName={agentName} agentIcon={agentIcon} />;
+      return turn.cont ? <AgentBody text={turn.text} /> : <AgentTurn text={turn.text} agentName={agentName} agentIcon={agentIcon} />;
     case 'thinking':
       return <ThinkingTurn text={turn.text} truncated={turn.truncated === true} />;
     case 'tool':
@@ -80,6 +80,14 @@ export function TurnView({
       return <SystemNotice text={turn.text} tone={turn.tone} />;
     case 'banner':
       return <Banner lines={turn.lines} tagline={turn.tagline} hint={turn.hint} />;
+    case 'line':
+      return (
+        <Box paddingLeft={turn.indent}>
+          <Text {...(turn.color ? { color: turn.color } : {})} bold={turn.bold === true}>
+            {turn.text.length > 0 ? turn.text : ' '}
+          </Text>
+        </Box>
+      );
   }
 }
 

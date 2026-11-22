@@ -553,4 +553,14 @@ export interface HistoryEvent {
   hops?: Array<{ model: string; reason: string }>;
   // thinking_message
   truncated?: boolean;
+  // turn_end: what the turn spent and which model answered
+  usage?: {
+    tokens_in?: number;
+    tokens_out?: number;
+    tokens_in_cached?: number;
+    tokens_out_reasoning?: number;
+    tokens_out_reasoning_estimated?: boolean;
+    context_tokens?: number;
+  };
+  model?: string;
 }

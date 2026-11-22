@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Static, Text, useApp, useInput } from 'ink';
+import { Box, Static, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement } from 'ink';
 import TextInput from 'ink-text-input';
 
 import { Api } from './api.ts';
@@ -11,12 +11,13 @@ import { Header } from './header.tsx';
 import { resolveEngineMetaLabel, summariseEngineMeta } from '../../engine/engine-meta-labels.ts';
 import { Footer } from './footer.tsx';
 import { Separator } from './separator.tsx';
-import { SlashAutocomplete } from './autocomplete.tsx';
+import { MAX_VISIBLE, SlashAutocomplete } from './autocomplete.tsx';
 import { AgentBody, TurnView } from './turn-views.tsx';
 import { THINKING_TAIL_LINES, tailLines } from './thinking-text.ts';
 import { nextId, summarize } from './format.ts';
 import { rememberAgent } from './state.ts';
 import { formatWorkCounters } from './work-queue.ts';
+import { explodeTurn, itemsAboveView } from './layout.ts';
 import { loopbackFetch } from '../../server/loopback-fetch.ts';
 import { BANNER_COMPACT, BANNER_MOTTO, BANNER_TAGLINE, BANNER_TAGLINE_SHORT, BANNER_WIDE, bannerShape, isUtf8Locale } from '../banner.ts';
 import type {
@@ -80,6 +81,15 @@ function fallbackNotice(fb: {
   return `⇄ model fallback: ${failed} failed before producing anything — answering with ${fb.actual}`;
 }
 
+/** Turns of a session's history that are laid out in the frame when it
+ *  opens; older ones go straight to the scrollback. More than a screen
+ *  holds, so the flush trims it to what is visible. */
+const LIVE_TAIL = 60;
+
+/** Rows of the bottom panel with the command list closed: the blank row
+ *  and the separator, the status line, the input, the hints. */
+const BOTTOM_PANEL_ROWS = 5;
+
 export function App({
   base,
   initialAgent,
@@ -98,6 +108,18 @@ export function App({
   const [agent, setAgent] = useState(initialAgent);
   const [session, setSession] = useState(initialSession);
   const [turns, setTurns] = useState<Turn[]>([]);
+  // The frame (docs/display.md "The screen", layout.ts): `turns` from
+  // `flushedCount` on are drawn in the frame's chat area; those before it
+  // have left the top of the screen and live in the terminal's
+  // scrollback through <Static>.
+  const [flushedCount, setFlushedCount] = useState(0);
+  const { rows: termRows, columns: termCols } = useWindowSize();
+  const termColsRef = useRef(termCols);
+  termColsRef.current = termCols;
+  const inputBoxRef = useRef<DOMElement>(null);
+  const viewRef = useRef<DOMElement>(null);
+  const liveRefs = useRef(new Map<string, DOMElement>());
+  const tailRef = useRef<DOMElement>(null);
   const [streamingText, setStreamingText] = useState<string>('');
   // Cumulative thinking text of the in-flight turn (SSE `thinking`
   // deltas). Rendered as a gray tail while the reply text is still
@@ -121,7 +143,15 @@ export function App({
     apiRef.current
       .fetchSessionModel(a, s)
       .then((info) => {
-        if (info) setNextModel({ label: info.alias ?? info.modelId, modelId: info.modelId });
+        if (!info) return;
+        setNextModel({ label: info.alias ?? info.modelId, modelId: info.modelId });
+        // Stats restored from the history carry no window; the session's
+        // model has it when it is the one that answered last.
+        setStats((prev) =>
+          prev && prev.contextWindow === null && prev.model && (prev.model === info.modelId || prev.model.endsWith(`/${info.modelId}`))
+            ? { ...prev, contextWindow: info.contextWindow }
+            : prev,
+        );
       })
       .catch(() => {
         /* keep the previous value */
@@ -254,6 +284,9 @@ export function App({
   // input is a single token starting with `/`. Index is the highlighted
   // suggestion (Tab cycles).
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
+  // The list a Tab started stepping through, and what it filled in last;
+  // typing anything else ends the cycle (its `filled` no longer matches).
+  const tabCycleRef = useRef<{ options: ReturnType<typeof matchCommands>; index: number; filled: string } | null>(null);
 
   const agentIcon = agentIcons[agent] ?? '';
 
@@ -425,6 +458,7 @@ export function App({
   useEffect(() => {
     let cancelled = false;
     setTurns([]);
+    setFlushedCount(0);
     setStreaming(false);
     setBusy(false);
     setStats(null);
@@ -446,9 +480,13 @@ export function App({
       try {
         const { events } = await apiRef.current.fetchHistory(agent, session);
         if (cancelled) return;
-        const replayed = mapHistoryToTurns(events);
+        const replayed = mapHistoryToTurns(events).flatMap((t) => explodeTurn(t, nextId, termColsRef.current || 80));
         if (replayed.length > 0) {
+          // Older turns go straight to the scrollback; the frame lays out
+          // only the tail, and the flush below trims that to the screen.
+          setFlushedCount(Math.max(0, replayed.length - LIVE_TAIL));
           setTurns(replayed);
+          restoreLastTurnStats(events);
         } else if (!bannerShownRef.current) {
           // An empty session is greeted with the lettering — once per run.
           const shape = bannerShape({ isTTY: process.stdout.isTTY === true, columns: process.stdout.columns, utf8: isUtf8Locale() });
@@ -679,8 +717,61 @@ export function App({
   }, []);
 
   function appendTurn(t: Turn): void {
-    setTurns((prev) => [...prev, t]);
+    const items = explodeTurn(t, nextId, termColsRef.current || 80);
+    setTurns((prev) => [...prev, ...items]);
   }
+
+  // The status line after a session opens: the last turn's spend and
+  // model come from its turn_end in the history, so they are there before
+  // the next turn ends (docs/display.md "The status line"). The window
+  // for the context fill is added when the session's model is known.
+  function restoreLastTurnStats(events: import('./api.ts').HistoryEvent[]): void {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i]!;
+      if (ev.kind !== 'turn_end' || !ev.usage) continue;
+      // Turns from before 2026-09-21 do not name their model; their
+      // counts beside the session's current model would mislead.
+      if (!ev.model) return;
+      setStats({
+        tokensIn: ev.usage.tokens_in ?? 0,
+        tokensInCached: ev.usage.tokens_in_cached ?? null,
+        contextTokens: ev.usage.context_tokens ?? null,
+        tokensOut: ev.usage.tokens_out ?? 0,
+        tokensOutReasoning: ev.usage.tokens_out_reasoning ?? null,
+        tokensOutReasoningEstimated: ev.usage.tokens_out_reasoning_estimated === true,
+        contextWindow: null,
+        provider: null,
+        model: ev.model ?? null,
+        thinking: null,
+      });
+      refreshNextModel(agent, session);
+      return;
+    }
+  }
+
+  // After every render: chat items whose last row is above the top of the
+  // frame move into the scrollback (<Static>). Counted against the chat
+  // area at its tallest — rows minus the bottom panel without the command
+  // list — so items only hidden while the list is open stay in the frame
+  // and come back when it closes.
+  useEffect(() => {
+    const live = turns.slice(flushedCount);
+    if (live.length === 0 || !viewRef.current) return;
+    const heights: number[] = [];
+    for (const t of live) {
+      const el = liveRefs.current.get(t.id);
+      if (!el) return; // not laid out yet
+      heights.push(measureElement(el).height);
+    }
+    const tail = tailRef.current ? measureElement(tailRef.current).height : 0;
+    // The input wraps a long draft over several rows; the rest of the
+    // closed panel is fixed.
+    const inputRows = inputBoxRef.current ? measureElement(inputBoxRef.current).height : 1;
+    const panel = BOTTOM_PANEL_ROWS - 1 + inputRows;
+    const chatRows = Math.max(1, (termRows || 24) - panel);
+    const n = itemsAboveView(heights, chatRows - tail);
+    if (n > 0) setFlushedCount((c) => c + n);
+  });
 
   function applyEvent(ev: StreamEvent): void {
     switch (ev.kind) {
@@ -1012,14 +1103,26 @@ export function App({
   // handles its own keys (typing, left/right, backspace, enter); we only
   // react to keys it doesn't touch (Tab, Up, Down, Esc, Ctrl+C/L).
   useInput((char, key) => {
-    // Tab: cycle through autocomplete + replace input with selected command
-    if (key.tab && slashMatches.length > 0) {
-      const dir = key.shift ? -1 : 1;
-      const next =
-        (safeAutocompleteIndex + dir + slashMatches.length) % slashMatches.length;
-      setAutocompleteIndex(next);
-      const picked = slashMatches[next];
-      if (picked) setInput(picked.name + ' ');
+    // Tab: the first press fills in the highlighted command, every
+    // further press steps on through the list the first one saw
+    // (2026-11-22: it skipped the highlighted entry, and after filling
+    // the list was gone so a second Tab did nothing).
+    const cycle = tabCycleRef.current;
+    const cycling = cycle !== null && cycle.filled === input;
+    if (key.tab && (cycling || slashMatches.length > 0)) {
+      let options = slashMatches;
+      let index = safeAutocompleteIndex;
+      if (cycling) {
+        const dir = key.shift ? -1 : 1;
+        options = cycle.options;
+        index = (cycle.index + dir + options.length) % options.length;
+      }
+      const picked = options[index];
+      if (picked) {
+        const filled = picked.name + ' ';
+        tabCycleRef.current = { options, index, filled };
+        setInput(filled);
+      }
       return;
     }
     // Esc:
@@ -1253,12 +1356,17 @@ export function App({
 
   const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
 
+  const flushedTurns = useMemo(() => turns.slice(0, flushedCount), [turns, flushedCount]);
+  const liveTurns = turns.slice(flushedCount);
+
   return (
-    <Box flexDirection="column">
-      {/* Scrollback: every finalized turn flushes to terminal scrollback once
-          via Static, then is owned by the terminal — older messages scroll
-          up and out as new ones arrive. The dynamic frame below stays put. */}
-      <Static items={turns}>
+    // The frame is exactly as tall as the terminal (layout.ts): the chat
+    // area takes what the bottom panel leaves and is cut at its top, so
+    // the panel always ends on the last row whatever opens or closes.
+    <Box flexDirection="column" height={termRows || 24}>
+      {/* Scrollback: a turn reaches it once it has left the top of the
+          frame (the flush effect above), then belongs to the terminal. */}
+      <Static items={flushedTurns}>
         {(turn) => (
           <TurnView
             key={turn.id}
@@ -1270,6 +1378,26 @@ export function App({
         )}
       </Static>
 
+      <Box ref={viewRef} flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden" justifyContent="flex-end">
+      {liveTurns.map((turn) => (
+        <Box
+          key={turn.id}
+          flexDirection="column"
+          flexShrink={0}
+          ref={(el) => {
+            if (el) liveRefs.current.set(turn.id, el);
+            else liveRefs.current.delete(turn.id);
+          }}
+        >
+          <TurnView
+            turn={turn}
+            agentName={agent}
+            agentIcon={agentIcon}
+            verbose={{ tools: verboseTools, memory: verboseMemory }}
+          />
+        </Box>
+      ))}
+      <Box ref={tailRef} flexDirection="column" flexShrink={0}>
       {streamingText.length > 0 ? (
         <Box marginTop={1} flexDirection="column">
           <Text color="cyan" bold>
@@ -1316,42 +1444,49 @@ export function App({
             </Box>
           ))
         : null}
+      </Box>
+      </Box>
 
       {/* Bottom panel: separator → status → autocomplete (if any) → input →
-          hints. Stays anchored to the bottom of the visible terminal frame
-          because nothing below it ever changes height except the
-          autocomplete popup. */}
-      <Box marginTop={1}>
-        <Separator />
-      </Box>
-      <Header
-        agent={agent}
-        agentIcon={agentIcon}
-        session={session}
-        stats={stats}
-        streaming={streaming}
-        streamingPhase={streaming && streamingText.length === 0 ? 'pre' : 'content'}
-        connected={connected}
-        showMemory={showMemory}
-        showTools={showTools}
-        reviewLoop={reviewLoop}
-        project={project}
-        unreadOtherAgents={unreadOtherAgents}
-        workCounters={formatWorkCounters(work)}
-        nextModel={nextModel}
-        externalLabel={externalLabels[agent] ?? null}
-      />
-      <SlashAutocomplete matches={slashMatches} selectedIndex={safeAutocompleteIndex} />
-      <Box>
-        <Text color="cyan">{'> '}</Text>
-        <TextInput
-          value={input}
-          onChange={handleInputChange}
-          onSubmit={handleSubmit}
-          placeholder={busy || streaming ? '(type to queue next message…)' : ''}
+          hints. Never shrinks; the command list takes its rows from the
+          chat area above. */}
+      <Box flexDirection="column" flexShrink={0}>
+        <Box marginTop={1}>
+          <Separator />
+        </Box>
+        <Header
+          agent={agent}
+          agentIcon={agentIcon}
+          session={session}
+          stats={stats}
+          streaming={streaming}
+          streamingPhase={streaming && streamingText.length === 0 ? 'pre' : 'content'}
+          connected={connected}
+          showMemory={showMemory}
+          showTools={showTools}
+          reviewLoop={reviewLoop}
+          project={project}
+          unreadOtherAgents={unreadOtherAgents}
+          workCounters={formatWorkCounters(work)}
+          nextModel={nextModel}
+          externalLabel={externalLabels[agent] ?? null}
         />
+        <SlashAutocomplete
+          matches={slashMatches}
+          selectedIndex={safeAutocompleteIndex}
+          maxVisible={Math.max(1, Math.min(MAX_VISIBLE, (termRows || 24) - BOTTOM_PANEL_ROWS - 4))}
+        />
+        <Box ref={inputBoxRef}>
+          <Text color="cyan">{'> '}</Text>
+          <TextInput
+            value={input}
+            onChange={handleInputChange}
+            onSubmit={handleSubmit}
+            placeholder={busy || streaming ? '(type to queue next message…)' : ''}
+          />
+        </Box>
+        <Footer />
       </Box>
-      <Footer />
     </Box>
   );
 }

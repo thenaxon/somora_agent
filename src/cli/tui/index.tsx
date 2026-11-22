@@ -68,29 +68,18 @@ try {
   if (!initialAgent) initialAgent = 'default';
 }
 
-// Clear + bottom-pin the dynamic frame before Ink renders.
+// Clear the screen before Ink renders.
 //   \x1B[2J — erase entire visible screen
 //   \x1B[3J — erase scrollback (xterm extension; modern terminals only)
 //   \x1B[H  — move cursor to home (1,1)
 // Scrollback erase is included so users can't be confused by stale lines
-// they scroll up to.
-//
-// Then we pre-pad with newlines until the cursor sits BOTTOM_FRAME_HEIGHT
-// rows above the terminal bottom. Ink anchors its dynamic frame at the
-// current cursor position, so this puts the input near the bottom on
-// startup. As Static items append later, the terminal scrolls them up to
-// make room, and the dynamic frame stays at the bottom — same way Claude
-// Code's TUI behaves.
+// they scroll up to. No padding is needed any more: the frame is exactly
+// as tall as the terminal (layout.ts), so the bottom panel starts on the
+// last rows.
 //
 // Only fires when stdout is a TTY (no point in piped CI runs).
 if (process.stdout.isTTY) {
   process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
-  const rows = process.stdout.rows ?? 24;
-  // separator(1) + header(1) + input(1) + footer(1) + marginTop(1) = 5
-  // a one-line cushion below keeps the cursor inside the terminal.
-  const BOTTOM_FRAME_HEIGHT = 6;
-  const padding = Math.max(0, rows - BOTTOM_FRAME_HEIGHT);
-  if (padding > 0) process.stdout.write('\n'.repeat(padding));
 }
 
 // exitOnCtrlC: false lets us implement a soft-cancel pattern: first Ctrl+C
@@ -110,6 +99,9 @@ const app = render(
   />,
   {
     exitOnCtrlC: false,
+    // The frame is the whole screen; redraw only the rows that changed
+    // instead of all of them on every keystroke.
+    incrementalRendering: true,
   },
 );
 try {

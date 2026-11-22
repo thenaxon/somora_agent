@@ -3,6 +3,7 @@ import Spinner from 'ink-spinner';
 import type { ReactElement } from 'react';
 import type { ProjectInfo, ThinkingState, TurnStats } from './types.ts';
 import { formatTokens } from './format.ts';
+import { fitSegments, sessionLabel, type Segment } from './layout.ts';
 
 /**
  * Live terminal-column count: ink's own hook re-renders on resize, so
@@ -47,6 +48,16 @@ interface Props {
 // keeps the bottom-panel (status / input / hints) anchored while older
 // turns scroll up and out via Ink's <Static>.
 //
+// Always exactly one row (2026-11-22). The parts used to be separate
+// flex children of a width-limited box: when the line was too long Yoga
+// shrank them, each wrapped on its own, and the status grew to two or
+// three rows mid-turn with words cut in half ("qwen38nex", "high→xhig").
+// Now every part is a segment with a priority; when the line does not
+// fit, the least important part is left out whole (fitSegments), and the
+// rest is one Text that can only be cut at its end. The width leaves one
+// column spare: a terminal that draws an emoji wider than string-width
+// counts must not wrap the row (the 2026-05-22 ZWJ drift).
+//
 // Color choice: explicit `gray` instead of dimColor wherever the text needs
 // to be readable. dimColor halves intensity, which on dark terminals turns
 // near-black; gray is a real color that survives both backgrounds.
@@ -67,130 +78,110 @@ export function Header({
   nextModel,
   externalLabel,
 }: Props) {
-  const tokenSegment = renderTokenSegment(stats);
-  const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
-  // Constrain to one terminal row. Background: Ink's internal
-  // string-width measurement disagrees with terminal renderers for
-  // ZWJ-composed emojis (🕵️‍♀️, 👨‍💻 etc — multi-codepoint glyphs joined
-  // with U+200D + variation selectors). Ink may under-count cells,
-  // computes more flex-filler than the terminal can fit, the line
-  // overflows by 1 column and wraps. The terminal then has a 2-row
-  // status panel while Ink still thinks it's 1 row — cursor-up math
-  // becomes off-by-one each render and content visibly scrolls
-  // upward per keystroke as the dynamic frame leaks one row of
-  // residue per cycle. width + overflowX="hidden" forces Ink to
-  // measure the row as exactly cols wide, 1 tall, regardless of
-  // content. Worst case: rightmost item gets truncated, but the
-  // panel stays stable.
   const cols = useTerminalCols();
-  return (
-    <Box width={cols} overflowX="hidden">
-      <Text color="yellow" bold>
-        🐨 somora{' '}
-      </Text>
-      <Text color="gray">· </Text>
-      <Text color="cyan" bold>
-        {agentTag}:{session}
-      </Text>
-      {externalLabel ? (
-        <>
-          <Text color="gray"> · </Text>
-          <Text color="magentaBright">{externalLabel}</Text>
-        </>
-      ) : stats?.model ? (
-        <>
-          <Text color="gray"> · </Text>
+  const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
+  const where = `${agentTag}:${sessionLabel(session)}`;
+  const segments: HeaderSegment[] = [];
+  segments.push({ key: 'brand', priority: 5, plain: '🐨 somora', node: <Text color="yellow" bold>🐨 somora</Text> });
+  segments.push({ key: 'where', priority: 100, plain: where, node: <Text color="cyan" bold>{where}</Text> });
+  if (externalLabel) {
+    segments.push({ key: 'model', priority: 60, plain: externalLabel, node: <Text color="magentaBright">{externalLabel}</Text> });
+  } else if (stats?.model) {
+    const switched = nextModel && !sameModel(stats.model, nextModel.modelId) ? ` → ${nextModel.label} (next turn)` : '';
+    segments.push({
+      key: 'model',
+      priority: 60,
+      plain: stats.model + switched,
+      node: (
+        <Text>
           <Text color="magentaBright">{stats.model}</Text>
-          {nextModel && !sameModel(stats.model, nextModel.modelId) ? (
-            // Switched since the last turn (here or elsewhere): the
-            // model shown is the last turn's, the arrow the next one's.
-            <Text color="gray"> → {nextModel.label} (next turn)</Text>
-          ) : null}
-        </>
-      ) : nextModel ? (
-        <>
-          <Text color="gray"> · </Text>
-          <Text color="magentaBright">{nextModel.label}</Text>
-        </>
-      ) : null}
-      {tokenSegment ? (
-        <>
-          <Text>{'   '}</Text>
-          {tokenSegment}
-        </>
-      ) : null}
-      {stats?.thinking ? (
-        <>
-          <Text color="gray">{'   '}</Text>
-          <ThinkingBadge state={stats.thinking} />
-        </>
-      ) : null}
-      <Text color="gray">{'   '}</Text>
-      <ShowFlag label="mem" on={showMemory} />
-      <Text color="gray">{' '}</Text>
-      <ShowFlag label="tools" on={showTools} />
-      {reviewLoop ? (
-        <>
-          <Text color="gray">{'   '}</Text>
-          <Text color="magenta" bold>
-            📝 wiki-review:{reviewLoop.agent}
-          </Text>
-        </>
-      ) : null}
-      {project ? (
-        <>
-          <Text color="gray">{'   '}</Text>
-          <ProjectChip project={project} />
-        </>
-      ) : null}
-      {unreadOtherAgents && unreadOtherAgents.size > 0 ? (
-        <>
-          <Text color="gray">{'   '}</Text>
-          <Text color="yellowBright" bold>
-            📬 {unreadOtherAgents.size}
-          </Text>
-        </>
-      ) : null}
-      {workCounters ? (
-        <>
-          <Text color="gray">{'   '}</Text>
-          <Text color="yellow">{workCounters}</Text>
-        </>
-      ) : null}
-      {/* Connection / streaming indicator. Kept short on purpose:
-       *  previously this was `● connected` / `● disconnected` inside a
-       *  flexGrow=1 / justifyContent=flex-end Box. That right-alignment
-       *  pushed the row to terminal-width every render, and any
-       *  cell-width disagreement between Ink (string-width) and the
-       *  terminal-renderer for ZWJ-composed emojis (🕵️‍♀️, 👨‍💻 — multi-
-       *  codepoint glyphs joined with U+200D + VS16) made the row
-       *  overflow by one column and wrap. Ink kept measuring it as
-       *  1 row while the terminal showed 2, the cursor-up-by-N math
-       *  was off-by-one each render, and content visibly drifted
-       *  upward per keystroke. Two changes together kill the
-       *  failure mode: drop the right-alignment (no full-width row
-       *  computation) and drop the trailing word (no wrap pressure
-       *  at any reasonable terminal width). */}
-      <Text color="gray">{'   '}</Text>
-      {streaming ? (
-        streamingPhase === 'pre' && stats?.thinking?.active ? (
-          <Text color="cyan" bold>
-            <Spinner type="dots" /> thinking
-          </Text>
-        ) : (
-          <Text color="yellow" bold>
-            <Spinner type="dots" /> streaming
-          </Text>
-        )
-      ) : connected ? (
-        <Text color="green">●</Text>
-      ) : (
-        <Text color="red" bold>
-          ●
+          {switched ? <Text color="gray">{switched}</Text> : null}
         </Text>
-      )}
+      ),
+    });
+  } else if (nextModel) {
+    segments.push({ key: 'model', priority: 60, plain: nextModel.label, node: <Text color="magentaBright">{nextModel.label}</Text> });
+  }
+  const tokens = renderTokenSegment(stats);
+  if (tokens) segments.push({ key: 'tokens', priority: 30, plain: tokens.plain, node: tokens.node });
+  if (stats?.thinking) {
+    const t = stats.thinking;
+    segments.push({
+      key: 'thinking',
+      priority: 20,
+      plain: t.active ? `🧠 ${t.level}${t.wire ? `→${t.wire}` : ''}` : `thinking=${t.level} (dormant)`,
+      node: <ThinkingBadge state={t} />,
+    });
+  }
+  segments.push({
+    key: 'flags',
+    priority: 15,
+    plain: `mem ${showMemory ? '✓' : '✗'} tools ${showTools ? '✓' : '✗'}`,
+    node: (
+      <Text>
+        <ShowFlag label="mem" on={showMemory} />
+        <Text color="gray"> </Text>
+        <ShowFlag label="tools" on={showTools} />
+      </Text>
+    ),
+  });
+  if (reviewLoop) {
+    const text = `📝 wiki-review:${reviewLoop.agent}`;
+    segments.push({ key: 'review', priority: 10, plain: text, node: <Text color="magenta" bold>{text}</Text> });
+  }
+  if (project) {
+    segments.push({ key: 'project', priority: 25, plain: `📁 ${project.name}${project.archived ? ' ⚠' : ''}`, node: <ProjectChip project={project} /> });
+  }
+  if (unreadOtherAgents && unreadOtherAgents.size > 0) {
+    const text = `📬 ${unreadOtherAgents.size}`;
+    segments.push({ key: 'unread', priority: 70, plain: text, node: <Text color="yellowBright" bold>{text}</Text> });
+  }
+  if (workCounters) {
+    segments.push({ key: 'work', priority: 80, plain: workCounters, node: <Text color="yellow">{workCounters}</Text> });
+  }
+  // Connection / streaming indicator: short on purpose, never
+  // right-aligned (a full-width row is what made the 2026-05-22 drift).
+  const thinkingPhase = streaming && streamingPhase === 'pre' && stats?.thinking?.active;
+  segments.push({
+    key: 'state',
+    priority: 90,
+    plain: streaming ? (thinkingPhase ? '⠋ thinking' : '⠋ streaming') : '●',
+    node: streaming ? (
+      thinkingPhase ? (
+        <Text color="cyan" bold>
+          <Spinner type="dots" /> thinking
+        </Text>
+      ) : (
+        <Text color="yellow" bold>
+          <Spinner type="dots" /> streaming
+        </Text>
+      )
+    ) : connected ? (
+      <Text color="green">●</Text>
+    ) : (
+      <Text color="red" bold>
+        ●
+      </Text>
+    ),
+  });
+  const width = Math.max(10, cols - 1);
+  const kept = fitSegments(segments, width);
+  return (
+    <Box width={width} height={1} overflow="hidden">
+      <Text wrap="truncate-end">
+        {kept.map((seg, i) => (
+          <Text key={seg.key}>
+            {i > 0 ? <Text color="gray">{seg.key === 'where' || seg.key === 'model' ? ' · ' : '   '}</Text> : null}
+            {seg.node}
+          </Text>
+        ))}
+      </Text>
     </Box>
   );
+}
+
+interface HeaderSegment extends Segment {
+  node: ReactElement;
 }
 
 // Compact project indicator in the header. Folder glyph + name. We
@@ -239,7 +230,7 @@ function ThinkingBadge({ state }: { state: ThinkingState }) {
   );
 }
 
-function renderTokenSegment(stats: TurnStats | null): ReactElement | null {
+function renderTokenSegment(stats: TurnStats | null): { node: ReactElement; plain: string } | null {
   if (!stats) return null;
   const cached = stats.tokensInCached;
   const total = stats.tokensIn;
@@ -249,8 +240,10 @@ function renderTokenSegment(stats: TurnStats | null): ReactElement | null {
   // rounds sends its context 21 times, so this runs far past the window
   // and must not be read as the fill level next to it.
   let inSegment: ReactElement;
+  let plain: string;
   if (cached !== null && cached > 0 && total >= cached) {
     const uncached = total - cached;
+    plain = `Σ↑ ${formatTokens(uncached)}+${formatTokens(cached)}¢`;
     inSegment = (
       <Text>
         <Text color="white">Σ↑ {formatTokens(uncached)}</Text>
@@ -258,6 +251,7 @@ function renderTokenSegment(stats: TurnStats | null): ReactElement | null {
       </Text>
     );
   } else {
+    plain = `Σ↑ ${formatTokens(total)}`;
     inSegment = <Text color="white">Σ↑ {formatTokens(total)}</Text>;
   }
   const reasoning = stats.tokensOutReasoning;
@@ -280,14 +274,20 @@ function renderTokenSegment(stats: TurnStats | null): ReactElement | null {
         {' '}▣ {formatTokens(filled)}/{formatTokens(window)}
       </Text>
     ) : null;
-  return (
-    <Text>
-      {inSegment}
-      {contextSegment}
-      <Text color="white">   ↓ {formatTokens(stats.tokensOut)}</Text>
-      {reasoningSegment}
-    </Text>
-  );
+  if (contextSegment) plain += ` ▣ ${formatTokens(filled!)}/${formatTokens(window!)}`;
+  plain += `   ↓ ${formatTokens(stats.tokensOut)}`;
+  if (reasoningSegment) plain += ` (${stats.tokensOutReasoningEstimated ? '~' : ''}${formatTokens(reasoning!)} 🧠)`;
+  return {
+    plain,
+    node: (
+      <Text>
+        {inSegment}
+        {contextSegment}
+        <Text color="white">   ↓ {formatTokens(stats.tokensOut)}</Text>
+        {reasoningSegment}
+      </Text>
+    ),
+  };
 }
 
 /** The last turn's model (an id, or `provider/id` after a fallback)

@@ -267,7 +267,10 @@ export type Turn =
        *  turns — renderers fall back to the legacy fields above. */
       origin?: TurnOrigin;
     }
-  | { kind: 'agent'; id: string; text: string }
+  /** A reply, or one block of it (layout.ts splitReply): `cont` marks a
+   *  block after the first, drawn without the agent's name so the blocks
+   *  read as one reply while they scroll away one by one. */
+  | { kind: 'agent'; id: string; text: string; cont?: boolean }
   | {
       // The model's thinking content for the turn that follows. Only
       // appended when /verbose thinking is on — otherwise the text is
@@ -313,6 +316,10 @@ export type Turn =
       details?: string;
     }
   | { kind: 'system'; id: string; text: string; tone: 'info' | 'warn' | 'error' }
+  /** One further line of a multi-line entry (explodeTurn): drawn indented,
+   *  in the entry's colour, so the lines read as one entry while they
+   *  scroll into the terminal's scrollback one by one. */
+  | { kind: 'line'; id: string; text: string; indent: number; color?: string; bold?: boolean }
   /** The somora lettering, greeting an empty session once per run. */
   | { kind: 'banner'; id: string; lines: readonly string[]; tagline: string; hint: string }
   /**

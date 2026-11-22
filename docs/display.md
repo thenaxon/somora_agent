@@ -37,13 +37,21 @@ Enter. Then try the switches:
 /help
 ```
 
-Type `/` to see all commands. Tab completes the highlighted one.
+Type `/` to see the commands, eight at a time. Tab completes the highlighted one.
 
 ## The screen
 
-Finished messages scroll up into your terminal's own scrollback. The
-bottom panel stays in place: a separator, the status line, the command
-list while you type a `/`, the input, and a line of hints.
+The client fills the terminal. The bottom panel sits on the last rows:
+a separator, the status line, the command list while you type a `/`,
+the input, and a line of hints. Above it the chat shows the latest
+lines. The panel stays where it is when the command list opens or
+closes, when a reply ends, and when the window changes size.
+
+A line moves into your terminal's own scrollback as soon as it leaves
+the top of the screen, so scrolling up in the terminal shows everything
+in order, each line once. Long replies, notices and messages move line
+by line. When the window gets smaller, the terminal itself pushes rows
+into the scrollback, and those rows can appear there twice.
 
 ### The status line
 
@@ -61,6 +69,16 @@ list while you type a `/`, the input, and a line of hints.
 | `📬 2` | Two other agents have something unread. |
 | `⌛3 ▶1 🤖2 ↩1` | Work counters, see "The work queue". Absent when the session is idle. |
 | `●` | Green: connected. Red: not connected. During a turn a spinner with `thinking` or `streaming` takes its place. |
+
+The status line is always one row. When the window is too narrow for
+all of it, the least important parts are left out first: the somora
+name, the wiki review, the display switches, the thinking depth, the project, the token
+counts. Agent and session, the work counters and the connection dot stay
+longest. A session's date prefix is left out: `ada:notes` instead of
+`ada:20261122-133050_notes`.
+
+When you open a session, the status line shows the last turn's model
+and token counts from its history right away.
 
 ### Lines in the chat
 
@@ -107,7 +125,7 @@ locale is not UTF-8.
 | Key | What it does |
 |---|---|
 | Enter | Sends the message or runs the slash command. |
-| Tab, Shift+Tab | Steps through the matching slash commands and fills in the highlighted one. |
+| Tab, Shift+Tab | Fills in the highlighted slash command. Further presses step through the same list, forwards or backwards. |
 | Up, Down | Steps through what you sent before, up to 100 entries. Your unsent draft comes back at the end. |
 | Esc | During a turn: stops the running turn and keeps your input. Otherwise: clears the input. |
 | Ctrl+C | Clears the input. With an empty input it quits. |

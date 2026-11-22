@@ -1,21 +1,27 @@
 import { Box, Text } from 'ink';
 import type { CommandMeta } from './commands.ts';
 
-// Big enough to fit every slash command we ship (currently 13). If the
-// command list grows past this the popup will scroll-window via the
-// selectedIndex below — but until then, just show everything so the user
-// doesn't have to Tab blindly through hidden entries.
-const MAX_VISIBLE = 20;
+// At most this many commands at once; the window slides with the
+// highlighted entry and says how many more there are. The list takes its
+// rows from the chat above it (the frame keeps its height, docs/display.md
+// "The screen"), so it is kept short enough to leave the chat visible in a
+// small pane (2026-11-22: 20 rows ate a whole herdr pane).
+export const MAX_VISIBLE = 8;
 
 // Slash-autocomplete popup. Sits between the status line and the input;
 // shows matching commands while the user is still typing the command name.
 export function SlashAutocomplete({
   matches,
   selectedIndex,
+  maxVisible = MAX_VISIBLE,
 }: {
   matches: CommandMeta[];
   selectedIndex: number;
+  /** Fewer in a short window, so the input and hints stay on screen with
+   *  two rows of chat left (the list's "more" lines count too). */
+  maxVisible?: number;
 }) {
+  const MAX_VISIBLE = Math.max(1, maxVisible);
   if (matches.length === 0) return null;
   // Slide the visible window so the highlighted entry is always in view —
   // matters only when matches.length > MAX_VISIBLE.
@@ -41,6 +47,7 @@ export function SlashAutocomplete({
             key={cmd.name}
             color={isSelected ? 'cyan' : 'gray'}
             bold={isSelected}
+            wrap="truncate-end"
           >
             {isSelected ? '▸ ' : '  '}
             {cmd.usage}
