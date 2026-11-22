@@ -132,6 +132,8 @@ locale is not UTF-8.
 | Left, Right | Moves by one character; with Ctrl or Alt by one word. An emoji counts as one character. |
 | Home, End, Ctrl+A, Ctrl+E | Jumps to the start or end of the line. |
 | Ctrl+W, Ctrl+U, Ctrl+K | Deletes the word before the cursor, everything before it on the line, everything after it on the line. |
+| Ctrl+G, Ctrl+P, Ctrl+O | Opens a list to pick an agent, a session of this agent, or a model for this session, see "Pickers". |
+| Ctrl+N | Jumps to the session with the newest unread reply, at this agent or another. |
 | Esc | During a turn: stops the running turn and keeps your input. Otherwise: clears the input. |
 | Ctrl+C | Clears the input. With an empty input it quits. |
 
@@ -157,6 +159,15 @@ You can keep typing while the agent works. A message sent during a
 running turn waits its turn and shows `· queued`, or `· queued · N
 ahead` when others wait before it. It moves into the chat when it
 starts.
+
+### Pickers
+
+Ctrl+G lists the agents, Ctrl+P the current agent's sessions with their
+message count and last activity, Ctrl+O the configured models. `*`
+marks the one in use. Typing narrows the list: the letters only need to
+appear in order, so `trn` finds `travel-notes`. Up and Down move, Enter
+picks, Esc closes. Your draft stays in the input, and a pick does not
+enter the history.
 
 ## The two switches
 

@@ -8,6 +8,7 @@ import { openActivityStream } from './activity-stream.ts';
 import { matchCommands, runCommand } from './commands.ts';
 import { Header } from './header.tsx';
 import { Editor, type EditorEdges } from './editor.tsx';
+import { Picker, type PickItem } from './picker.tsx';
 import { resolveEngineMetaLabel, summariseEngineMeta } from '../../engine/engine-meta-labels.ts';
 import { Footer } from './footer.tsx';
 import { Separator } from './separator.tsx';
@@ -279,6 +280,8 @@ export function App({
   const [history, setHistory] = useState<string[]>(() => readInputHistory());
   // Ctrl+R: the query and the history entry it found (-1: none).
   const [search, setSearch] = useState<{ query: string; index: number; draft: string } | null>(null);
+  // Ctrl+G / Ctrl+P / Ctrl+O: a list to pick an agent, session or model.
+  const [picker, setPicker] = useState<{ title: string; items: PickItem[]; run: (item: PickItem) => string } | null>(null);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [historyDraft, setHistoryDraft] = useState<string>('');
   const [reviewLoop, setReviewLoop] = useState<{ agent: string; dreamId: string } | null>(null);
@@ -491,6 +494,64 @@ export function App({
 
   // Derived: which OTHER agents (not the currently-viewed one) have
   // unread activity. Used by Header to render the 📬 N badge.
+  // Ctrl+N: the session with the newest unread reply, here or at
+  // another agent (OpenCode jumps to the next unread one the same way).
+  function jumpToUnread(): void {
+    let best: { agent: string; session: string; at: string } | null = null;
+    for (const [k, mark] of Object.entries(unreadMarks)) {
+      if (!mark.unreadAt || (mark.seenAt && mark.unreadAt <= mark.seenAt)) continue;
+      const idx = k.indexOf('::');
+      const a = k.slice(0, idx);
+      const sid = k.slice(idx + 2);
+      if (a === agent && (sid === session || (session === 'main' && sid === 'main'))) continue;
+      if (!best || mark.unreadAt > best.at) best = { agent: a, session: sid, at: mark.unreadAt };
+    }
+    if (!best) {
+      appendTurn({ kind: 'system', id: nextId(), text: 'nothing unread', tone: 'info' });
+      return;
+    }
+    void handleSubmit(`/agent ${best.agent} ${best.session}`, { record: false });
+  }
+
+  async function openPicker(which: 'g' | 'p' | 'o'): Promise<void> {
+    try {
+      if (which === 'g') {
+        const list = await apiRef.current.fetchAgents();
+        setPicker({
+          title: 'agent',
+          items: list.map((a) => ({ value: a.name, label: `${a.icon ?? a.external?.badge ?? ''} ${a.name}`.trim(), hint: a.description, current: a.name === agent })),
+          run: (item) => `/agent ${item.value}`,
+        });
+      } else if (which === 'p') {
+        const list = await apiRef.current.fetchSessions(agent);
+        setPicker({
+          title: `${agent} session`,
+          items: list.map((s) => ({
+            value: s.id,
+            label: s.slug,
+            hint: `${s.messageCount} msgs${s.lastActivity ? ` · ${s.lastActivity.slice(0, 16).replace('T', ' ')}` : ''}`,
+            current: s.id === session || s.slug === session || (s.isMain && session === 'main'),
+          })),
+          run: (item) => `/session ${item.value}`,
+        });
+      } else {
+        const list = await apiRef.current.fetchModels();
+        setPicker({
+          title: 'model',
+          items: list.map((m) => ({
+            value: m.alias ?? m.ref,
+            label: m.alias ?? m.ref,
+            hint: `${m.ref} · ${m.engine}`,
+            current: nextModel !== null && (m.ref === nextModel.modelId || m.id === nextModel.modelId || m.alias === nextModel.label),
+          })),
+          run: (item) => `/model ${item.value}`,
+        });
+      }
+    } catch (err) {
+      appendTurn({ kind: 'system', id: nextId(), text: `could not load the list: ${(err as Error).message}`, tone: 'error' });
+    }
+  }
+
   const unreadOtherAgents = useMemo(() => {
     const out = new Set<string>();
     for (const [k, mark] of Object.entries(unreadMarks)) {
@@ -1289,6 +1350,15 @@ export function App({
       setSearch({ query: '', index: searchHistory(history, ''), draft: input });
       return;
     }
+    if (picker) return; // the Picker has the keys
+    if (key.ctrl && (char === 'g' || char === 'p' || char === 'o')) {
+      void openPicker(char);
+      return;
+    }
+    if (key.ctrl && char === 'n') {
+      jumpToUnread();
+      return;
+    }
     // Tab: the first press fills in the highlighted command, every
     // further press steps on through the list the first one saw
     // (2026-11-22: it skipped the highlighted entry, and after filling
@@ -1368,10 +1438,11 @@ export function App({
     }
   });
 
-  async function handleSubmit(text: string): Promise<void> {
+  async function handleSubmit(text: string, opts: { record?: boolean } = {}): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
-    setInput('');
+    // A pick or a jump runs its command without touching the draft.
+    if (opts.record !== false) setInput('');
     // An open question takes its option's number ("1", "2", …). One that
     // does not wait takes anything else too: it goes out as a message.
     const numbered = openQuestion && !(openQuestion.async && openQuestion.parts && openQuestion.parts.length > 1) && openQuestion.options.length > 0;
@@ -1396,7 +1467,7 @@ export function App({
         return;
       }
     }
-    pushHistory(trimmed);
+    if (opts.record !== false) pushHistory(trimmed);
     if (trimmed.startsWith('/')) {
       try {
         const questionBeforeCommand = openQuestionRef.current;
@@ -1667,8 +1738,21 @@ export function App({
           nextModel={nextModel}
           externalLabel={externalLabels[agent] ?? null}
         />
+        {picker ? (
+          <Picker
+            title={picker.title}
+            items={picker.items}
+            maxVisible={Math.max(1, Math.min(MAX_VISIBLE, (termRows || 24) - BOTTOM_PANEL_ROWS - 4))}
+            onCancel={() => setPicker(null)}
+            onPick={(item) => {
+              const cmd = picker.run(item);
+              setPicker(null);
+              void handleSubmit(cmd, { record: false });
+            }}
+          />
+        ) : null}
         <SlashAutocomplete
-          matches={slashMatches}
+          matches={picker ? [] : slashMatches}
           selectedIndex={safeAutocompleteIndex}
           maxVisible={Math.max(1, Math.min(MAX_VISIBLE, (termRows || 24) - BOTTOM_PANEL_ROWS - 4))}
         />
@@ -1694,7 +1778,7 @@ export function App({
               onSubmit={(text) => void handleSubmit(text)}
               placeholder={busy || streaming ? '(type to queue next message…)' : ''}
               edgeRef={editorEdgesRef}
-              isActive={search === null}
+              isActive={search === null && picker === null}
             />
           </Box>
         </Box>
