@@ -32,3 +32,12 @@ test('a table lines up its columns', () => {
 test('an unclosed fence keeps the rest as code (streaming)', () => {
   assert.deepEqual(kinds('text\n```\ncode so far'), ['text', 'fence', 'code']);
 });
+
+test('a longer fence closes only with a run at least as long', () => {
+  assert.deepEqual(kinds('````md\n```\ninner\n```\n````\nafter'), ['fence', 'code', 'code', 'code', 'fence', 'text']);
+});
+
+test('pipe text without a header separator is not a table', () => {
+  assert.deepEqual(kinds('| a | b |\n| c | d |'), ['text', 'text']);
+  assert.deepEqual(kinds('|---|---|'), ['text']);
+});

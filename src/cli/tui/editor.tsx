@@ -32,6 +32,7 @@ export function Editor({
   placeholder,
   edgeRef,
   isActive = true,
+  maxRows = 12,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -40,6 +41,9 @@ export function Editor({
   edgeRef?: MutableRefObject<EditorEdges>;
   /** Off while the history search (Ctrl+R) has the keys. */
   isActive?: boolean;
+  /** Lines shown at most; a longer draft shows the part around the
+   *  cursor, so the input never pushes the panel off the screen. */
+  maxRows?: number;
 }) {
   const [cursor, setCursor] = useState(value.length);
   // The value this editor last emitted. Another value came from outside
@@ -141,16 +145,29 @@ export function Editor({
   // One row per line of the draft; the cursor is the inverted character
   // under it (a space at a line end).
   const lines = state.text.split('\n');
+  const starts: number[] = [];
   let offset = 0;
+  for (const line of lines) {
+    starts.push(offset);
+    offset += line.length + 1;
+  }
+  // A window of lines around the cursor when the draft is long; its
+  // lines are cut at the edge instead of wrapping, so it keeps its height.
+  const room = Math.max(1, maxRows - 2);
+  const windowed = lines.length > maxRows;
+  const first = windowed ? Math.min(Math.max(0, pos.line - Math.floor(room / 2)), lines.length - room) : 0;
+  const shown = windowed ? lines.slice(first, first + room) : lines;
+  const wrap = windowed ? 'truncate-end' : 'wrap';
   return (
     <Box flexDirection="column">
-      {lines.map((line, i) => {
-        const start = offset;
-        offset += line.length + 1;
+      {windowed && first > 0 ? <Text color="gray">{`  ↑ ${first} more line${first === 1 ? '' : 's'}`}</Text> : null}
+      {shown.map((line, k) => {
+        const i = first + k;
+        const start = starts[i]!;
         const prefix = i === 0 ? <Text color="cyan">{'> '}</Text> : <Text>{'  '}</Text>;
         if (i !== pos.line) {
           return (
-            <Text key={i}>
+            <Text key={i} wrap={wrap}>
               {prefix}
               {line.length > 0 ? line : ' '}
             </Text>
@@ -160,7 +177,7 @@ export function Editor({
         const next = E.boundaries(line).find((b) => b > col) ?? line.length;
         const under = line.slice(col, next);
         return (
-          <Text key={i}>
+          <Text key={i} wrap={wrap}>
             {prefix}
             {line.slice(0, col)}
             <Text inverse>{under.length > 0 ? under : ' '}</Text>
@@ -168,6 +185,9 @@ export function Editor({
           </Text>
         );
       })}
+      {windowed && first + room < lines.length ? (
+        <Text color="gray">{`  ↓ ${lines.length - first - room} more line${lines.length - first - room === 1 ? '' : 's'}`}</Text>
+      ) : null}
     </Box>
   );
 }

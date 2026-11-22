@@ -83,3 +83,15 @@ test('Ctrl+R finds the newest match, then older ones', () => {
   assert.equal(E.searchHistory(h, ''), 3);
   assert.equal(E.searchHistory([], 'x'), -1);
 });
+
+test('word moves keep a letter and its combining accent together', () => {
+  const text = 'café au lait';
+  const r = E.wordRight(at(text, 0));
+  assert.equal(r.cursor, 5); // after "café" including the accent
+  assert.equal(E.wordLeft(at(text, 5)).cursor, 0);
+});
+
+test('Home at the very start of a draft that begins with a new line stays', () => {
+  assert.equal(E.home(at('\nabc', 0)).cursor, 0);
+  assert.deepEqual(E.killToLineStart(at('\nabc', 0)), at('\nabc', 0));
+});

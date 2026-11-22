@@ -18,7 +18,7 @@ import { MAX_VISIBLE, SlashAutocomplete } from './autocomplete.tsx';
 import { AgentBody, TurnView } from './turn-views.tsx';
 import { THINKING_TAIL_LINES, tailLines } from './thinking-text.ts';
 import { nextId, summarize } from './format.ts';
-import { INPUT_HISTORY_MAX, readInputHistory, rememberAgent, writeInputHistory } from './state.ts';
+import { appendInputHistory, readInputHistory, rememberAgent } from './state.ts';
 import { searchHistory } from './editor-model.ts';
 import { formatWorkCounters } from './work-queue.ts';
 import { explodeTurn, itemsAboveView } from './layout.ts';
@@ -228,6 +228,7 @@ export function App({
   // Echoes of a self-typed message whose POST had not returned yet:
   // shown at once, and the queued row goes when the POST names the id.
   const earlyEchoRef = useRef(new Set<string>());
+  const earlySteerRef = useRef(new Set<string>());
   // Question events seen on the stream; a question snapshot fetched
   // before the newest of them is stale.
   const questionSeqRef = useRef(0);
@@ -322,6 +323,7 @@ export function App({
   // Ctrl+R: the query and the history entry it found (-1: none).
   const [search, setSearch] = useState<{ query: string; index: number; draft: string } | null>(null);
   // Ctrl+G / Ctrl+P / Ctrl+O: a list to pick an agent, session or model.
+  const pickerGenRef = useRef(0);
   const [picker, setPicker] = useState<{ title: string; items: PickItem[]; run: (item: PickItem) => string } | null>(null);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [historyDraft, setHistoryDraft] = useState<string>('');
@@ -558,9 +560,16 @@ export function App({
   }
 
   async function openPicker(which: 'g' | 'p' | 'o'): Promise<void> {
+    // A list that arrives after the user switched, or after a newer
+    // request, is dropped: it would run its pick in the wrong place.
+    const gen = ++pickerGenRef.current;
+    const forAgent = agent;
+    const forSession = session;
+    const stillWanted = (): boolean => gen === pickerGenRef.current && isCurrent(forAgent, forSession);
     try {
       if (which === 'g') {
         const list = await apiRef.current.fetchAgents();
+        if (!stillWanted()) return;
         setPicker({
           title: 'agent',
           items: list.map((a) => ({ value: a.name, label: `${a.icon ?? a.external?.badge ?? ''} ${a.name}`.trim(), hint: a.description, current: a.name === agent })),
@@ -568,6 +577,7 @@ export function App({
         });
       } else if (which === 'p') {
         const list = await apiRef.current.fetchSessions(agent);
+        if (!stillWanted()) return;
         setPicker({
           title: `${agent} session`,
           items: list.map((s) => ({
@@ -580,6 +590,7 @@ export function App({
         });
       } else {
         const list = await apiRef.current.fetchModels();
+        if (!stillWanted()) return;
         setPicker({
           title: 'model',
           items: list.map((m) => ({
@@ -629,6 +640,7 @@ export function App({
     updatePendingQueued([]);
     earlyDequeuedRef.current.clear();
     earlyEchoRef.current.clear();
+    earlySteerRef.current.clear();
     liveLogRef.current = [];
     unfinishedTurnRef.current = false;
     pendingQueuedBufferRef.current.clear();
@@ -1230,8 +1242,17 @@ export function App({
           // Our POST may still be out: the echo of a message with the
           // same text could be ours or another client's. Show it now;
           // when the POST returns this id, our queued row goes.
-          if (ev.turnId !== undefined && queued.some((p) => p.turnId === undefined && p.text === ev.text)) {
-            earlyEchoRef.current.add(ev.turnId);
+          if (queued.some((p) => p.turnId === undefined && p.steerId === undefined && p.text === ev.text)) {
+            if (ev.steerId !== undefined) earlySteerRef.current.add(ev.steerId);
+            else if (ev.turnId !== undefined) earlyEchoRef.current.add(ev.turnId);
+            appendTurn({ kind: 'user', id: nextId(), text: ev.text });
+            return;
+          }
+          // A steer that came too late for its turn runs as a turn of its
+          // own, with a new id and no steer id: its row goes by its text.
+          const late = queued.findIndex((p) => p.steerId !== undefined && p.text === ev.text);
+          if (late >= 0) {
+            updatePendingQueued(queued.filter((_, i) => i !== late));
             appendTurn({ kind: 'user', id: nextId(), text: ev.text });
             return;
           }
@@ -1335,13 +1356,8 @@ export function App({
   }
 
   function pushHistory(text: string): void {
-    setHistory((prev) => {
-      // Don't add a literal duplicate of the most recent entry.
-      if (prev[prev.length - 1] === text) return prev;
-      const next = [...prev, text].slice(-INPUT_HISTORY_MAX);
-      writeInputHistory(next);
-      return next;
-    });
+    // The file's list, with what other open TUIs added meanwhile.
+    setHistory(appendInputHistory(text));
     setHistoryIndex(null);
     setHistoryDraft('');
   }
@@ -1391,11 +1407,11 @@ export function App({
       }
       return;
     }
+    if (picker) return; // the Picker has the keys
     if (key.ctrl && char === 'r') {
       setSearch({ query: '', index: searchHistory(history, ''), draft: input });
       return;
     }
-    if (picker) return; // the Picker has the keys
     if (key.ctrl && (char === 'g' || char === 'p' || char === 'o')) {
       void openPicker(char);
       return;
@@ -1626,6 +1642,11 @@ export function App({
     }
     try {
       const { turnId, steerId } = await apiRef.current.send(agent, session, trimmed, queuedPath && steerNow ? { steer: true } : {});
+      if (queuedPath && steerId && earlySteerRef.current.delete(steerId)) {
+        // Read by the turn before this answer came: already in the chat.
+        updatePendingQueued((prev) => prev.filter((p) => p.localId !== localId));
+        return;
+      }
       if (queuedPath && steerId) {
         // In the running turn: the row waits for the agent's next step,
         // then its user_message (same steer id) takes its place.
@@ -1840,6 +1861,7 @@ export function App({
               placeholder={busy || streaming ? (steerNow ? '(Enter hands it to the running turn · Ctrl+T: queue instead)' : '(Enter queues it behind this turn · Ctrl+T: steer instead)') : ''}
               edgeRef={editorEdgesRef}
               isActive={search === null && picker === null}
+              maxRows={Math.max(3, Math.floor(((termRows || 24) - BOTTOM_PANEL_ROWS) / 2))}
             />
           </Box>
         </Box>

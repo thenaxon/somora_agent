@@ -60,11 +60,20 @@ export function readInputHistory(): string[] {
   }
 }
 
-export function writeInputHistory(history: string[]): void {
+/**
+ * Add one message to the file. Read, add, write: another TUI open at the
+ * same time adds its own messages, and writing this process's list over
+ * the file would drop them. Returns the file's list after the add.
+ */
+export function appendInputHistory(text: string): string[] {
+  const list = readInputHistory();
+  if (list[list.length - 1] !== text) list.push(text);
+  const next = list.slice(-INPUT_HISTORY_MAX);
   try {
-    writeFileSync(HISTORY_FILE, JSON.stringify(history.slice(-INPUT_HISTORY_MAX)), { encoding: 'utf8', mode: 0o600 });
+    writeFileSync(HISTORY_FILE, JSON.stringify(next), { encoding: 'utf8', mode: 0o600 });
     chmodSync(HISTORY_FILE, 0o600);
   } catch {
     // best-effort, like the state file
   }
+  return next;
 }

@@ -36,7 +36,7 @@ function nextBoundary(text: string, at: number): number {
   return text.length;
 }
 
-const lineStart = (text: string, at: number): number => text.lastIndexOf('\n', at - 1) + 1;
+const lineStart = (text: string, at: number): number => (at <= 0 ? 0 : text.lastIndexOf('\n', at - 1) + 1);
 const lineEnd = (text: string, at: number): number => {
   const i = text.indexOf('\n', at);
   return i < 0 ? text.length : i;
@@ -65,18 +65,26 @@ export const end = (s: EditorState): EditorState => ({ ...s, cursor: lineEnd(s.t
 
 const isWordChar = (ch: string): boolean => /[\p{L}\p{N}_]/u.test(ch);
 
+// Word moves step whole graphemes, so a letter and its combining accent
+// stay together; a grapheme is part of a word when its first character is.
 export function wordLeft(s: EditorState): EditorState {
-  let i = s.cursor;
-  while (i > 0 && !isWordChar(s.text[i - 1]!)) i--;
-  while (i > 0 && isWordChar(s.text[i - 1]!)) i--;
-  return { ...s, cursor: i };
+  const b = boundaries(s.text);
+  let k = b.findIndex((x) => x >= s.cursor);
+  if (k < 0) k = b.length - 1;
+  const word = (i: number): boolean => isWordChar(s.text.slice(b[i - 1]!, b[i]!).charAt(0));
+  while (k > 0 && !word(k)) k--;
+  while (k > 0 && word(k)) k--;
+  return { ...s, cursor: b[k]! };
 }
 
 export function wordRight(s: EditorState): EditorState {
-  let i = s.cursor;
-  while (i < s.text.length && !isWordChar(s.text[i]!)) i++;
-  while (i < s.text.length && isWordChar(s.text[i]!)) i++;
-  return { ...s, cursor: i };
+  const b = boundaries(s.text);
+  let k = b.findIndex((x) => x >= s.cursor);
+  if (k < 0) return s;
+  const word = (i: number): boolean => isWordChar(s.text.slice(b[i]!, b[i + 1]!).charAt(0));
+  while (k < b.length - 1 && !word(k)) k++;
+  while (k < b.length - 1 && word(k)) k++;
+  return { ...s, cursor: b[k]! };
 }
 
 /** Ctrl+W: the word before the cursor and the spaces after it. */

@@ -22,7 +22,7 @@ export type BlockRow =
   | { kind: 'table'; text: string; head: boolean }
   | { kind: 'table-rule'; text: string };
 
-const FENCE = /^\s*(```|~~~)\s*([\w+#.-]*)/;
+const FENCE = /^\s*(`{3,}|~{3,})\s*([\w+#.-]*)/;
 const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
 const RULE = /^\s*([-*_])(?:\s*\1){2,}\s*$/;
 const BULLET = /^(\s*)([-*+])\s+(.*)$/;
@@ -41,7 +41,8 @@ export function classifyReply(lines: readonly string[]): BlockRow[] {
     const line = lines[i]!;
     const f = FENCE.exec(line);
     if (fence !== null) {
-      if (f && f[1] === fence && line.trim() === fence) {
+      // Closed by a run of the same character at least as long.
+      if (f && f[1]![0] === fence[0] && f[1]!.length >= fence.length && line.trim() === f[1]) {
         out.push({ kind: 'fence', lang: '', open: false });
         fence = null;
       } else {
@@ -54,7 +55,9 @@ export function classifyReply(lines: readonly string[]): BlockRow[] {
       out.push({ kind: 'fence', lang: f[2] ?? '', open: true });
       continue;
     }
-    if (TABLE_ROW.test(line)) {
+    // A table needs its header separator as the second line; pipe text
+    // without one stays text.
+    if (TABLE_ROW.test(line) && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1]!)) {
       // The whole table at once, so its columns line up.
       let j = i;
       while (j < lines.length && TABLE_ROW.test(lines[j]!)) j++;
