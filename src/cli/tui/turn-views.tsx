@@ -20,6 +20,7 @@ import type { FromSystemKind, Turn, TurnOrigin } from './types.ts';
 import { renderInline } from './markdown.tsx';
 import { BANNER_HEX } from '../banner.ts';
 import { THINKING_MAX_LINES, capLines, hiddenLinesMarker } from './thinking-text.ts';
+import { classifyReply, type BlockRow } from './blocks.ts';
 
 export interface VerboseFlags {
   tools: boolean;
@@ -49,6 +50,22 @@ export function TurnView({
         />
       );
     case 'agent':
+      if (turn.row) {
+        return turn.cont ? (
+          <Box paddingLeft={2}>
+            <BlockRowView row={turn.row} />
+          </Box>
+        ) : (
+          <Box marginTop={1} flexDirection="column">
+            <Text color="cyan" bold>
+              {agentIcon ? `${agentIcon} ${agentName}` : agentName}
+            </Text>
+            <Box paddingLeft={2}>
+              <BlockRowView row={turn.row} />
+            </Box>
+          </Box>
+        );
+      }
       return turn.cont ? <AgentBody text={turn.text} /> : <AgentTurn text={turn.text} agentName={agentName} agentIcon={agentIcon} />;
     case 'thinking':
       return <ThinkingTurn text={turn.text} truncated={turn.truncated === true} />;
@@ -311,14 +328,71 @@ function AgentTurn({
 // own Text element so paragraph breaks (empty lines) remain visible and
 // inline markdown gets per-line rendering.
 export function AgentBody({ text }: { text: string }) {
-  const lines = text.split('\n');
+  const rows = classifyReply(text.split('\n'));
   return (
     <Box paddingLeft={2} flexDirection="column">
-      {lines.map((line, i) => (
-        <Text key={i}>{line.length > 0 ? renderInline(line) : ' '}</Text>
+      {rows.map((row, i) => (
+        <BlockRowView key={i} row={row} />
       ))}
     </Box>
   );
+}
+
+/**
+ * One row of a reply's block markdown (blocks.ts): code in a gutter, a
+ * heading in bold, a list item with its marker, a quote with a bar, a
+ * table row aligned and cut at the edge. A `more` row is a wrapped piece
+ * of the row before it and keeps its indent.
+ */
+export function BlockRowView({ row }: { row: BlockRow & { more?: boolean } }) {
+  switch (row.kind) {
+    case 'blank':
+      return <Text> </Text>;
+    case 'text':
+      return <Text>{row.text.length > 0 ? renderInline(row.text) : ' '}</Text>;
+    case 'heading':
+      return (
+        <Text bold color={row.level <= 2 ? 'whiteBright' : undefined} underline={row.level === 1 && !row.more}>
+          {renderInline(row.text)}
+        </Text>
+      );
+    case 'bullet':
+      return (
+        <Text>
+          {' '.repeat(row.indent)}
+          <Text color="cyan">{row.more ? ' '.repeat(row.marker.length) : row.marker}</Text> {renderInline(row.text)}
+        </Text>
+      );
+    case 'quote':
+      return (
+        <Text color="gray">
+          │ <Text italic>{renderInline(row.text)}</Text>
+        </Text>
+      );
+    case 'rule':
+      return <Text color="gray">{'─'.repeat(32)}</Text>;
+    case 'fence':
+      return <Text color="gray">{row.open ? `┌─${row.lang ? ` ${row.lang}` : ''}` : '└─'}</Text>;
+    case 'code':
+      return (
+        <Text>
+          <Text color="gray">│ </Text>
+          <Text color="yellow">{row.text.length > 0 ? row.text : ' '}</Text>
+        </Text>
+      );
+    case 'table':
+      return (
+        <Text wrap="truncate-end" bold={row.head}>
+          {row.text}
+        </Text>
+      );
+    case 'table-rule':
+      return (
+        <Text wrap="truncate-end" color="gray">
+          {row.text}
+        </Text>
+      );
+  }
 }
 
 // The model's thinking content for the turn that follows (only

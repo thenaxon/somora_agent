@@ -270,7 +270,15 @@ export type Turn =
   /** A reply, or one block of it (layout.ts splitReply): `cont` marks a
    *  block after the first, drawn without the agent's name so the blocks
    *  read as one reply while they scroll away one by one. */
-  | { kind: 'agent'; id: string; text: string; cont?: boolean }
+  | {
+      kind: 'agent';
+      id: string;
+      text: string;
+      cont?: boolean;
+      /** The line's markdown block (blocks.ts), set when the reply was
+       *  split; `more` marks a wrapped piece after the line's first. */
+      row?: import('./blocks.ts').BlockRow & { more?: boolean };
+    }
   | {
       // The model's thinking content for the turn that follows. Only
       // appended when /verbose thinking is on — otherwise the text is

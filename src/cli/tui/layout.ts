@@ -20,6 +20,7 @@ import stringWidth from 'string-width';
 import { THINKING_MAX_LINES, capLines, hiddenLinesMarker } from './thinking-text.ts';
 import type { Turn } from './types.ts';
 import { systemNoticeOf } from './turn-views.tsx';
+import { classifyReply, rowPrefixWidth, rowText } from './blocks.ts';
 
 /**
  * A reply's text as the pieces that scroll away one by one: its lines.
@@ -46,9 +47,22 @@ export function explodeTurn(t: Turn, id: () => string, cols = 80): Turn[] {
     lines.map((text) => ({ kind: 'line', id: id(), text, indent, ...(color ? { color } : {}), ...(bold ? { bold } : {}) }));
   switch (t.kind) {
     case 'agent': {
-      if (t.cont) return [t];
-      const [first = '', ...more] = rowsOf(splitReply(t.text), 2);
-      return [{ ...t, text: first }, ...more.map((text): Turn => ({ kind: 'agent', id: id(), text, cont: true }))];
+      if (t.cont || t.row) return [t];
+      // One item per row of the reply's blocks (blocks.ts); a long row is
+      // cut into pieces that keep its marker's indent. Table rows and
+      // rules are not wrapped (they are cut at the edge when drawn).
+      const out: Turn[] = [];
+      for (const row of classifyReply(splitReply(t.text))) {
+        const text = rowText(row);
+        const pieces = row.kind === 'table' || row.kind === 'table-rule' || !text
+          ? [text]
+          : wrapLine(text, Math.max(10, cols - 2 - rowPrefixWidth(row) - 1));
+        pieces.forEach((piece, i) => {
+          const r = 'text' in row ? { ...row, text: piece, ...(i > 0 ? { more: true as const } : {}) } : row;
+          out.push(out.length === 0 ? { ...t, text: piece, row: r } : { kind: 'agent', id: id(), text: piece, cont: true, row: r });
+        });
+      }
+      return out.length > 0 ? out : [t];
     }
     case 'system': {
       const [first = '', ...more] = rowsOf(t.text.split('\n'), 2);

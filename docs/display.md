@@ -97,6 +97,13 @@ and token counts from its history right away.
 | `i`, `!`, `✗` | A notice from the client: info in gray, warning in yellow, error in red. |
 | `✗ config.yaml does not validate …` | `config.yaml` has a mistake. somora keeps running on the last valid version, the line lists the problems. See [A broken config file](setup.md#a-broken-config-file). |
 
+Replies show their markdown. Headings are bold without their `#`, list
+items get a `•` or their number and keep their indent when a line
+wraps, quotes a `│` bar, code blocks a frame `┌─ <language>` with the
+code in yellow, and tables line up their columns (a row wider than the
+window is cut at the edge). Inside a line `**bold**`, `*italic*` and
+`` `code` `` are shown as such.
+
 ### Turns nobody typed
 
 A turn that somora or another part of the system started is one gray
