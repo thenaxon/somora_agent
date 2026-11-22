@@ -120,6 +120,28 @@ export function newKeyNotice(): string | null {
   );
 }
 
+/**
+ * The sign-in links one by one, for the setup assistant: the browser's,
+ * the phone's, whether the phone can reach this machine at all (not when
+ * somora answers only on 127.0.0.1), and the phone link as a QR code.
+ */
+export async function signInParts(): Promise<{ webLink: string; phoneLink: string; phoneBase: string; phoneReachable: boolean; authOff: boolean; qr: string; openWeb: () => boolean }> {
+  const info = serverInfo();
+  const { key } = ensureKeyFile();
+  const { local, phone } = browserBases(info);
+  const phoneLink = `${phone}/mobile/#key=${key}`;
+  const webLink = `${local}/web/#key=${key}`;
+  return {
+    webLink,
+    phoneLink,
+    phoneBase: phone,
+    phoneReachable: !/^http:\/\/127\.0\.0\.1[:/]/.test(phone),
+    authOff: info.auth === 'off',
+    qr: await qr(info.auth === 'off' ? `${phone}/mobile/` : phoneLink),
+    openWeb: () => hasScreen() && openBrowser(webLink),
+  };
+}
+
 export async function runKeyCli(args: string[]): Promise<number> {
   const [sub = 'show', ...rest] = args;
   if (sub === '--help' || sub === '-h' || sub === 'help') {

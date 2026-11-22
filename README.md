@@ -112,7 +112,7 @@ one you give a repository to.
 | **Memory** | Notices facts, dreams them into notes and the wiki | Reads memory, never writes it; does not dream |
 | **Works in** | Its workspace | The pinned project's folder, and folders an order allows besides it |
 | **Window** | Chat | Chat plus a task panel, in the web client and on the phone: mode, plan → Go, tasks, acceptance list, questions, running time |
-| **Made how** | `somora setup agent`, or a folder with an `AGENTS.md` and an `agent.yaml` | A folder whose `agent.yaml` says `kind: builder` — fixed for life |
+| **Made how** | `somora setup agent`, or a folder with an `AGENTS.md` and an `agent.yaml` | `somora setup agent` offers one after your first agent, or a folder whose `agent.yaml` says `kind: builder` — fixed for life |
 
 You can talk to a builder directly — describe the project, let it plan,
 press Go — or let a chat agent hand it the order in one call and be

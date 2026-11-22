@@ -658,6 +658,71 @@ async function stepAgent(ctx: Ctx): Promise<void> {
     const names = (await listAgents()).map((a) => a.name);
     if (!(await createAgent(ctx, config, names))) break;
   }
+  // A builder comes in addition to the assistant, never instead of it
+  // (2026-11-22): offered once there is a chat agent and no builder yet.
+  const all = await listAgents();
+  if (all.some((a) => a.kind !== 'builder') && !all.some((a) => a.kind === 'builder')) {
+    explain(`Besides your assistant, somora can run a builder: a coding agent that plans,
+      changes and tests software in a folder you point it at. You follow its task list
+      and acceptance list in the web client. It is an agent of its own.`);
+    if (await p.confirm('Also add a builder (coding agent)?', false)) {
+      await createBuilder(ctx, config, all.map((a) => a.name));
+    }
+  }
+}
+
+/** A builder (docs/builder.md): AGENTS.md with its role, agent.yaml with
+ *  kind, model, working folder and steering. No SOUL.md or USER.md: a
+ *  builder does not read them. */
+async function createBuilder(ctx: Ctx, config: YamlFile, existing: string[]): Promise<string | null> {
+  const { p } = ctx;
+  const aliases = configuredAliases(config).map((a) => a.alias);
+  if (aliases.length === 0) { warn('no model configured yet — run `somora setup models` first'); return null; }
+  // A folder of that name may exist without being an agent yet (no
+  // readable AGENTS.md): it is never written over.
+  const taken = (v: string): boolean => existing.includes(v) || existsSync(join(AGENTS_DIR, v));
+  const name = await p.askValid('Name of the builder', taken('builder') ? undefined : 'builder', (v) =>
+    !/^[a-z][a-z0-9-]{0,30}$/.test(v) ? 'lowercase letters, digits and dashes, starting with a letter' : taken(v) ? 'an agent or a folder with that name exists' : null);
+  explain('Coding works best on a strong model; a local one works too.');
+  const model = (await chooseModel(p, 'Which model should it build with?', aliases, pickPreferred('chat', aliases)))!;
+  let fallback: string | null = null;
+  if (aliases.length > 1) {
+    fallback = await chooseModel(p, 'Backup model:', aliases.filter((a) => a !== model), suggestFallback(config, model), true);
+  }
+  const workspace = await p.askValid('Folder it works in when no project is pinned', '~/somoraworkspace', (v) => (v.trim().length === 0 ? 'a folder, for example ~/code' : null));
+  const dir = join(AGENTS_DIR, name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'AGENTS.md'), `---
+name: ${name}
+description: Builds and changes software in the repository it is pointed at.
+role: builder
+icon: 🔨
+---
+Rules for this builder that hold in every repository go here. Keep
+them short.
+`, 'utf8');
+  writeFileSync(join(dir, 'agent.yaml'), `# A builder: a coding agent (docs/builder.md). Every option is described
+# in docs/agents.md and docs/builder.md.
+kind: builder
+model: ${model}
+${fallback ? `fallback: [${fallback}]\n` : ''}workspace:
+  path: ${JSON.stringify(workspace.trim())}
+# A message typed while it works goes into the running turn.
+steering: true
+`, 'utf8');
+  written.add(join(dir, 'agent.yaml'));
+  ok(`builder ${bold(name)} created ${dim(`→ ${tildify(dir)}`)}`);
+  ctx.needsRestart = true;
+  explain(`Language servers let the builder see type errors right after each write
+      (TypeScript and Python, installed with npm, about a minute).`);
+  if (await p.confirm('Install them now?', true)) {
+    const { runLspCli } = await import('./lsp.ts');
+    const code = await runLspCli(['install']).catch(() => 1);
+    if (code !== 0) warn('not all of them installed — try again later with: somora lsp install');
+  } else {
+    say(`  ${dim('Later: somora lsp install')}`);
+  }
+  return name;
 }
 
 async function checkAgentModels(ctx: Ctx, agents: Array<{ name: string }>, aliases: string[]): Promise<void> {
@@ -1000,15 +1065,35 @@ async function stepStart(ctx: Ctx): Promise<void> {
   heading('Ready');
   say(`  Web client     ${cyan(`${base}/web/`)}`);
   say(`  Phone          ${cyan(`${base}/mobile`)}${base.startsWith('https') ? dim('  (add to home screen)') : ''}`);
-  say(`  Sign in        ${cyan('somora key link')}${dim('  — a browser and the phone ask for the key once')}`);
+  say(`  Sign in later  ${cyan('somora key link')}${dim('  — a browser and the phone ask for the key once')}`);
   say(`  Terminal       ${cyan('somora tui')}`);
   say(`  Update         ${cyan('somora update')}`);
   say(`  This assistant ${cyan('somora setup')}${dim('  — or one step: somora setup access')}`);
   say();
-  // Sign the browser in right away: the link carries the key.
-  if (getIn(config, ['server', 'auth']) !== 'off') {
-    const { runKeyCli } = await import('./key.ts');
-    await runKeyCli(['link']);
+  // Sign the browser in right away: the link carries the key. Then the
+  // phone, as a question of its own (2026-11-22): its QR code used to be
+  // printed every time, also when somora answers only on this machine
+  // and the code pointed at 127.0.0.1, which no phone can open.
+  const { signInParts } = await import('./key.ts');
+  const parts = await signInParts();
+  if (!parts.authOff) {
+    say(`  Sign this browser in once: ${cyan(parts.webLink)}`);
+    if (parts.openWeb()) ok('opened in your browser');
+    say(`  ${dim("Anyone with this link can use somora — don't share it.")}`);
+    say();
+  }
+  if (!parts.phoneReachable) {
+    explain(`The phone app: your phone cannot reach this machine yet — somora answers only
+      here. \`somora setup access\` opens it to your network, or to Tailscale with HTTPS
+      (which the phone's microphone needs). Then \`somora key link\` shows the code to scan.`);
+    return;
+  }
+  if (await ctx.p.confirm('Sign in your phone now? (shows a code to scan)', true)) {
+    say();
+    process.stdout.write(parts.qr);
+    say();
+    say(`  Scan it with the phone's camera, or open ${cyan(`${parts.phoneBase}/mobile/`)}${parts.authOff ? '' : ' and paste the key (somora key)'}.`);
+    say(`  ${dim(parts.phoneBase.startsWith('https') ? 'Then add it to the home screen: it opens like an app.' : 'Over plain http the microphone stays off; HTTPS through Tailscale turns it on (somora setup access).')}`);
     say();
   }
 }

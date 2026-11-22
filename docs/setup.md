@@ -84,11 +84,11 @@ somora setup access     # one step only
 |---|---|
 | `models` | Connects a Claude subscription (runs the login of the Claude Code bundled with somora), a ChatGPT subscription (the bundled Codex login, in the browser or with a device code), a Grok subscription (the bundled Grok login, in the browser or with a device code), or your own server. For a server it asks the address and key, lists the models and asks each one's context window. |
 | `search` | Asks for a Brave Search API key and, if you run one, the address of your SearXNG instance. Checks each with one real search and stores them as `web.brave.apiKey` and `web.searxng.baseUrl`. Either gives the agents the `web_search` tool. |
-| `agent` | Creates an agent: name, what it calls you, answer language, model and backup model. On an existing install it lists the agents and offers to repair one whose model is gone. |
+| `agent` | Creates an agent: name, what it calls you, answer language, model and backup model. On an existing install it lists the agents and offers to repair one whose model is gone. Then offers a [builder](builder.md) in addition, when there is none yet: name, model, working folder, and the language servers. |
 | `memory` | Turns on REM per agent with a model and a backup model, offers the duplicate check for new notes, and sets up the shared wiki with Deep and Lucid, their model and a backup model. The wiki goes into a new folder or your Obsidian vault. |
 | `team` | With two or more agents and no team file yet: writes `team.yaml`. |
 | `access` | This machine only, the local network, or Tailscale HTTPS. For Tailscale it installs and connects it if needed, walks you through the one switch in the Tailscale admin page, fetches the certificate and turns on automatic renewal. |
-| `start` | Starts the service, or restarts it after asking. Waits until it answers, sends an agent a real test message and says which model replied. Ends with the link that signs a browser in and a QR code for the phone. |
+| `start` | Starts the service, or restarts it after asking. Waits until it answers, sends an agent a real test message and says which model replied. Ends with the link that signs a browser in, then offers a QR code for the phone. When the phone cannot reach the machine yet, it says how to open it up instead. |
 
 Good to know:
 
