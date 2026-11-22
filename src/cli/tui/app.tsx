@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Static, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement } from 'ink';
-import TextInput from 'ink-text-input';
 
 import { Api } from './api.ts';
 import { openStream, type StreamHandle } from './stream.ts';
@@ -8,6 +7,7 @@ import { herdrState, reportHerdr } from './herdr.ts';
 import { openActivityStream } from './activity-stream.ts';
 import { matchCommands, runCommand } from './commands.ts';
 import { Header } from './header.tsx';
+import { Editor, type EditorEdges } from './editor.tsx';
 import { resolveEngineMetaLabel, summariseEngineMeta } from '../../engine/engine-meta-labels.ts';
 import { Footer } from './footer.tsx';
 import { Separator } from './separator.tsx';
@@ -15,7 +15,8 @@ import { MAX_VISIBLE, SlashAutocomplete } from './autocomplete.tsx';
 import { AgentBody, TurnView } from './turn-views.tsx';
 import { THINKING_TAIL_LINES, tailLines } from './thinking-text.ts';
 import { nextId, summarize } from './format.ts';
-import { rememberAgent } from './state.ts';
+import { INPUT_HISTORY_MAX, readInputHistory, rememberAgent, writeInputHistory } from './state.ts';
+import { searchHistory } from './editor-model.ts';
 import { formatWorkCounters } from './work-queue.ts';
 import { explodeTurn, itemsAboveView } from './layout.ts';
 import { endsMidTurn, lastUserTs, missedEvents } from './resync.ts';
@@ -44,7 +45,6 @@ interface Props {
   initialVerboseThinking: boolean;
 }
 
-const HISTORY_MAX = 100;
 
 
 /** One line for the scrollback when a fallback model takes over a turn.
@@ -118,6 +118,7 @@ export function App({
   const termColsRef = useRef(termCols);
   termColsRef.current = termCols;
   const inputBoxRef = useRef<DOMElement>(null);
+  const editorEdgesRef = useRef<EditorEdges>({ atTop: true, atBottom: true });
   const viewRef = useRef<DOMElement>(null);
   const liveRefs = useRef(new Map<string, DOMElement>());
   const tailRef = useRef<DOMElement>(null);
@@ -275,7 +276,9 @@ export function App({
   }, [verboseThinking]);
 
   // Submit-history (newest at the end). Up/Down step through it.
-  const [history, setHistory] = useState<string[]>([]);
+  const [history, setHistory] = useState<string[]>(() => readInputHistory());
+  // Ctrl+R: the query and the history entry it found (-1: none).
+  const [search, setSearch] = useState<{ query: string; index: number; draft: string } | null>(null);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [historyDraft, setHistoryDraft] = useState<string>('');
   const [reviewLoop, setReviewLoop] = useState<{ agent: string; dreamId: string } | null>(null);
@@ -1229,8 +1232,9 @@ export function App({
     setHistory((prev) => {
       // Don't add a literal duplicate of the most recent entry.
       if (prev[prev.length - 1] === text) return prev;
-      const next = [...prev, text];
-      return next.length > HISTORY_MAX ? next.slice(next.length - HISTORY_MAX) : next;
+      const next = [...prev, text].slice(-INPUT_HISTORY_MAX);
+      writeInputHistory(next);
+      return next;
     });
     setHistoryIndex(null);
     setHistoryDraft('');
@@ -1245,10 +1249,46 @@ export function App({
     setInput(next);
   }
 
-  // useInput captures every keypress. ink-text-input also reads stdin and
-  // handles its own keys (typing, left/right, backspace, enter); we only
-  // react to keys it doesn't touch (Tab, Up, Down, Esc, Ctrl+C/L).
+  // useInput captures every keypress. The Editor (editor.tsx) reads the
+  // same keys and handles typing, cursor moves, Backspace and Enter; here
+  // only the keys it leaves alone (Tab, Up/Down at the draft's edges,
+  // Esc, Ctrl+C).
   useInput((char, key) => {
+    // Ctrl+R: search what was sent before, newest first. While it runs it
+    // has every key: typing narrows, Ctrl+R steps to an older match,
+    // Enter takes the match into the input (without sending), Esc or
+    // Ctrl+C or Ctrl+G give the draft back.
+    if (search) {
+      if (key.escape || (key.ctrl && (char === 'c' || char === 'g'))) {
+        setSearch(null);
+        setInput(search.draft);
+        return;
+      }
+      if (key.return || key.tab || key.rightArrow) {
+        if (search.index >= 0) setInput(history[search.index] ?? '');
+        setSearch(null);
+        return;
+      }
+      if (key.ctrl && char === 'r') {
+        const older = searchHistory(history, search.query, search.index - 1);
+        if (older >= 0) setSearch({ ...search, index: older });
+        return;
+      }
+      if (key.backspace || key.delete) {
+        const query = [...search.query].slice(0, -1).join('');
+        setSearch({ ...search, query, index: searchHistory(history, query) });
+        return;
+      }
+      if (!key.ctrl && !key.meta && char && !/[\u0000-\u001f]/.test(char)) {
+        const query = search.query + char;
+        setSearch({ ...search, query, index: searchHistory(history, query) });
+      }
+      return;
+    }
+    if (key.ctrl && char === 'r') {
+      setSearch({ query: '', index: searchHistory(history, ''), draft: input });
+      return;
+    }
     // Tab: the first press fills in the highlighted command, every
     // further press steps on through the list the first one saw
     // (2026-11-22: it skipped the highlighted entry, and after filling
@@ -1289,7 +1329,9 @@ export function App({
       return;
     }
     // History navigation
-    if (key.upArrow && history.length > 0) {
+    // History only from the draft's first line (Up) or last line (Down);
+    // inside a multi-line draft the arrows move the cursor (editor.tsx).
+    if (key.upArrow && history.length > 0 && editorEdgesRef.current.atTop) {
       if (historyIndex === null) {
         setHistoryDraft(input);
         const idx = history.length - 1;
@@ -1302,7 +1344,7 @@ export function App({
       }
       return;
     }
-    if (key.downArrow && historyIndex !== null) {
+    if (key.downArrow && historyIndex !== null && editorEdgesRef.current.atBottom) {
       if (historyIndex < history.length - 1) {
         const idx = historyIndex + 1;
         setHistoryIndex(idx);
@@ -1630,14 +1672,31 @@ export function App({
           selectedIndex={safeAutocompleteIndex}
           maxVisible={Math.max(1, Math.min(MAX_VISIBLE, (termRows || 24) - BOTTOM_PANEL_ROWS - 4))}
         />
-        <Box ref={inputBoxRef}>
-          <Text color="cyan">{'> '}</Text>
-          <TextInput
-            value={input}
-            onChange={handleInputChange}
-            onSubmit={handleSubmit}
-            placeholder={busy || streaming ? '(type to queue next message…)' : ''}
-          />
+        <Box ref={inputBoxRef} flexDirection="column">
+          {search ? (
+            <Text wrap="truncate-end">
+              <Text color="magenta">{'(search) '}</Text>
+              <Text color="cyan">{search.query}</Text>
+              <Text inverse> </Text>
+              <Text color="gray">{'  '}</Text>
+              {search.index >= 0 ? (
+                <Text>{(history[search.index] ?? '').replace(/\n/g, ' ⏎ ')}</Text>
+              ) : (
+                <Text color="yellow">no match</Text>
+              )}
+            </Text>
+          ) : null}
+          {/* Hidden, not unmounted, during a search: it keeps its pastes. */}
+          <Box display={search ? 'none' : 'flex'} flexDirection="column">
+            <Editor
+              value={input}
+              onChange={handleInputChange}
+              onSubmit={(text) => void handleSubmit(text)}
+              placeholder={busy || streaming ? '(type to queue next message…)' : ''}
+              edgeRef={editorEdgesRef}
+              isActive={search === null}
+            />
+          </Box>
         </Box>
         <Footer />
       </Box>

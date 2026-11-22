@@ -125,10 +125,24 @@ locale is not UTF-8.
 | Key | What it does |
 |---|---|
 | Enter | Sends the message or runs the slash command. |
+| Alt+Enter, Ctrl+J | Starts a new line. So does Shift+Enter on terminals that report it, and Enter after a `\` at the end of a line. |
 | Tab, Shift+Tab | Fills in the highlighted slash command. Further presses step through the same list, forwards or backwards. |
-| Up, Down | Steps through what you sent before, up to 100 entries. Your unsent draft comes back at the end. |
+| Up, Down | Inside a message of several lines: moves between its lines. On its first or last line, or in a one-line message: steps through what you sent before, up to 100 entries. Your unsent draft comes back at the end. |
+| Ctrl+R | Searches what you sent before, newest first. Typing narrows the search, Ctrl+R again finds an older match, Enter puts the match into the input without sending it, Esc gives your draft back. |
+| Left, Right | Moves by one character; with Ctrl or Alt by one word. An emoji counts as one character. |
+| Home, End, Ctrl+A, Ctrl+E | Jumps to the start or end of the line. |
+| Ctrl+W, Ctrl+U, Ctrl+K | Deletes the word before the cursor, everything before it on the line, everything after it on the line. |
 | Esc | During a turn: stops the running turn and keeps your input. Otherwise: clears the input. |
 | Ctrl+C | Clears the input. With an empty input it quits. |
+
+What you sent is kept across runs in `~/.somora/tui-history.json`, the
+last 500 messages, readable only by you.
+
+Pasted text never sends by itself, whatever line breaks it carries. A
+paste of more than 8 lines or 800 characters stands in the input as
+`[paste #1 · 40 lines]` and is sent in full. Text and Enter that arrive
+in one piece, as `herdr pane run` or a script's `tmux send-keys` type
+them, are sent.
 
 When an agent asks you something, the question appears with numbered
 options. Type the number and press Enter, or `1,3` when several answers
