@@ -9,6 +9,8 @@ import { matchCommands, runCommand } from './commands.ts';
 import { Header } from './header.tsx';
 import { Editor, type EditorEdges } from './editor.tsx';
 import { Picker, type PickItem } from './picker.tsx';
+import { BELL_AFTER_MS, ringBell, setTitle, titleFor, type AttentionState } from './attention.ts';
+import { sessionLabel } from './layout.ts';
 import { resolveEngineMetaLabel, summariseEngineMeta } from '../../engine/engine-meta-labels.ts';
 import { Footer } from './footer.tsx';
 import { Separator } from './separator.tsx';
@@ -261,6 +263,39 @@ export function App({
         /* server unreachable — keep the previous counters */
       });
   }
+  // Title and bell (attention.ts): ⏳ while a turn runs, ⚠ for a
+  // question, ✓ after a reply until you type again. The bell rings for a
+  // question and at the end of a turn that took a while.
+  const [replyUnseen, setReplyUnseen] = useState(false);
+  const turnStartedAtRef = useRef<number | null>(null);
+  const prevQuestionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (streaming || busy) {
+      if (turnStartedAtRef.current === null) turnStartedAtRef.current = Date.now();
+      return;
+    }
+    const started = turnStartedAtRef.current;
+    turnStartedAtRef.current = null;
+    if (started !== null) {
+      setReplyUnseen(true);
+      if (Date.now() - started >= BELL_AFTER_MS) ringBell();
+    }
+  }, [streaming, busy]);
+  useEffect(() => {
+    const id = openQuestion?.id ?? null;
+    if (id && id !== prevQuestionIdRef.current) ringBell();
+    prevQuestionIdRef.current = id;
+  }, [openQuestion]);
+  useEffect(() => {
+    if (input.length > 0) setReplyUnseen(false);
+  }, [input]);
+  useEffect(() => {
+    setReplyUnseen(false);
+  }, [agent, session]);
+  useEffect(() => {
+    const state: AttentionState = openQuestion ? 'question' : streaming || busy ? 'working' : replyUnseen ? 'done' : 'idle';
+    setTitle(titleFor(state, `${agent}:${sessionLabel(session)}`));
+  }, [agent, session, openQuestion, streaming, busy, replyUnseen]);
   useEffect(() => {
     const current = work?.agent === agent && work.session === session ? work : null;
     const state = herdrState(connected && current !== null, openQuestion !== null, busy || streaming, current);

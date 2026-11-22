@@ -315,6 +315,18 @@ The three project commands appear only when `projects.enabled` is
 user unit on Linux or the LaunchAgent on macOS. A server started by
 hand refuses, because nothing would bring it back.
 
+## When you look away
+
+The terminal's title shows the agent and session with a mark:
+`⏳ ada:main` while a turn runs, `⚠` when the agent asks you something,
+`✓` after a reply until you type again. tmux shows it as the pane title.
+The title you had before comes back when the client ends, on terminals
+that keep a title stack.
+
+The terminal bell rings when the agent asks you something and when a
+turn that ran 10 seconds or longer ends. tmux marks the window, and
+many terminals and window managers flash or badge it.
+
 ## Inside herdr
 
 [herdr](https://github.com/herdrdev/herdr) is a terminal workspace for

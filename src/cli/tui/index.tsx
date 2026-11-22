@@ -6,6 +6,7 @@
 import { render } from 'ink';
 import { parseArgs } from 'node:util';
 import { releaseHerdr } from './herdr.ts';
+import { popTitle, pushTitle } from './attention.ts';
 import { Api } from './api.ts';
 import { App } from './app.tsx';
 import { readTuiState } from './state.ts';
@@ -81,6 +82,10 @@ try {
 if (process.stdout.isTTY) {
   process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
 }
+
+// The terminal's own title comes back when the client ends (attention.ts).
+pushTitle();
+process.once('exit', popTitle);
 
 // exitOnCtrlC: false lets us implement a soft-cancel pattern: first Ctrl+C
 // clears the current input or closes the autocomplete popup; only when
