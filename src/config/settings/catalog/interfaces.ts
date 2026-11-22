@@ -4,15 +4,15 @@ export const INTERFACES: Catalog = {
   // ── Web tools ──────────────────────────────────────────────────────
   web: {
     label: 'Web search and fetch',
-    help: 'What agents may use on the web: a search key, and which addresses in your own network they may read.',
+    help: 'What agents may use on the web: search providers, and which addresses in your own network they may read.',
     level: 'basic',
     docs: 'tools.md#time-and-web',
   },
   'web.brave': {
     label: 'Brave Search',
-    help: 'The account for web search; without it agents can still fetch pages but cannot search.',
+    help: 'The Brave Search account for web search; without it or SearXNG agents can still fetch pages but cannot search.',
     level: 'basic',
-    docs: 'tools.md#time-and-web',
+    docs: 'tools.md#web-search',
   },
   'web.brave.apiKey': {
     label: 'Brave Search API key',
@@ -20,6 +20,33 @@ export const INTERFACES: Catalog = {
     level: 'basic',
     sensitive: true,
     docs: 'tools.md#time-and-web',
+  },
+  'web.searxng': {
+    label: 'SearXNG',
+    help: 'A SearXNG instance you run, as a second way to search besides Brave or instead of it.',
+    more: 'The instance must answer in JSON: search.formats in its settings.yml needs json. If it uses Brave as one of its engines, its searches also count against your Brave quota.',
+    level: 'basic',
+    docs: 'tools.md#web-search',
+  },
+  'web.searxng.baseUrl': {
+    label: 'SearXNG address',
+    help: 'Where your SearXNG instance answers; somora asks its /search page.',
+    level: 'basic',
+    placeholder: 'http://192.0.2.20:8888',
+    docs: 'tools.md#web-search',
+  },
+  'web.search': {
+    label: 'Search order',
+    help: 'Which search provider agents ask first when more than one is set up.',
+    level: 'advanced',
+    docs: 'tools.md#web-search',
+  },
+  'web.search.order': {
+    label: 'Ask in this order',
+    help: 'The first provider answers every search; the next one only when the one before fails.',
+    more: 'Without it, Brave comes first. The first name you add is asked first; remove and add again to change the order. List only one provider to have no reserve. A provider listed here must be set up above.',
+    level: 'advanced',
+    docs: 'tools.md#web-search',
   },
   'web.fetchAllowPrivate': {
     label: 'Private addresses agents may read',

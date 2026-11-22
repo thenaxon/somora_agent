@@ -533,7 +533,8 @@ function Control({ id, field: f, value, disabled, onChange }: { id: string; fiel
     case 'number':
       return <NumberControl id={id} field={f} value={value} disabled={disabled} onChange={onChange} />;
     case 'strings':
-      return <StringsControl id={id} value={Array.isArray(value) ? (value as unknown[]).map(String) : []} disabled={disabled} onChange={onChange} options={options} />;
+      // A list of fixed words (web.search.order) suggests them.
+      return <StringsControl id={id} value={Array.isArray(value) ? (value as unknown[]).map(String) : []} disabled={disabled} onChange={onChange} options={options ?? f.enum} />;
     case 'boolean-or-strings': {
       // All (true), none (false), or only the names listed.
       const mode = Array.isArray(value) ? 'some' : value === false ? 'none' : value === true ? 'all' : '';

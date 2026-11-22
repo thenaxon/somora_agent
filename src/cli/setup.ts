@@ -31,6 +31,7 @@ import {
 } from '../setup/prompt.ts';
 import { isOperatorError, tailscaleState } from '../setup/tailscale.ts';
 import { SOMORA_VERSION } from '../version.ts';
+import { searxngSearch } from '../tools/web/search-providers.ts';
 import { launchdPlistPath } from './launchd.ts';
 import { bundledClaudeBinary, claudeBinaryForLogin } from './claude-bin.ts';
 import { isUtf8Locale, renderBanner } from './banner.ts';
@@ -486,13 +487,23 @@ async function braveKeyWorks(key: string): Promise<true | string> {
   }
 }
 
-async function stepSearch(ctx: Ctx): Promise<void> {
+/** One search on the SearXNG instance: does it answer with JSON? */
+async function searxngWorks(baseUrl: string): Promise<true | string> {
+  try {
+    const answer = await searxngSearch({ query: 'somora', count: 1 }, baseUrl, 15_000);
+    return answer.results.length > 0 ? true : 'the instance answered, but found nothing for a test search';
+  } catch (err) {
+    return (err as Error).message;
+  }
+}
+
+/** The Brave half of the search step. True when the config changed. */
+async function stepSearchBrave(ctx: Ctx, config: YamlFile): Promise<boolean> {
   const { p } = ctx;
-  const config = openConfig();
   const current = getIn(config, ['web', 'brave', 'apiKey']);
   if (typeof current === 'string' && current) {
-    ok('web search is on (Brave Search API key present)');
-    if (!(await p.confirm('Replace the key?', false))) return;
+    ok('web search through Brave is on (Brave Search API key present)');
+    if (!(await p.confirm('Replace the key?', false))) return false;
   } else {
     explain(`Agents can search the web through the Brave Search API: they get the
       \`web_search\` tool, and \`web_fetch\` reads the pages it finds. The free plan
@@ -502,8 +513,8 @@ async function stepSearch(ctx: Ctx): Promise<void> {
         2. choose the free "Data for Search" plan and create an API key
         3. paste the key here (it is stored in config.yaml, which only you can read)`);
     if (!(await p.confirm('Do you have a Brave Search API key?', false))) {
-      warn('skipped — add it later with `somora setup search`');
-      return;
+      warn('Brave skipped — add it later with `somora setup search`');
+      return false;
     }
   }
   const key = await p.askValid('API key', undefined, (v) => (v.length < 10 ? 'that is too short for a key' : /\s/.test(v) ? 'a key has no spaces' : null));
@@ -511,11 +522,47 @@ async function stepSearch(ctx: Ctx): Promise<void> {
   const result = await braveKeyWorks(key);
   if (result !== true) {
     warn(result);
-    if (!(await p.confirm('Store it anyway?', false))) return;
+    if (!(await p.confirm('Store it anyway?', false))) return false;
   } else {
     ok('Brave accepted the key');
   }
   setIn(config, ['web', 'brave', 'apiKey'], key);
+  return true;
+}
+
+/** The SearXNG half of the search step. True when the config changed. */
+async function stepSearchSearxng(ctx: Ctx, config: YamlFile): Promise<boolean> {
+  const { p } = ctx;
+  const current = getIn(config, ['web', 'searxng', 'baseUrl']);
+  if (typeof current === 'string' && current) {
+    ok(`web search through SearXNG is on (${current})`);
+    if (!(await p.confirm('Change the address?', false))) return false;
+  } else {
+    explain(`If you run your own SearXNG search engine, agents can search through it
+      as well, or instead of Brave. It must answer in JSON: \`json\` under
+      search.formats in its settings.yml. With both set up, Brave is asked first
+      and SearXNG steps in when Brave fails; \`web.search.order\` in config.yaml
+      turns that around.`);
+    if (!(await p.confirm('Do you run a SearXNG instance?', false))) return false;
+  }
+  const url = await p.askValid('SearXNG address (for example http://192.0.2.20:8888)', undefined, (v) => (/^https?:\/\/\S+$/i.test(v) ? null : 'an address starting with http:// or https://'));
+  say(`  ${dim('checking the instance with one search…')}`);
+  const result = await searxngWorks(url);
+  if (result !== true) {
+    warn(result);
+    if (!(await p.confirm('Store it anyway?', false))) return false;
+  } else {
+    ok('SearXNG answered');
+  }
+  setIn(config, ['web', 'searxng', 'baseUrl'], url.replace(/\/+$/, ''));
+  return true;
+}
+
+async function stepSearch(ctx: Ctx): Promise<void> {
+  const config = openConfig();
+  const brave = await stepSearchBrave(ctx, config);
+  const searxng = await stepSearchSearxng(ctx, config);
+  if (!brave && !searxng) return;
   if (save(config, 'config', 'web search saved')) ctx.needsRestart = true;
 }
 

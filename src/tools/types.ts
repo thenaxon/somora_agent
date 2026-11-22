@@ -68,7 +68,7 @@ export interface ToolContext {
   getMemoryManager: () => Promise<MemoryManager>;
   /**
    * Read-only access to the server config. Tools pluck only the slice
-   * they need (web tools read `config.web.brave.apiKey`, etc.). Never
+   * they need (web tools read `config.web.brave.apiKey` and `config.web.searxng`, etc.). Never
    * mutate from a tool handler.
    */
   config: Config;

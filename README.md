@@ -215,7 +215,7 @@ then starts the **setup assistant**:
 ```text
 somora setup
   1  Models        connect a Claude, ChatGPT or Grok subscription, or your own model server
-  2  Web search    a Brave Search API key, so agents can search the web
+  2  Web search    a Brave Search API key or your own SearXNG, so agents can search
   3  First agent   name, language, model and a backup model
   4  Memory        REM, Deep and Lucid — and where the shared wiki lives
   5  Team          who is who, once there is more than one agent

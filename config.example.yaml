@@ -997,11 +997,18 @@ providers:
 
 # Web-tools credentials. Per-provider keys — tools whose provider isn't
 # configured are hidden from the agent (the `available()` probe on the
-# tool returns false). The provider is Brave; its free tier gives
-# 2k requests/month — sign up at https://api-dashboard.search.brave.com/.
+# tool returns false). web_search asks Brave (free tier: 2k
+# requests/month, https://api-dashboard.search.brave.com/) and/or a
+# SearXNG instance you run (it must allow format=json). With both, Brave
+# is asked first and SearXNG answers when Brave fails; `search.order`
+# changes that. Docs: docs/tools.md "Web search".
 # web:
 #   brave:
 #     apiKey: "BSAxxx..."
+#   searxng:
+#     baseUrl: http://192.0.2.20:8888
+#   search:
+#     order: [searxng, brave]    # first answers; next only when it fails
 #   # Internal hosts web_fetch may read (host, *.suffix, IP or IPv4 CIDR);
 #   # everything private is refused otherwise.
 #   fetchAllowPrivate: [wiki.home.lan, 10.0.0.0/24]

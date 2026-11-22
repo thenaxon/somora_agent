@@ -160,11 +160,16 @@ providers:
 #     # hostKey: 'sha256:abc...'      # optional; without it, trust on first use
 
 # Web tools: a tool whose provider has no key is hidden from agents.
-# Brave: 2,000 requests a month on the free tier,
-# https://api-dashboard.search.brave.com/.
+# web_search asks Brave (2,000 requests a month on the free tier,
+# https://api-dashboard.search.brave.com/) and/or your own SearXNG.
+# With both, Brave comes first; search.order changes that.
 # web:
 #   brave:
 #     apiKey: "BSAxxx..."
+#   searxng:
+#     baseUrl: http://192.0.2.20:8888
+#   search:
+#     order: [searxng, brave]
 
 # What the terminal client shows. Display only: memory and tools run
 # the same either way. Change it while chatting with /show <topic>

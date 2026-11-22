@@ -83,7 +83,7 @@ somora setup access     # one step only
 | Step | What it does |
 |---|---|
 | `models` | Connects a Claude subscription (runs the login of the Claude Code bundled with somora), a ChatGPT subscription (the bundled Codex login, in the browser or with a device code), a Grok subscription (the bundled Grok login, in the browser or with a device code), or your own server. For a server it asks the address and key, lists the models and asks each one's context window. |
-| `search` | Asks for a Brave Search API key, checks it with one real search and stores it as `web.brave.apiKey`. That gives the agents the `web_search` tool. |
+| `search` | Asks for a Brave Search API key and, if you run one, the address of your SearXNG instance. Checks each with one real search and stores them as `web.brave.apiKey` and `web.searxng.baseUrl`. Either gives the agents the `web_search` tool. |
 | `agent` | Creates an agent: name, what it calls you, answer language, model and backup model. On an existing install it lists the agents and offers to repair one whose model is gone. |
 | `memory` | Turns on REM per agent with a model and a backup model, offers the duplicate check for new notes, and sets up the shared wiki with Deep and Lucid, their model and a backup model. The wiki goes into a new folder or your Obsidian vault. |
 | `team` | With two or more agents and no team file yet: writes `team.yaml`. |
@@ -511,7 +511,7 @@ Each of these is off until you configure it and has its own page.
 
 | Feature | Minimal config | Page |
 |---|---|---|
-| Web search | `web.brave.apiKey`, or `somora setup search` | [Tools](tools.md) |
+| Web search | `web.brave.apiKey` or `web.searxng.baseUrl`, or `somora setup search` | [Tools](tools.md#web-search) |
 | Dictation and spoken replies | `stt` and `tts` blocks naming a provider and a model | [Voice](voice.md) |
 | Talking to an agent in a call | `realtimeVoice.enabled: true` with a provider and a key file | [Realtime voice](realtime-voice.md) |
 | Shared wiki, Deep and Lucid | `obsidian.vault` and `wiki.enabled: true`, or `somora setup memory` | [Wiki](wiki.md), [Dream phases](dream-phases.md) |
@@ -733,7 +733,7 @@ not watched: they run outside the chat.
 | `thinkingContent` | [Thinking](thinking.md) |
 | `tui` | [TUI display](display.md) |
 | `mobile` | [Mobile app](mobile.md) |
-| `web.brave`, `vision` | [Tools](tools.md) |
+| `web.brave`, `web.searxng`, `web.search`, `vision` | [Tools](tools.md) |
 | `web.fetchAllowPrivate` | [Security](security.md) |
 | `workspace`, `attachments` | [Files](files.md) |
 | `stt`, `tts` | [Voice](voice.md) |

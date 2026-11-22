@@ -1139,11 +1139,44 @@ export type ExternalConfig = z.infer<typeof ExternalConfigSchema>;
 // Web tools — provider credentials. Each tool reads its own slice; if a
 // provider block isn't configured the corresponding tool's `available()`
 // probe returns false and the model never sees it.
+//
+// web_search has two providers behind one tool (docs/tools.md "Web
+// search"): Brave by API key and a self-hosted SearXNG by its address.
+// `search.order` says which is asked first; the next one answers only
+// when the one before fails. Without it, Brave comes first, so a config
+// that only had a Brave key behaves exactly as before.
+export const WEB_SEARCH_PROVIDERS = ['brave', 'searxng'] as const;
+export type WebSearchProviderId = (typeof WEB_SEARCH_PROVIDERS)[number];
+
 export const WebConfigSchema = z
   .object({
     brave: z
       .object({
         apiKey: z.string().min(1),
+      })
+      .optional(),
+    /**
+     * A SearXNG instance you run. `baseUrl` is where it answers, for
+     * example `http://192.0.2.20:8888`; somora asks `<baseUrl>/search`
+     * with `format=json`, which the instance must allow (`search.formats`
+     * in its settings.yml).
+     */
+    searxng: z
+      .object({
+        baseUrl: z
+          .string()
+          .url()
+          .refine((u) => /^https?:\/\//i.test(u), { message: 'must start with http:// or https://' })
+          .refine((u) => !/[?#]/.test(u), { message: 'the address of the instance only, without ?… or #…' }),
+      })
+      .optional(),
+    /** Which search provider is asked first, and which steps in when it fails. */
+    search: z
+      .object({
+        order: z
+          .array(z.enum(WEB_SEARCH_PROVIDERS))
+          .min(1)
+          .refine((a) => new Set(a).size === a.length, { message: 'lists a provider twice' }),
       })
       .optional(),
     /**
@@ -1155,6 +1188,18 @@ export const WebConfigSchema = z
      * `browser.allowPrivate`.
      */
     fetchAllowPrivate: z.array(z.string().min(1)).default([]),
+  })
+  .superRefine((web, ctx) => {
+    // A provider in the order without its key or address would never
+    // answer; say so at load instead of at the first search.
+    for (const [i, id] of (web.search?.order ?? []).entries()) {
+      if (id === 'brave' && !web.brave?.apiKey) {
+        ctx.addIssue({ code: 'custom', path: ['search', 'order', i], message: "'brave' is in the order but web.brave.apiKey is not set" });
+      }
+      if (id === 'searxng' && !web.searxng?.baseUrl) {
+        ctx.addIssue({ code: 'custom', path: ['search', 'order', i], message: "'searxng' is in the order but web.searxng.baseUrl is not set" });
+      }
+    }
   })
   .default({ fetchAllowPrivate: [] });
 export type WebConfig = z.infer<typeof WebConfigSchema>;

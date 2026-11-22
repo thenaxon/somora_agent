@@ -1,25 +1,13 @@
-// Web tools — search via Brave Search API. web_fetch follows in a
-// later commit (needs SSRF guard + content extraction).
-//
-// Provider choice: Brave-only for now, intentional. Adding more providers
-// later means extending `config.web.<provider>.apiKey` and adding a
-// runtime selector in the handler. Today the model never picks the
-// provider — somora's tool surface is provider-agnostic.
+// Web tools — web_search through the configured search providers
+// (search-providers.ts: Brave, SearXNG, in the operator's order) and
+// web_fetch (fetch.ts). The model never picks the provider: one tool,
+// one schema; the result says which provider answered.
 
 import { z } from 'zod';
 import { logger } from '../../server/logger.ts';
 import type { ToolDefinition } from '../types.ts';
 import { webFetch } from './fetch.ts';
-
-const BRAVE_ENDPOINT = 'https://api.search.brave.com/res/v1/web/search';
-
-// 4-letter prefix → Brave's freshness enum (pd/pw/pm/py).
-const FRESHNESS_MAP: Record<string, string> = {
-  day: 'pd',
-  week: 'pw',
-  month: 'pm',
-  year: 'py',
-};
+import { providerCall, searchInOrder, searchOrder, type SearchHit } from './search-providers.ts';
 
 const SearchInput = z
   .object({
@@ -35,31 +23,15 @@ const SearchInput = z
   })
   .strict();
 
-interface SearchHit {
-  title: string;
-  url: string;
-  description: string;
-  age?: string;
-  language?: string;
-}
-
 interface SearchOutput {
   count: number;
   results: SearchHit[];
-}
-
-interface BraveResultRaw {
-  title?: string;
-  url?: string;
-  description?: string;
-  page_age?: string;
-  language?: string;
-}
-
-interface BraveResponseRaw {
-  web?: {
-    results?: BraveResultRaw[];
-  };
+  /** Which provider answered: brave or searxng. */
+  provider: string;
+  /** Set when a provider before it failed: which, and why. */
+  fallbackFrom?: Array<{ provider: string; error: string }>;
+  /** Options this provider could not apply (SearXNG has no country). */
+  ignored?: string[];
 }
 
 export const webSearch: ToolDefinition<z.infer<typeof SearchInput>, SearchOutput> = {
@@ -94,7 +66,7 @@ export const webSearch: ToolDefinition<z.infer<typeof SearchInput>, SearchOutput
       country: {
         type: 'string',
         pattern: '^[A-Za-z]{2}$',
-        description: '2-letter country code (ISO-3166), e.g. "AT", "DE", "US". Defaults to global.',
+        description: '2-letter country code (ISO-3166), e.g. "AT", "DE", "US". Defaults to global. Not every search provider applies it; the result then lists it under `ignored`.',
       },
       freshness: {
         type: 'string',
@@ -105,81 +77,39 @@ export const webSearch: ToolDefinition<z.infer<typeof SearchInput>, SearchOutput
     required: ['query'],
     additionalProperties: false,
   },
-  // Hidden when no Brave API key is configured — the model never sees a
+  // Hidden when no provider is configured — the model never sees a
   // tool it can't use, instead of getting "API key missing" errors.
-  available: ({ config }) => Boolean(config.web?.brave?.apiKey),
-  // Search results are typically <10 KB; cap at 50 KB so a future
-  // pathologically chatty Brave response can't dominate context.
+  available: ({ config }) => searchOrder(config).length > 0,
+  // Search results are typically <10 KB; cap at 50 KB so a
+  // pathologically chatty response can't dominate context.
   maxResultSizeChars: 50_000,
   async handler(input, ctx): Promise<SearchOutput> {
-    const apiKey = ctx.config.web?.brave?.apiKey;
-    if (!apiKey) {
-      // available() should have prevented us from getting here — but
-      // belt-and-suspenders for the direct-invoke debug endpoint.
-      throw new Error('web_search not configured: set config.web.brave.apiKey');
-    }
-
-    const params = new URLSearchParams({ q: input.query });
-    if (input.count !== undefined) params.set('count', String(input.count));
-    if (input.country) params.set('country', input.country.toUpperCase());
-    if (input.freshness) params.set('freshness', FRESHNESS_MAP[input.freshness]!);
-
-    const url = `${BRAVE_ENDPOINT}?${params.toString()}`;
+    const order = searchOrder(ctx.config);
     const start = Date.now();
-    // External API: bound the wait explicitly. Without an AbortController
-    // we'd inherit undici's default 5-min bodyTimeout which is far too
-    // generous for a search call — Brave should respond in a couple of
-    // seconds; if it doesn't, fail fast and let the model decide what to
-    // do (retry, give up, ask the user).
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 30_000);
-    let res: Response;
+    let outcome;
     try {
-      res = await fetch(url, {
-        headers: {
-          'X-Subscription-Token': apiKey,
-          Accept: 'application/json',
-        },
-        signal: ac.signal,
-      });
+      outcome = await searchInOrder(order, input, providerCall(ctx.config));
     } catch (err) {
-      const aborted = ac.signal.aborted;
-      throw new Error(
-        aborted
-          ? `brave search timed out after 30s`
-          : `brave search request failed: ${(err as Error).message}`,
-      );
-    } finally {
-      clearTimeout(timer);
+      logger.warn({ msg: 'tool.web_search_failed', agent: ctx.agent, query: input.query, order, error: (err as Error).message, ms: Date.now() - start });
+      throw err;
     }
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      // Brave returns 401 for bad keys, 422 for malformed queries, 429 for rate-limit.
-      // Surface the status so the model gets a useful error string.
-      throw new Error(`brave search ${res.status}: ${body.slice(0, 300)}`);
-    }
-
-    const data = (await res.json()) as BraveResponseRaw;
-    const raw = data.web?.results ?? [];
-
-    const results: SearchHit[] = raw.slice(0, input.count ?? 10).map((r) => ({
-      title: r.title ?? '',
-      url: r.url ?? '',
-      description: r.description ?? '',
-      ...(r.page_age ? { age: r.page_age } : {}),
-      ...(r.language ? { language: r.language } : {}),
-    }));
-
+    const fallbackFrom = outcome.failed.length > 0 ? outcome.failed : undefined;
     logger.info({
       msg: 'tool.web_search',
       agent: ctx.agent,
       query: input.query,
-      count: results.length,
+      provider: outcome.provider,
+      ...(fallbackFrom ? { fallbackFrom } : {}),
+      count: outcome.results.length,
       ms: Date.now() - start,
     });
-
-    return { count: results.length, results };
+    return {
+      count: outcome.results.length,
+      results: outcome.results,
+      provider: outcome.provider,
+      ...(fallbackFrom ? { fallbackFrom } : {}),
+      ...(outcome.ignored?.length ? { ignored: outcome.ignored } : {}),
+    };
   },
 };
 

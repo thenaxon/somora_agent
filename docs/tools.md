@@ -48,7 +48,7 @@ whatever your external MCP servers bring.
 | `dream` | 6 | when the agent dreams (`dreams: true`) |
 | `wiki` | 4 | when the agent dreams, and only while it holds an open `dream_review` loop |
 | `time` | 1 | always |
-| `web` | 2 | `web_fetch` always, `web_search` with `web.brave.apiKey` |
+| `web` | 2 | `web_fetch` always, `web_search` with `web.brave.apiKey` or `web.searxng.baseUrl` |
 | `file` | 6 | always, except `analyze_file` (see below) |
 | `exec` | 3 | always |
 | `agents` | 14 | always (`ask_user` only in a turn someone watches) |
@@ -111,8 +111,53 @@ Toolsets `time` and `web`.
 | Tool | What it does |
 |---|---|
 | `time_now` | Returns the current date, time, weekday and timezone. |
-| `web_search` | Searches the web through Brave. Needs `web.brave.apiKey`. |
+| `web_search` | Searches the web through Brave or your own SearXNG, see [Web search](#web-search). |
 | `web_fetch` | Fetches a web page as Markdown, or as plain text with `extract: text`. `maxChars` caps the answer (default 5000, at most 50000); pages over 750 KB are refused. Addresses inside your own network are refused unless listed in `web.fetchAllowPrivate`. |
+
+#### Web search
+
+`web_search` asks one of two search providers:
+
+- **Brave**, with an API key from the Brave Search dashboard
+  (`web.brave.apiKey`).
+- **SearXNG**, a search engine you run yourself (`web.searxng.baseUrl`).
+  somora asks its `/search` page for JSON, so the instance must allow
+  it: `json` under `search.formats` in its `settings.yml`.
+
+With one provider set up, that one answers. With both, Brave is asked
+first. `web.search.order` changes that:
+
+```yaml
+web:
+  brave:
+    apiKey: "BSA..."
+  searxng:
+    baseUrl: http://192.0.2.20:8888
+  search:
+    order: [searxng, brave]   # SearXNG first, Brave only when it fails
+```
+
+Every search starts with the first provider in the order. The next one
+is asked only when the one before fails: no answer within 30 seconds,
+no connection, a server error, a used-up quota (429) or a refused key.
+A query the provider rejects as malformed is not sent on, because the
+next provider would get the same query.
+
+SearXNG returning nothing because none of its engines answered counts
+as a failure. Nothing found with every engine answering is an empty
+result. List one provider only to have no reserve. A provider in the
+order that is not set up stops config.yaml from loading.
+
+The result names the provider that answered (`provider`). When one
+before it failed, `fallbackFrom` lists which and why. When every
+provider fails, the error lists each one's error, the first provider's
+first. Options a provider cannot apply are listed under `ignored`:
+SearXNG has no `country`. `freshness` becomes its time range.
+
+A SearXNG instance can use Brave as one of its own engines. Its
+searches then count against your Brave quota too, and a Brave outage
+also thins its results. It is a second path to the web, not an
+independent one.
 
 ### Files
 
@@ -638,7 +683,7 @@ Settings in `config.yaml` that decide whether a tool is offered:
 
 | Setting | Tools it enables |
 |---|---|
-| `web.brave.apiKey` | `web_search` |
+| `web.brave.apiKey` or `web.searxng.baseUrl` | `web_search` |
 | `vision.worker` | `analyze_file`, for models without the `image` capability |
 | `projects.enabled` | `entity_list` and the five `project_*` tools |
 | `imageGen.enabled` with `imageGen.models` | `image_generate`, `image_models`, `media_list` |
@@ -682,6 +727,12 @@ Per agent, in `agent.yaml`:
 | `PUT /agents/:agent/tools` | Writes `{ deny: [...], allow: [...] }` into the agent's `agent.yaml`. |
 
 ## Troubleshooting
+
+**`web_search` answers from the second provider.** The result's
+`fallbackFrom` says why the first one failed. `searxng search 403`
+means the instance does not allow JSON: add `json` to `search.formats`
+in its `settings.yml` and restart it. `brave search 429` means the
+month's quota or the rate limit is used up.
 
 **The agent says it has no such tool.** Check the "Offered when" column
 above, then the agent's `tools:` block. `GET /agents/<name>/tools`
