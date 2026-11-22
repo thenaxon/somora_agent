@@ -72,7 +72,8 @@ Usage:
   somora server stop                 stop the running server
   somora server restart              restart the service
   somora server status               show server status + lockfile info
-  somora tui                         launch the TUI against the running server
+  somora tui [--agent <name>] [--session <name>]
+                                     launch the TUI against the running server
   somora acp [--agent <name>] [--session <name>]
                                      a somora agent for editors (Zed, JetBrains) over ACP on
                                      stdin/stdout (docs/acp.md)
@@ -475,11 +476,11 @@ async function cmdServer(args: string[]): Promise<number> {
 
 // ─── tui ─────────────────────────────────────────────────────────────
 
-function cmdTui(): Promise<number> {
+function cmdTui(args: string[]): Promise<number> {
   const tsxBin = resolve(PKG_ROOT, 'node_modules', '.bin', 'tsx');
   const tsconfigPath = resolve(PKG_ROOT, 'tsconfig.json');
   const tuiEntry = resolve(PKG_ROOT, 'src', 'cli', 'tui', 'index.tsx');
-  const child = spawn(tsxBin, ['--tsconfig', tsconfigPath, tuiEntry], { stdio: 'inherit' });
+  const child = spawn(tsxBin, ['--tsconfig', tsconfigPath, tuiEntry, ...args], { stdio: 'inherit' });
   return new Promise<number>((res) => {
     child.on('exit', (code) => res(code ?? 0));
   });
@@ -723,7 +724,7 @@ async function main(): Promise<number> {
     case 'server':
       return await cmdServer(rest);
     case 'tui':
-      return await cmdTui();
+      return await cmdTui(rest);
     case 'acp': {
       const { runAcpCli } = await import('./acp.ts');
       return await runAcpCli(rest);
