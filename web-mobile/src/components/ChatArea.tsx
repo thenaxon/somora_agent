@@ -8,31 +8,7 @@ import ReactMarkdown from 'react-markdown';
 import type { AskedQuestion } from '../../../web/src/lib/asked-question';
 
 const ASKED_REMARK_PLUGINS = [remarkGfm];
-import { ChatImage, chatImageUrl } from '../../../web/src/components/ChatImage';
-
-// Agents reference local files by bare absolute path (FileView convention
-// on the desktop client). The phone has no FileView window, so both links
-// and inline images to such paths go through /files/raw, which applies
-// the file_read policy. Module-level so ReactMarkdown keeps component
-// identity across renders.
-const rawUrl = chatImageUrl;
-const MARKDOWN_COMPONENTS = {
-  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-    <a href={rawUrl(href)} target="_blank" rel="noopener noreferrer" draggable={false}>
-      {children}
-    </a>
-  ),
-  img: ({ src, alt }: { src?: string; alt?: string }) => (
-    <ChatImage src={typeof src === 'string' ? src : undefined} alt={alt ?? ''} maxHeight={320} />
-  ),
-  // A wide table scrolls inside the bubble instead of widening it —
-  // the phone viewport has no room to spare (styles: .msg-table-scroll).
-  table: ({ children }: { children?: React.ReactNode }) => (
-    <div className="msg-table-scroll">
-      <table>{children}</table>
-    </div>
-  ),
-};
+import { MARKDOWN_COMPONENTS } from './markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import type { ChatMessage, ThinkingContent } from '../hooks/useChatStream';

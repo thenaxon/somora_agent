@@ -26,6 +26,9 @@ import { SettingsButton, SettingsSheet, type SettingRow } from './SettingsSheet'
 import { AgentOrderSheet } from './AgentOrderSheet';
 import { QuestionCard, useSessionQuestion } from './QuestionCard';
 import { CallSheet, PhoneIcon } from './CallSheet';
+import { FileSheet } from './FileSheet';
+import { useFileSheet } from '../hooks/useFileSheet';
+import { FileOpenProvider } from './markdown';
 import { fetchVoiceStatus, useVoiceCall, type VoiceStatus } from '../../../web/src/hooks/useVoiceCall';
 import { sessionKey } from '../hooks/useActivityStream';
 import { MAIN_SESSION, labelForRef, modelLabel, readLastSession, writeLastSession, type OpenSession } from '../hooks/session-pick';
@@ -50,6 +53,8 @@ export function MobileApp() {
     () => (activeAgent ? openSessions[activeAgent] ?? readLastSession(storage(), activeAgent) : MAIN_SESSION),
     [activeAgent, openSessions],
   );
+  // A local file an agent linked in chat (FileSheet, hooks/useFileSheet).
+  const fileSheet = useFileSheet();
   const pickSession = useCallback((agentName: string, next: OpenSession) => {
     setOpenSessions((prev) => ({ ...prev, [agentName]: next }));
     writeLastSession(storage(), agentName, next);
@@ -411,7 +416,9 @@ export function MobileApp() {
   ];
 
   return (
+    <FileOpenProvider value={fileSheet.open}>
     <div className="mobile-shell">
+      {fileSheet.path && <FileSheet path={fileSheet.path} onClose={fileSheet.close} />}
       <header className="mobile-header">
         {deviceRows.length > 0 ? (
           <button
@@ -659,5 +666,6 @@ export function MobileApp() {
         </div>
       )}
     </div>
+    </FileOpenProvider>
   );
 }

@@ -257,11 +257,26 @@ the koala in the top-left corner to find it. It is off by default and remembered
 | **⚠** block | The turn ended in an error. |
 | Question row | A question the agent asked you, with its options. Hidden only while its card is open. |
 | `◌ history compacted …` divider | The history was compacted: before a turn, by hand, or by the engine itself. When somora compacted, the line says by how much. |
+| Link to a file | A file path in a reply. Tap it to read the file, see "Files in chat" below. |
 | Media line | The reply produced a picture or video. The phone shows a line naming it. Open the web client to see it. |
 | `Image from <host>` with **Show** and **Always show** | A picture from another website, held back until you allow it. See [Security](security.md#pictures-from-other-websites). |
 
 The thinking row only exists when the server captures reasoning.
 `thinkingContent.capture: false` in `config.yaml` hides it everywhere.
+
+### Files in chat
+
+A file path in a reply is a link. Tapping it opens the file over the
+whole screen: Markdown rendered like a reply, text and code in
+monospace, pictures, video, audio and PDFs shown, anything else named
+with its size. The header has the file name and a download button.
+
+A link inside the file opens that file in the same view. **Back**, or
+the phone's own back gesture, returns to the chat in one step, however
+many files you followed.
+
+Which files open follows the same read policy as `file_read` for an
+agent. A file that is missing or blocked says so instead of opening.
 
 ### Tool activity
 
@@ -376,7 +391,8 @@ it reconnects and reloads the history.
 Use the [web client](web.md) for these:
 
 - Terminal sessions and the shell
-- File viewer and pin-note windows
+- Pin-note windows
+- Several files open side by side next to the chat
 - Several windows side by side
 - Renaming, archiving or resetting a session
 - Switching the project of a session
