@@ -1,3 +1,13 @@
+// The TUI inside a herdr pane (docs/display.md "Inside herdr"): it tells
+// herdr which agent and session the pane shows and their state (idle,
+// working, blocked for an open question, unknown while disconnected),
+// hands over the command that reopens the conversation, and frees the
+// pane on exit. herdr sets HERDR_ENV, HERDR_BIN_PATH, HERDR_PANE_ID and
+// HERDR_SOCKET_PATH in its panes; without them nothing here runs.
+// Reports go through herdr's CLI (`pane report-agent`, `report-metadata`,
+// `release-agent`), one at a time, unchanged ones skipped.
+// Built by packetloss99 in their fork (PR #1 and #5 there).
+
 import { execFile, execFileSync } from 'node:child_process';
 import type { SessionWork } from './types.ts';
 

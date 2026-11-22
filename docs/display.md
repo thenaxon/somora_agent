@@ -26,8 +26,9 @@ Start the client against a running server:
 somora tui
 ```
 
-It opens the agent you used last, in its `main` session. An empty
-session greets you with the somora lettering. Type a message and press
+It opens the agent you used last, in its `main` session.
+`somora tui --agent <name> --session <name>` opens that conversation
+instead. An empty session greets you with the somora lettering. Type a message and press
 Enter. Then try the switches:
 
 ```
@@ -270,6 +271,33 @@ The three project commands appear only when `projects.enabled` is
 `/restart` works when somora runs as a background service: the systemd
 user unit on Linux or the LaunchAgent on macOS. A server started by
 hand refuses, because nothing would bring it back.
+
+## Inside herdr
+
+[herdr](https://github.com/herdrdev/herdr) is a terminal workspace for
+coding agents. Run `somora tui` in one of its panes and herdr knows the
+pane as a somora agent:
+
+| The TUI shows | herdr sees |
+|---|---|
+| A turn running, or work waiting in the queue | `working` |
+| A question from the agent | `blocked` |
+| Nothing to do | `idle` |
+| No connection to the server, or still loading | `unknown` |
+
+herdr names the pane `<agent> · Somora`. With it, the TUI hands herdr
+the command that reopens the same conversation,
+`somora tui --agent <name> --session <name>`, so the pane comes back
+where it was after herdr restarts. Leaving the TUI frees the pane
+again.
+
+Nothing needs to be set up. The TUI notices herdr from the variables
+herdr sets in its panes and does nothing outside herdr. herdr cannot
+send the TUI a prompt with `herdr agent prompt` yet. That command only
+takes the agents herdr knows itself.
+
+The other direction, somora watching coding agents in tmux with
+herdr's rules, is in [tmux](tmux.md#how-the-state-is-read).
 
 ## Settings
 

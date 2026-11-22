@@ -11,7 +11,17 @@ import { App } from './app.tsx';
 import { readTuiState } from './state.ts';
 import { resolveServerBase } from '../server-base.ts';
 
-const { values } = parseArgs({ options: { agent: { type: 'string' }, session: { type: 'string' } } });
+// `--agent` and `--session` open that conversation; herdr passes them
+// back to reopen the pane (src/cli/tui/herdr.ts, docs/display.md
+// "Inside herdr"). A wrong flag gets a usage line, not a stack trace.
+const TUI_USAGE = 'Usage: somora tui [--agent <name>] [--session <name>]';
+let values: { agent?: string; session?: string };
+try {
+  ({ values } = parseArgs({ options: { agent: { type: 'string' }, session: { type: 'string' } } }));
+} catch (err) {
+  process.stderr.write(`somora tui: ${(err as Error).message}\n${TUI_USAGE}\n`);
+  process.exit(2);
+}
 
 // Where the server listens (config.yaml TLS, env overrides).
 const base = await resolveServerBase();

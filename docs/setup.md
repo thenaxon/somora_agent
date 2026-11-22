@@ -764,7 +764,7 @@ in the agents guide.
 | `somora server stop` | Stops the server. |
 | `somora server restart` | Restarts the service. |
 | `somora server status` | Shows the running server, a waiting update and the service state. |
-| `somora tui` | Opens the terminal client against the running server. |
+| `somora tui [--agent <name>] [--session <name>]` | Opens the terminal client against the running server, in that agent's session when given. |
 | `somora key [show]` | Prints the server's key. Run it on the server. Every request needs it unless `server.auth: off`. |
 | `somora key link [--no-open]` | Prints a link that signs a browser in and a QR code for the phone, and opens the browser when the machine has a screen. |
 | `somora key rotate` | Makes a new key. Browsers sign in again, scripts need the new key. |

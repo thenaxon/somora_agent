@@ -138,6 +138,9 @@ Codex's dialog about its shared background server and its worktree
 question after `/new`. New herdr rules
 arrive with somora releases. Nothing is fetched while somora runs.
 
+The other way round, somora's own TUI in a herdr pane tells herdr its
+state, see [TUI display](display.md#inside-herdr).
+
 ### Your own rules
 
 A file `~/.somora/tmux-detection/<agent>.json` replaces the rules for
