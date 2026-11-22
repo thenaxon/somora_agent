@@ -168,6 +168,12 @@ export function App({
   // External agents (docs/external-agents.md): name → status-line label
   // shown instead of a model ("external · OpenClaw 2026.10.3").
   const [externalLabels, setExternalLabels] = useState<Record<string, string>>({});
+  // Steering (docs/display.md "While the agent works"): a message typed
+  // during a turn goes into it (steer) or waits behind it (queue). Starts
+  // at the agent's `steering` setting; Ctrl+T flips it for this session.
+  const [agentSteering, setAgentSteering] = useState<Record<string, boolean>>({});
+  const [steerOverride, setSteerOverride] = useState<boolean | null>(null);
+  const steerNow = steerOverride ?? agentSteering[agent] === true;
   // The session's open question (an external agent asking permission):
   // answered by typing an option's number.
   const [openQuestion, setOpenQuestionState] = useState<SessionQuestion | null>(null);
@@ -397,13 +403,16 @@ export function App({
         if (cancelled) return;
         const next: Record<string, string> = {};
         const labels: Record<string, string> = {};
+        const steer: Record<string, boolean> = {};
         for (const a of list) {
+          steer[a.name] = a.steering === true;
           if (a.icon) next[a.name] = a.icon;
           else if (a.external) next[a.name] = a.external.badge;
           if (a.external) labels[a.name] = `external · ${a.external.label}${a.external.version ? ` ${a.external.version}` : ''}`;
         }
         setAgentIcons(next);
         setExternalLabels(labels);
+        setAgentSteering(steer);
       })
       .catch(() => {
         /* leave icons empty if endpoint is unreachable */
@@ -610,6 +619,7 @@ export function App({
     let cancelled = false;
     setTurns([]);
     setFlushedCount(0);
+    setSteerOverride(null);
     setStreaming(false);
     setBusy(false);
     setStats(null);
@@ -1211,7 +1221,7 @@ export function App({
           // when the running turn ends just as we send.
           if (ev.turnId) pendingQueuedBufferRef.current.delete(ev.turnId);
           const queued = pendingQueuedRef.current;
-          const qi = queued.findIndex((p) => ev.turnId !== undefined && p.turnId === ev.turnId);
+          const qi = queued.findIndex((p) => (ev.turnId !== undefined && p.turnId === ev.turnId) || (ev.steerId !== undefined && p.steerId === ev.steerId));
           if (qi >= 0) {
             updatePendingQueued(queued.filter((_, i) => i !== qi));
             appendTurn({ kind: 'user', id: nextId(), text: ev.text });
@@ -1392,6 +1402,10 @@ export function App({
     }
     if (key.ctrl && char === 'n') {
       jumpToUnread();
+      return;
+    }
+    if (key.ctrl && char === 't') {
+      setSteerOverride(!steerNow);
       return;
     }
     // Tab: the first press fills in the highlighted command, every
@@ -1603,7 +1617,7 @@ export function App({
     if (queuedPath) {
       updatePendingQueued((prev) => [
         ...prev,
-        { localId, text: trimmed, ts: Date.now() },
+        { localId, text: trimmed, ts: Date.now(), ...(steerNow ? { steer: true } : {}) },
       ]);
     } else {
       appendTurn({ kind: 'user', id: localId, text: trimmed });
@@ -1611,7 +1625,13 @@ export function App({
       setBusy(true);
     }
     try {
-      const { turnId } = await apiRef.current.send(agent, session, trimmed);
+      const { turnId, steerId } = await apiRef.current.send(agent, session, trimmed, queuedPath && steerNow ? { steer: true } : {});
+      if (queuedPath && steerId) {
+        // In the running turn: the row waits for the agent's next step,
+        // then its user_message (same steer id) takes its place.
+        updatePendingQueued((prev) => prev.map((p) => (p.localId === localId ? { ...p, steerId } : p)));
+        return;
+      }
       if (queuedPath && turnId) {
         // Drain any turn_queued SSE that arrived before this POST
         // returned so the ahead-count lands on the bubble in the
@@ -1739,10 +1759,16 @@ export function App({
                 {'user  '}
               </Text>
               <Text>{p.text} </Text>
-              <Text color="yellow" italic>
-                · queued
-                {p.queued && p.queued.ahead > 1 ? ` · ${p.queued.ahead - 1} ahead` : ''}
-              </Text>
+              {p.steerId || (p.steer && !p.turnId) ? (
+                <Text color="magenta" italic>
+                  · steered, read at the agent's next step
+                </Text>
+              ) : (
+                <Text color="yellow" italic>
+                  · queued
+                  {p.queued && p.queued.ahead > 1 ? ` · ${p.queued.ahead - 1} ahead` : ''}
+                </Text>
+              )}
             </Box>
           ))
         : null}
@@ -1811,7 +1837,7 @@ export function App({
               value={input}
               onChange={handleInputChange}
               onSubmit={(text) => void handleSubmit(text)}
-              placeholder={busy || streaming ? '(type to queue next message…)' : ''}
+              placeholder={busy || streaming ? (steerNow ? '(Enter hands it to the running turn · Ctrl+T: queue instead)' : '(Enter queues it behind this turn · Ctrl+T: steer instead)') : ''}
               edgeRef={editorEdgesRef}
               isActive={search === null && picker === null}
             />

@@ -141,6 +141,7 @@ locale is not UTF-8.
 | Ctrl+W, Ctrl+U, Ctrl+K | Deletes the word before the cursor, everything before it on the line, everything after it on the line. |
 | Ctrl+G, Ctrl+P, Ctrl+O | Opens a list to pick an agent, a session of this agent, or a model for this session, see "Pickers". |
 | Ctrl+N | Jumps to the session with the newest unread reply, at this agent or another. |
+| Ctrl+T | During a turn: switches between steering a message into it and queueing it, for this session. |
 | Esc | During a turn: stops the running turn and keeps your input. Otherwise: clears the input. |
 | Ctrl+C | Clears the input. With an empty input it quits. |
 
@@ -163,9 +164,20 @@ does not have. For an external agent, `/model`, `/thinking` and
 `/sampling` say that its own system sets them.
 
 You can keep typing while the agent works. A message sent during a
-running turn waits its turn and shows `· queued`, or `· queued · N
-ahead` when others wait before it. It moves into the chat when it
-starts.
+running turn goes one of two ways:
+
+- **Queued**: it waits for its own turn and shows `· queued`, or
+  `· queued · N ahead` when others wait before it. It moves into the
+  chat when it starts.
+- **Steered**: it goes into the running turn and shows `· steered`.
+  The agent reads it at its next step, after the tools of the current
+  round, and it moves into the chat at that point. See
+  [Steering](api.md#steering) for the engines that take it; on the
+  others it is queued.
+
+Which way Enter sends follows the agent's `steering:` setting in
+`agent.yaml`, as in the web client. Ctrl+T switches it for this session.
+The input says which way the next message goes while a turn runs.
 
 ### Pickers
 

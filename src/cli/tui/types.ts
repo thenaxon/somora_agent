@@ -63,6 +63,9 @@ export interface SessionSamplingInfo {
 export interface AgentInfo {
   name: string;
   description: string;
+  /** What a message typed during a turn does by default: true hands it
+   *  into the running turn, false queues it (agent.yaml `steering`). */
+  steering?: boolean;
   icon?: string;
   /** 'external' for an agent of another system (docs/external-agents.md). */
   kind?: string;
@@ -201,6 +204,11 @@ export interface PendingQueuedTurn {
   /** Set when a turn_queued SSE event arrived. `ahead` = number of
    *  turns this one must wait for (>=1, including current). */
   queued?: { ahead: number };
+  /** Handed into the running turn (steering): waits for the agent's
+   *  next step, paired with its user_message by this id. */
+  steerId?: string;
+  /** Sent with steer: true; until the answer the row says so. */
+  steer?: boolean;
 }
 
 // Where a synthesized inbound came from — the legacy `from_system`
@@ -419,6 +427,8 @@ export type StreamEvent =
       text: string;
       /** When the message was stored — the anchor for resync.ts. */
       ts?: number;
+      /** A steered message, read by the running turn: its steer id. */
+      steerId?: string;
       turnId?: string;
       fromAgent?: string;
       fromSession?: string;

@@ -285,6 +285,7 @@ export function openStream(
           kind: 'user-message',
           text: data.text,
           ...(typeof data.ts === 'number' ? { ts: data.ts } : {}),
+          ...(data.steer === true && typeof data.steer_id === 'string' ? { steerId: data.steer_id } : {}),
           // turnId is the server-issued id echoed back so a consumer
           // that buffered a pending-queued entry can pair it now and
           // promote the entry into a real Static-flushed user turn.
