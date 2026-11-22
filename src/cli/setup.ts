@@ -1153,8 +1153,12 @@ async function stepAccess(ctx: Ctx): Promise<void> {
       return;
     }
   } else if (mode === 'lan') {
-    explain(`somora has no login of its own: everyone who can reach this machine on port ${port}
-      can talk to your agents. Only do this in a network you trust.`);
+    // Since the login key (2026-10-12) the server asks every browser and
+    // program for it; what the local network adds is that the traffic,
+    // the key included, goes unencrypted (2026-11-22, rehearsal finding).
+    explain(`Everyone in your network can then reach somora on port ${port}. It asks for its
+      key, but over plain http that key and everything you write travel unencrypted.
+      Only do this in a network you trust.`);
     if (!(await p.confirm('Open it to the local network?', false))) return;
     setIn(config, ['server', 'host'], '0.0.0.0');
   } else {
@@ -1245,9 +1249,13 @@ async function stepStart(ctx: Ctx): Promise<void> {
   }
 
   const base = baseUrl(config);
+  // The address the phone can open (the network or Tailscale name), not
+  // this machine's own loopback (rehearsal finding 2026-11-22).
+  const { signInParts } = await import('./key.ts');
+  const parts = await signInParts();
   heading('Ready');
   say(`  Web client     ${cyan(`${base}/web/`)}`);
-  say(`  Phone          ${cyan(`${base}/mobile`)}${base.startsWith('https') ? dim('  (add to home screen)') : ''}`);
+  say(`  Phone          ${cyan(`${parts.phoneBase}/mobile`)}${parts.phoneBase.startsWith('https') ? dim('  (add to home screen)') : parts.phoneReachable ? '' : dim('  (this machine only — see below)')}`);
   say(`  Sign in later  ${cyan('somora key link')}${dim('  — a browser and the phone ask for the key once')}`);
   say(`  Terminal       ${cyan('somora tui')}`);
   say(`  Update         ${cyan('somora update')}`);
@@ -1257,8 +1265,6 @@ async function stepStart(ctx: Ctx): Promise<void> {
   // phone, as a question of its own (2026-11-22): its QR code used to be
   // printed every time, also when somora answers only on this machine
   // and the code pointed at 127.0.0.1, which no phone can open.
-  const { signInParts } = await import('./key.ts');
-  const parts = await signInParts();
   if (!parts.authOff) {
     say(`  Sign this browser in once: ${cyan(parts.webLink)}`);
     if (parts.openWeb()) ok('opened in your browser');
