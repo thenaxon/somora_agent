@@ -23,8 +23,16 @@ now signed-in tab.
 
 ## Set it up
 
+`somora setup browser` does the steps below for you: it looks for
+Chromium or Chrome, offers to install it, starts it once to check it,
+and switches the browser on. It also asks about "Headed mode" below and
+installs Xvfb when that needs it. By hand:
+
 1. Install Chromium or Chrome on the somora host, for example
-   `sudo apt install chromium`.
+   `sudo apt install chromium`. On Ubuntu prefer Google Chrome: Ubuntu's
+   Chromium is a snap, and a snap may not open folders whose name starts
+   with a dot, such as `~/.somora`, where the browser keeps its profile.
+   The check in `somora setup browser` shows whether it starts.
 2. Switch the browser on in `config.yaml`:
 
    ```yaml

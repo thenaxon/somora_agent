@@ -74,8 +74,16 @@ export async function startVirtualDisplay(
     stderr += d.toString();
   });
   const deadline = Date.now() + (opts.timeoutMs ?? 5000);
+  // A program that cannot be run at all (wrong path, not executable)
+  // reports on 'error', not by exiting: without a listener Node would
+  // throw it and take the whole process down (Codex review 2026-11-22).
+  let spawnError: Error | null = null;
+  child.once('error', (err) => {
+    spawnError = err;
+  });
   await new Promise<void>((resolve, reject) => {
     const tick = () => {
+      if (spawnError) return reject(new Error(`Xvfb ${display} could not start: ${spawnError.message}`));
       if (child.exitCode !== null) return reject(new Error(`Xvfb ${display} exited (${child.exitCode}): ${stderr.trim().split('\n')[0] ?? ''}`));
       if (existsSync(`/tmp/.X11-unix/X${n}`)) return resolve();
       if (Date.now() > deadline) {

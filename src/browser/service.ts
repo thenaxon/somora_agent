@@ -34,6 +34,7 @@ import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { detectExecutable } from './executable.ts';
 import { chromium, devices, type BrowserContext, type CDPSession, type Page } from 'playwright-core';
 import type { BrowserConfig } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
@@ -199,22 +200,9 @@ export class BrowserOpError extends Error {
   }
 }
 
-const EXECUTABLE_CANDIDATES = [
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-  '/usr/bin/google-chrome',
-  '/usr/bin/google-chrome-stable',
-  '/snap/bin/chromium',
-  '/opt/homebrew/bin/chromium',
-  '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-];
-
-export function detectExecutable(configured?: string): { path: string | null; tried: string[] } {
-  const tried = configured ? [configured] : EXECUTABLE_CANDIDATES;
-  for (const p of tried) if (existsSync(p)) return { path: p, tried };
-  return { path: null, tried };
-}
+// Moved to ./executable.ts so the setup assistant can use it without
+// loading the browser service; re-exported for existing importers.
+export { detectExecutable } from './executable.ts';
 
 function nowMs(): number {
   return Date.now();

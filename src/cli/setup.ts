@@ -12,7 +12,7 @@
 // backup, and a result the server would refuse is never written.
 
 import { ensureKeyFile } from '../server/auth-key.ts';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces, userInfo } from 'node:os';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
@@ -32,6 +32,8 @@ import {
 import { isOperatorError, tailscaleState } from '../setup/tailscale.ts';
 import { SOMORA_VERSION } from '../version.ts';
 import { searxngSearch } from '../tools/web/search-providers.ts';
+import { EXECUTABLE_CANDIDATES } from '../browser/executable.ts';
+import { spawnSync } from 'node:child_process';
 import { launchdPlistPath } from './launchd.ts';
 import { bundledClaudeBinary, claudeBinaryForLogin } from './claude-bin.ts';
 import { isUtf8Locale, renderBanner } from './banner.ts';
@@ -43,12 +45,13 @@ const AGENTS_DIR = join(SOMORA_HOME, 'agents');
 const UNIT_PATH = join(HOME, '.config', 'systemd', 'user', 'somora.service');
 const BIN_PATH = process.env.SOMORA_BIN_PATH ?? '';
 
-const STEPS = ['models', 'search', 'agent', 'memory', 'team', 'access', 'start'] as const;
+const STEPS = ['models', 'search', 'browser', 'agent', 'memory', 'team', 'access', 'start'] as const;
 type Step = (typeof STEPS)[number];
 
 const STEP_TITLES: Record<Step, string> = {
   models: 'Models — which AI your agents use',
   search: 'Web search',
+  browser: 'Browser',
   agent: 'Your first agent',
   memory: 'Memory and dreaming',
   team: 'Team',
@@ -564,6 +567,186 @@ async function stepSearch(ctx: Ctx): Promise<void> {
   const searxng = await stepSearchSearxng(ctx, config);
   if (!brave && !searxng) return;
   if (save(config, 'config', 'web search saved')) ctx.needsRestart = true;
+}
+
+// ─── step: browser ────────────────────────────────────────────────────
+
+/** How to install Chromium here, as a command the user is asked to run;
+ *  null where there is no simple one (docs/browser.md "Set it up"). */
+export function chromiumInstallCommand(platform: NodeJS.Platform, osRelease: string, has: (cmd: string) => boolean): string[] | null {
+  if (platform === 'darwin') return has('brew') ? ['brew', 'install', '--cask', 'google-chrome'] : null;
+  if (platform !== 'linux') return null;
+  const id = /^ID=("?)([^"\n]+)\1/m.exec(osRelease)?.[2] ?? '';
+  // Ubuntu ships Chromium only as a snap, and a snap may not open
+  // folders starting with a dot such as ~/.somora, where the profile
+  // lives: Google Chrome instead (docs/browser.md). The start check
+  // below would show a snap that does work.
+  if (id === 'ubuntu') return null;
+  if (has('apt-get')) return ['sudo', 'apt-get', 'install', '-y', 'chromium'];
+  if (has('dnf')) return ['sudo', 'dnf', 'install', '-y', 'chromium'];
+  if (has('pacman')) return ['sudo', 'pacman', '-S', '--needed', '--noconfirm', 'chromium'];
+  if (has('zypper')) return ['sudo', 'zypper', '--non-interactive', 'install', 'chromium'];
+  return null;
+}
+
+/** How to install Xvfb, the virtual screen a browser with a window needs
+ *  on a machine without one (docs/browser.md "Headed mode"). */
+export function xvfbInstallCommand(platform: NodeJS.Platform, has: (cmd: string) => boolean): string[] | null {
+  if (platform !== 'linux') return null;
+  if (has('apt-get')) return ['sudo', 'apt-get', 'install', '-y', 'xvfb'];
+  if (has('dnf')) return ['sudo', 'dnf', 'install', '-y', 'xorg-x11-server-Xvfb'];
+  if (has('pacman')) return ['sudo', 'pacman', '-S', '--needed', '--noconfirm', 'xorg-server-xvfb'];
+  if (has('zypper')) return ['sudo', 'zypper', '--non-interactive', 'install', 'xorg-x11-server-Xvfb'];
+  return null;
+}
+
+/** Start the browser once, unseen, with a profile folder under somora's
+ *  own folder like the real one, and read a page back. */
+async function browserWorks(exe: string, extraArgs: string[], headed?: { xvfb?: string }): Promise<true | string> {
+  const dir = mkdtempSync(join(SOMORA_HOME, 'browser-check-'));
+  let screen: { display: string; stop(): Promise<void> } | undefined;
+  try {
+    const { chromium } = await import('playwright-core');
+    if (headed?.xvfb) {
+      const { startVirtualDisplay } = await import('../browser/display.ts');
+      screen = await startVirtualDisplay(headed.xvfb, { width: 1280, height: 800 });
+    }
+    const ctx = await chromium.launchPersistentContext(dir, {
+      executablePath: exe,
+      headless: !headed,
+      timeout: 30_000,
+      // The service's own flags (browser/service.ts launch), so the check
+      // starts it the way the agents will.
+      args: ['--no-first-run', '--disable-background-networking', '--disable-sync', ...(headed ? ['--disable-blink-features=AutomationControlled'] : []), ...extraArgs],
+      ...(headed ? { ignoreDefaultArgs: ['--enable-automation'] } : {}),
+      ...(screen ? { env: { ...process.env, DISPLAY: screen.display } } : {}),
+    });
+    try {
+      const page = await ctx.newPage();
+      await page.setContent('<title>somora-check</title><p>ok</p>');
+      return (await page.title()) === 'somora-check' ? true : 'the browser started but did not show the test page';
+    } finally {
+      await ctx.close();
+    }
+  } catch (err) {
+    return (err as Error).message.split('\n')[0]!.slice(0, 300);
+  } finally {
+    await screen?.stop().catch(() => {});
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function stepBrowser(ctx: Ctx): Promise<void> {
+  const { p } = ctx;
+  const config = openConfig();
+  const on = getIn(config, ['browser', 'enabled']) === true;
+  if (on) {
+    ok('the browser is on');
+    if (!(await p.confirm('Check that it starts?', false))) return;
+  } else {
+    explain(`Agents can use a browser of their own: open pages, click, fill in forms, read
+      what a page shows — also pages that need JavaScript. You watch it in the web
+      client and can take over. It needs Chromium or Chrome on this machine.`);
+    if (!(await p.confirm('Let agents use a browser?', false))) return;
+  }
+  // A path set in config.yaml that is gone would hide every other
+  // browser here (Codex review): say so and drop it, with permission.
+  const configured = getIn(config, ['browser', 'executablePath']) as string | undefined;
+  if (configured && !existsSync(configured)) {
+    warn(`browser.executablePath points to ${configured}, which does not exist`);
+    if (!(await p.confirm('Remove that setting and look for a browser here?', true))) return;
+    deleteIn(config, ['browser', 'executablePath']);
+  }
+  const pinned = getIn(config, ['browser', 'executablePath']) as string | undefined;
+  const found = (): string[] => (pinned ? [pinned] : EXECUTABLE_CANDIDATES.filter((c) => existsSync(c)));
+  if (found().length === 0) {
+    let osRelease = '';
+    try { osRelease = readFileSync('/etc/os-release', 'utf8'); } catch { /* not Linux */ }
+    const cmd = chromiumInstallCommand(process.platform, osRelease, onPath);
+    if (!cmd) {
+      warn('no Chromium or Chrome found, and no simple way to install it here');
+      explain(`Install Google Chrome or Chromium yourself (on Ubuntu: Google Chrome from
+        google.com/chrome — the Chromium snap may not open somora's folder), then run
+        \`somora setup browser\` again.`);
+      return;
+    }
+    if (!(await p.confirm(`No Chromium or Chrome found. Install it now with: ${cmd.join(' ')} ?`, true))) return;
+    const r = spawnSync(cmd[0]!, cmd.slice(1), { stdio: 'inherit' });
+    if (r.status !== 0 || found().length === 0) {
+      warn(`the install did not work${r.status !== null ? ` (exit ${r.status})` : ''} — install it yourself, then run \`somora setup browser\` again`);
+      return;
+    }
+  }
+  // Every browser found, in the service's order, until one starts: on
+  // Ubuntu the Chromium snap wrapper comes before Google Chrome and may
+  // fail where Chrome works. One that is not the service's first pick is
+  // written to browser.executablePath, so the service uses it too.
+  const extraArgs = ((getIn(config, ['browser', 'extraArgs']) as unknown[] | undefined) ?? []).filter((x): x is string => typeof x === 'string');
+  let exe: string | null = null;
+  for (const candidate of found()) {
+    say(`  ${dim(`starting ${candidate} once to check it…`)}`);
+    const result = await browserWorks(candidate, extraArgs);
+    if (result === true) {
+      exe = candidate;
+      break;
+    }
+    warn(`${candidate} does not start: ${result}`);
+  }
+  if (!exe) {
+    explain(`On a server this is usually a missing system library; the message above names
+      it. Fix that and run \`somora setup browser\` again. The browser stays off.`);
+    if (pinned === undefined && configured && save(config, 'config', 'stale browser path removed')) ctx.needsRestart = true;
+    return;
+  }
+  if (!pinned && exe !== found()[0]) setIn(config, ['browser', 'executablePath'], exe);
+  ok('the browser works');
+  // With a window or without (docs/browser.md "Headed mode"). Without, it
+  // tells every site it is HeadlessChrome and bot filters turn it away;
+  // with a window it looks like a browser a person opened. On a machine
+  // without a screen the window goes to Xvfb, offered here when missing.
+  const { planHeaded } = await import('../browser/display.ts');
+  const serverLike = process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY;
+  const headedNow = getIn(config, ['browser', 'headed']) === true;
+  explain(serverLike
+    ? `Without a window the browser tells every site it is a robot ("HeadlessChrome"),
+      and sites with bot filters turn it away. With a window it looks like a normal
+      browser. Here there is no screen, so the window goes to a virtual one (Xvfb).`
+    : `Without a window the browser tells every site it is a robot ("HeadlessChrome"),
+      and sites with bot filters turn it away. With a window it looks like a normal
+      browser — the window opens on this screen while an agent browses.`);
+  let headed = await p.confirm('Run it with a window?', headedNow || serverLike);
+  if (headed) {
+    let plan = planHeaded(true);
+    if (plan.mode === 'unavailable') {
+      const cmd = xvfbInstallCommand(process.platform, onPath);
+      if (cmd && (await p.confirm(`Xvfb (the virtual screen) is missing. Install it now with: ${cmd.join(' ')} ?`, true))) {
+        spawnSync(cmd[0]!, cmd.slice(1), { stdio: 'inherit' });
+        plan = planHeaded(true);
+      }
+    }
+    if (plan.mode === 'unavailable') {
+      warn('no screen and no Xvfb — the browser runs without a window');
+      explain(`Install Xvfb (usually the package xvfb) and run \`somora setup browser\` again
+        for the window.`);
+      headed = false;
+    } else {
+      say(`  ${dim(plan.mode === 'xvfb' ? 'starting it once with a window on Xvfb…' : 'starting it once with a window…')}`);
+      const withWindow = await browserWorks(exe, extraArgs, plan.mode === 'xvfb' ? { xvfb: plan.xvfb } : {});
+      if (withWindow !== true) {
+        warn(`with a window it does not start: ${withWindow} — it runs without one`);
+        headed = false;
+      } else {
+        ok('it works with a window');
+      }
+    }
+  }
+  if (headed !== headedNow) setIn(config, ['browser', 'headed'], headed);
+
+  if (!on) setIn(config, ['browser', 'enabled'], true);
+  if (save(config, 'config', on ? 'browser settings saved' : 'browser switched on')) ctx.needsRestart = true;
+  if (on) return;
+  explain(`Pages in your own network (router, NAS, local services) stay closed to it until
+    you list them under browser.allowPrivate in config.yaml.`);
 }
 
 // ─── step: agent ──────────────────────────────────────────────────────
@@ -1103,6 +1286,7 @@ async function stepStart(ctx: Ctx): Promise<void> {
 const RUN: Record<Step, (ctx: Ctx) => Promise<void>> = {
   models: stepModels,
   search: stepSearch,
+  browser: stepBrowser,
   agent: stepAgent,
   memory: stepMemory,
   team: stepTeam,

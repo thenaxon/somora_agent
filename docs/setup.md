@@ -84,6 +84,7 @@ somora setup access     # one step only
 |---|---|
 | `models` | Connects a Claude subscription (runs the login of the Claude Code bundled with somora), a ChatGPT subscription (the bundled Codex login, in the browser or with a device code), a Grok subscription (the bundled Grok login, in the browser or with a device code), or your own server. For a server it asks the address and key, lists the models and asks each one's context window. |
 | `search` | Asks for a Brave Search API key and, if you run one, the address of your SearXNG instance. Checks each with one real search and stores them as `web.brave.apiKey` and `web.searxng.baseUrl`. Either gives the agents the `web_search` tool. |
+| `browser` | Asks whether agents may use a browser. Looks for Chromium or Chrome, offers to install it where one command does it, and starts it once to check it works. Then asks whether it should run with a window, which fewer sites block: on a machine without a screen that needs Xvfb, which it offers to install, and it checks the window once on it. Sets `browser.enabled` and `browser.headed`. Off by default. |
 | `agent` | Creates an agent: name, what it calls you, answer language, model and backup model. On an existing install it lists the agents and offers to repair one whose model is gone. Then offers a [builder](builder.md) in addition, when there is none yet: name, model, working folder, and the language servers. |
 | `memory` | Turns on REM per agent with a model and a backup model, offers the duplicate check for new notes, and sets up the shared wiki with Deep and Lucid, their model and a backup model. The wiki goes into a new folder or your Obsidian vault. |
 | `team` | With two or more agents and no team file yet: writes `team.yaml`. |
@@ -517,7 +518,7 @@ Each of these is off until you configure it and has its own page.
 | Shared wiki, Deep and Lucid | `obsidian.vault` and `wiki.enabled: true`, or `somora setup memory` | [Wiki](wiki.md), [Dream phases](dream-phases.md) |
 | Team chart in every prompt | `~/.somora/team.yaml`, or `somora team init --principal "<your name>"` | [Team](team.md) |
 | Image and video generation | `imageGen.enabled`, `videoGen.enabled`, each with `models` | [Image generation](imagegen.md), [Video generation](videogen.md) |
-| Shared browser | `browser.enabled: true` and Chromium or Chrome on the host | [Browser](browser.md) |
+| Shared browser | `browser.enabled: true` and Chromium or Chrome on the host, or `somora setup browser` | [Browser](browser.md) |
 | External MCP servers | `mcp.servers` | [MCP](mcp.md) |
 | Projects | `projects.enabled: true` with a list of `entities` | [Projects](projects.md) |
 | Scheduled triggers | none, the agents create them | [Sentinel](sentinel.md) |
@@ -758,7 +759,7 @@ in the agents guide.
 
 | Command | What it does |
 |---|---|
-| `somora setup [step]` | The guided assistant. Steps: `models`, `search`, `agent`, `memory`, `team`, `access`, `start`. |
+| `somora setup [step]` | The guided assistant. Steps: `models`, `search`, `browser`, `agent`, `memory`, `team`, `access`, `start`. |
 | `somora init` | Creates the data folder and writes the service definition. Safe to run again. |
 | `somora server start [--foreground]` | Starts the server, as a service or in this terminal. |
 | `somora server stop` | Stops the server. |

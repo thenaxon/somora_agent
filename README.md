@@ -216,11 +216,12 @@ then starts the **setup assistant**:
 somora setup
   1  Models        connect a Claude, ChatGPT or Grok subscription, or your own model server
   2  Web search    a Brave Search API key or your own SearXNG, so agents can search
-  3  First agent   name, language, model and a backup model
-  4  Memory        REM, Deep and Lucid — and where the shared wiki lives
-  5  Team          who is who, once there is more than one agent
-  6  Access        HTTPS through Tailscale, so phone and laptop can reach it
-  7  Start + test  starts the service and sends your agent a real message
+  3  Browser       optional: a browser the agents can use (checks Chromium or Chrome)
+  4  First agent   name, language, model and a backup model, then optionally a builder
+  5  Memory        REM, Deep and Lucid — and where the shared wiki lives
+  6  Team          who is who, once there is more than one agent
+  7  Access        HTTPS through Tailscale, so phone and laptop can reach it
+  8  Start + test  starts the service, sends your agent a real message, signs in the phone
 ```
 
 Every step first looks at what is already there, so `somora setup` is safe
