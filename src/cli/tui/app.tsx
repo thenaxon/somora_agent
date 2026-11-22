@@ -1819,6 +1819,7 @@ export function App({
           workCounters={formatWorkCounters(work)}
           nextModel={nextModel}
           externalLabel={externalLabels[agent] ?? null}
+          sendMode={busy || streaming ? (steerNow ? 'steer' : 'queue') : null}
         />
         {picker ? (
           <Picker

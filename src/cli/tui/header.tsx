@@ -42,6 +42,9 @@ interface Props {
   /** An external agent: shown in place of the model
    *  ("external · OpenClaw 2026.10.3"), which its own system sets. */
   externalLabel?: string | null;
+  /** During a turn: what Enter does with a new message — hand it into
+   *  the running turn or queue it behind (Ctrl+T switches). */
+  sendMode?: 'steer' | 'queue' | null;
 }
 
 // Status line. Sits right above the input, NOT at the top of the terminal —
@@ -77,6 +80,7 @@ export function Header({
   workCounters,
   nextModel,
   externalLabel,
+  sendMode,
 }: Props) {
   const cols = useTerminalCols();
   const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
@@ -138,6 +142,11 @@ export function Header({
   }
   if (workCounters) {
     segments.push({ key: 'work', priority: 80, plain: workCounters, node: <Text color="yellow">{workCounters}</Text> });
+  }
+  if (sendMode) {
+    // Beside the spinner and kept long, so it is there while typing.
+    const text = sendMode === 'steer' ? '↪ steer' : '⏸ queue';
+    segments.push({ key: 'send', priority: 85, plain: text, node: <Text color={sendMode === 'steer' ? 'magenta' : 'yellow'} bold>{text}</Text> });
   }
   // Connection / streaming indicator: short on purpose, never
   // right-aligned (a full-width row is what made the 2026-05-22 drift).

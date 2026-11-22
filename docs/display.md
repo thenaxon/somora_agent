@@ -68,6 +68,7 @@ into the scrollback, and those rows can appear there twice.
 | `📁 <project>` | The project pinned to this session. `⚠` marks an archived one. |
 | `📬 2` | Two other agents have something unread. |
 | `⌛3 ▶1 🤖2 ↩1` | Work counters, see "The work queue". Absent when the session is idle. |
+| `↪ steer` or `⏸ queue` | During a turn: what Enter does with a message you type now. `steer` hands it into the running turn, `queue` lets it wait for its own. Ctrl+T switches, see "Sending and keys". |
 | `●` | Green: connected. Red: not connected. During a turn a spinner with `thinking` or `streaming` takes its place. |
 
 The status line is always one row. When the window is too narrow for
