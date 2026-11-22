@@ -104,6 +104,13 @@ export function openStream(
       // bad query, etc). Surface it once and stop reconnecting; the user
       // can switch to a valid target. 5xx + transport errors keep the
       // backoff loop because those are typically transient.
+      if (res.status === 401 || res.status === 403) {
+        // The key, not the agent or session (Codex review 2026-11-22):
+        // "switch with /agent" sent people looking in the wrong place.
+        onNotice(`stream-connect ${res.status}: the server refused the key — on another machine set SOMORA_KEY to what \`somora key\` prints on the server, then start the client again`, 'error');
+        resolveDone();
+        return;
+      }
       if (res.status >= 400 && res.status < 500) {
         onNotice(`stream-connect ${res.status}: ${body} — giving up; switch with /agent or /session`, 'error');
         resolveDone();
@@ -277,6 +284,7 @@ export function openStream(
         return {
           kind: 'user-message',
           text: data.text,
+          ...(typeof data.ts === 'number' ? { ts: data.ts } : {}),
           // turnId is the server-issued id echoed back so a consumer
           // that buffered a pending-queued entry can pair it now and
           // promote the entry into a real Static-flushed user turn.

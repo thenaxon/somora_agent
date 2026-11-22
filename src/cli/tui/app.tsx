@@ -18,6 +18,7 @@ import { nextId, summarize } from './format.ts';
 import { rememberAgent } from './state.ts';
 import { formatWorkCounters } from './work-queue.ts';
 import { explodeTurn, itemsAboveView } from './layout.ts';
+import { endsMidTurn, lastUserTs, missedEvents } from './resync.ts';
 import { loopbackFetch } from '../../server/loopback-fetch.ts';
 import { BANNER_COMPACT, BANNER_MOTTO, BANNER_TAGLINE, BANNER_TAGLINE_SHORT, BANNER_WIDE, bannerShape, isUtf8Locale } from '../banner.ts';
 import type {
@@ -143,7 +144,7 @@ export function App({
     apiRef.current
       .fetchSessionModel(a, s)
       .then((info) => {
-        if (!info) return;
+        if (!info || !isCurrent(a, s)) return;
         setNextModel({ label: info.alias ?? info.modelId, modelId: info.modelId });
         // Stats restored from the history carry no window; the session's
         // model has it when it is the one that answered last.
@@ -196,6 +197,45 @@ export function App({
   // the input; promoted to a real Turn (appendTurn) when the
   // server's user_message SSE event fires with the matching turnId.
   const [pendingQueued, setPendingQueued] = useState<PendingQueuedTurn[]>([]);
+  // The same list, current at once: SSE handlers decide on it in the
+  // same tick (2026-11-22, Codex review). Reading a flag set inside a
+  // state updater was always stale; every change goes through
+  // updatePendingQueued so both stay equal.
+  const pendingQueuedRef = useRef<PendingQueuedTurn[]>([]);
+  // Resync after a (re)connect (resync.ts): the newest user message
+  // shown, whether the opened history ended inside a turn, whether a
+  // reply was streaming, and a counter of live events that changed the
+  // chat — a resync answer older than the newest of those is dropped.
+  const lastUserTsRef = useRef<number | null>(null);
+  const openedMidTurnRef = useRef(false);
+  const streamingRef = useRef(false);
+  const liveSeqRef = useRef(0);
+  // What the stream showed while a resync read the history: user
+  // messages (by timestamp) and turn ends, each with its liveSeq.
+  const liveLogRef = useRef<Array<{ seq: number; kind: 'user' | 'end'; ts?: number }>>([]);
+  // The history read last ended inside a turn that is still running.
+  const unfinishedTurnRef = useRef(false);
+  // Echoes of a self-typed message whose POST had not returned yet:
+  // shown at once, and the queued row goes when the POST names the id.
+  const earlyEchoRef = useRef(new Set<string>());
+  // Question events seen on the stream; a question snapshot fetched
+  // before the newest of them is stale.
+  const questionSeqRef = useRef(0);
+  streamingRef.current = streaming;
+  // The (agent, session) on screen now. An answer to a request made for
+  // another one is dropped (Codex review 2026-11-22): a slow model,
+  // project or work lookup from the session just left must not dress the
+  // new one in its values.
+  const currentKeyRef = useRef('');
+  currentKeyRef.current = `${agent}\u0000${session}`;
+  const isCurrent = (a: string, s: string): boolean => currentKeyRef.current === `${a}\u0000${s}`;
+  const updatePendingQueued = (next: PendingQueuedTurn[] | ((prev: PendingQueuedTurn[]) => PendingQueuedTurn[])): void => {
+    const value = typeof next === 'function' ? next(pendingQueuedRef.current) : next;
+    pendingQueuedRef.current = value;
+    setPendingQueued(value);
+  };
+  // turn_dequeued that arrived before our POST returned its turnId.
+  const earlyDequeuedRef = useRef(new Set<string>());
   // turn_queued SSE events that arrived before the matching POST
   // /chat/send response returned the turnId. Keyed by turnId; drained
   // by handleSubmit once the id is known.
@@ -213,7 +253,7 @@ export function App({
       .fetchWork(forAgent, forSession)
       .then((w) => {
         // A later fetch (or a session switch) wins over a slow earlier one.
-        if (seq === workFetchSeq.current) setWork(w);
+        if (seq === workFetchSeq.current && isCurrent(forAgent, forSession)) setWork(w);
       })
       .catch(() => {
         /* server unreachable — keep the previous counters */
@@ -370,22 +410,34 @@ export function App({
   useEffect(() => {
     let cancelled = false;
     // Seed via /sessions global list. Cheap (one request) + gives us
-    // every agent's state at once.
-    void (async () => {
+    // every agent's state at once. Again after every reconnect of the
+    // activity stream: a turn finished or a session read elsewhere while
+    // it was down sends no event afterwards (Codex review 2026-11-22).
+    // Each mark keeps the later of the two values, so a live event that
+    // beat the snapshot is not undone by it.
+    const seed = async (): Promise<void> => {
       try {
         const res = await loopbackFetch(`${base}/sessions`);
         if (!res.ok) return;
         const data = (await res.json()) as { sessions: Array<{ agent: string; sessionId: string; unreadAt?: string | null; seenAt?: string | null }> };
         if (cancelled) return;
-        const seeded: typeof unreadMarks = {};
-        for (const s of data.sessions) {
-          seeded[`${s.agent}::${s.sessionId}`] = { unreadAt: s.unreadAt ?? null, seenAt: s.seenAt ?? null };
-        }
-        setUnreadMarks((prev) => ({ ...seeded, ...prev }));
+        const later = (x: string | null, y: string | null): string | null => (x && y ? (x > y ? x : y) : x ?? y);
+        setUnreadMarks((prev) => {
+          const next = { ...prev };
+          for (const s of data.sessions) {
+            const k = `${s.agent}::${s.sessionId}`;
+            const p = prev[k];
+            next[k] = {
+              unreadAt: later(s.unreadAt ?? null, p?.unreadAt ?? null),
+              seenAt: later(s.seenAt ?? null, p?.seenAt ?? null),
+            };
+          }
+          return next;
+        });
       } catch {
         /* server unreachable — events will populate as they arrive */
       }
-    })();
+    };
     const h = openActivityStream(apiRef.current.activityStreamUrl(), (ev) => {
       if (cancelled) return;
       const k = `${ev.agent}::${ev.session}`;
@@ -412,7 +464,7 @@ export function App({
         }));
         return;
       }
-    });
+    }, () => void seed());
     return () => {
       cancelled = true;
       h.close();
@@ -465,7 +517,11 @@ export function App({
     setNextModel(null);
     refreshNextModel(agent, session);
     setOpenQuestion(null);
-    setPendingQueued([]);
+    updatePendingQueued([]);
+    earlyDequeuedRef.current.clear();
+    earlyEchoRef.current.clear();
+    liveLogRef.current = [];
+    unfinishedTurnRef.current = false;
     pendingQueuedBufferRef.current.clear();
     setWork(null);
     refreshWork(agent, session);
@@ -480,6 +536,8 @@ export function App({
       try {
         const { events } = await apiRef.current.fetchHistory(agent, session);
         if (cancelled) return;
+        lastUserTsRef.current = lastUserTs(events);
+        openedMidTurnRef.current = endsMidTurn(events);
         const replayed = mapHistoryToTurns(events).flatMap((t) => explodeTurn(t, nextId, termColsRef.current || 80));
         if (replayed.length > 0) {
           // Older turns go straight to the scrollback; the frame lays out
@@ -528,13 +586,75 @@ export function App({
         },
       );
       const stream = handle;
+      let connectedBefore = false;
       (async () => {
         for await (const ev of stream.events) {
           if (cancelled) break;
           applyEvent(ev);
           if (ev.kind === 'connected') {
+            // The first connect closes the gap between the history read
+            // above and the subscription; a later one the time without a
+            // stream. A reply streaming when the stream dropped is what
+            // may have ended meanwhile.
+            const midTurn = connectedBefore ? streamingRef.current || unfinishedTurnRef.current : openedMidTurnRef.current;
+            connectedBefore = true;
+            const seq = liveSeqRef.current;
+            const anchorAtStart = lastUserTsRef.current;
+            void apiRef.current.fetchHistory(agent, session).then(({ events }) => {
+              if (cancelled) return;
+              const missed = missedEvents(events, anchorAtStart, midTurn);
+              // What the stream delivered while this was read is on screen
+              // already: cut the snapshot before the first user message the
+              // stream showed, and drop the running turn's end when the
+              // stream showed that end.
+              const shownLive = liveLogRef.current.filter((e) => e.seq > seq);
+              const firstLiveUser = Math.min(...shownLive.filter((e) => e.kind === 'user' && e.ts !== undefined).map((e) => e.ts!));
+              const liveEnd = shownLive.some((e) => e.kind === 'end');
+              const stop = missed.events.findIndex((ev) => ev.kind === 'user_message' && typeof ev.ts === 'number' && ev.ts >= firstLiveUser);
+              let replay = stop >= 0 ? missed.events.slice(0, stop) : missed.events;
+              if (liveEnd && midTurn) {
+                const firstUser = replay.findIndex((ev) => ev.kind === 'user_message');
+                replay = firstUser >= 0 ? replay.slice(firstUser) : [];
+              }
+              if (replay.length > 0) {
+                const anchor = lastUserTs(replay);
+                if (anchor !== null && (lastUserTsRef.current === null || anchor > lastUserTsRef.current)) lastUserTsRef.current = anchor;
+                for (const t of mapHistoryToTurns(replay)) appendTurn(t);
+                // A message this client queued may have started while the
+                // stream was away: its row goes, the history has it now.
+                const started = new Set(replay.filter((ev) => ev.kind === 'user_message' && !ev.from_agent && typeof ev.text === 'string').map((ev) => ev.text as string));
+                if (started.size > 0) updatePendingQueued((prev) => prev.filter((p) => !started.has(p.text)));
+              }
+              if (missed.skippedTools > 0 && !(liveEnd && midTurn)) {
+                appendTurn({ kind: 'system', id: nextId(), text: `${missed.skippedTools} tool call${missed.skippedTools === 1 ? '' : 's'} of that turn ${missed.skippedTools === 1 ? 'is' : 'are'} not repeated here; /export has ${missed.skippedTools === 1 ? 'it' : 'them'}`, tone: 'info' });
+              }
+              if (missed.turnEnded && !liveEnd) {
+                restoreLastTurnStats(events);
+                setStreamingText('');
+                setStreamingThinking('');
+                setStreaming(false);
+                setBusy(false);
+              }
+              // A turn that is still running per the history: shown as
+              // running, and remembered for the next reconnect.
+              unfinishedTurnRef.current = endsMidTurn(events) && !liveEnd;
+              if (unfinishedTurnRef.current && !streamingRef.current) {
+                streamingRef.current = true;
+                setStreaming(true);
+              }
+              openedMidTurnRef.current = false;
+              liveLogRef.current = liveLogRef.current.filter((e) => e.seq > liveSeqRef.current - 50);
+              refreshWork(agent, session);
+            }).catch(() => {});
+            // The open question: dropped when a question event arrived
+            // while it was being read; one found only here is shown with
+            // its options, or a number would answer a question nobody saw.
+            const qSeq = questionSeqRef.current;
             void apiRef.current.fetchSessionQuestion(agent, session).then((q) => {
-              if (!cancelled) setOpenQuestion(q);
+              if (cancelled || questionSeqRef.current !== qSeq) return;
+              const shown = openQuestionRef.current;
+              if (q && shown?.id !== q.id) appendTurn({ kind: 'system', id: nextId(), text: questionNotice(agent, q), tone: 'warn' });
+              setOpenQuestion(q);
             }).catch(() => {});
           }
         }
@@ -564,11 +684,10 @@ export function App({
    */
   function mapHistoryToTurns(events: import('./api.ts').HistoryEvent[]): Turn[] {
     const out: Turn[] = [];
-    let id = 0;
-    const nid = () => {
-      id += 1;
-      return `replay-${id}`;
-    };
+    // Ids from the client-wide counter: rows replayed after a reconnect
+    // join rows of the first replay, and two with one id would share a
+    // React key and a measurement slot (Codex review 2026-11-22).
+    const nid = nextId;
     // History events come from JSONL with raw `mcp__<server>__<tool>`
     // tool names; the SSE serializer strips this prefix on the live
     // path. Replay needs the same shortening so the TUI doesn't show
@@ -807,6 +926,12 @@ export function App({
         }
         return;
       case 'chat-delta':
+        // Opened (or reconnected) in the middle of a turn: there was no
+        // agent-start, but a reply is streaming and Esc must stop it.
+        if (!streamingRef.current) {
+          streamingRef.current = true;
+          setStreaming(true);
+        }
         setStreamingText(ev.text);
         return;
       case 'chat-final':
@@ -822,6 +947,9 @@ export function App({
         setStreamingThinking(ev.text);
         return;
       case 'agent-end': {
+        liveSeqRef.current += 1;
+        liveLogRef.current.push({ seq: liveSeqRef.current, kind: 'end' });
+        unfinishedTurnRef.current = false;
         // Snapshot + clear the thinking buffer synchronously so the
         // updater below (which runs later, during render) sees the
         // turn's value, not the next turn's.
@@ -864,7 +992,7 @@ export function App({
         // feature-flag probe resolves.
         if (projectsEnabledRef.current) {
           apiRef.current.fetchSessionProject(agent, session).then((info) => {
-            setProject(info.project);
+            if (isCurrent(agent, session)) setProject(info.project);
           }).catch(() => {
             /* leave previous state */
           });
@@ -950,6 +1078,11 @@ export function App({
         return;
       }
       case 'user-message': {
+        liveSeqRef.current += 1;
+        liveLogRef.current.push({ seq: liveSeqRef.current, kind: 'user', ...(ev.ts !== undefined ? { ts: ev.ts } : {}) });
+        if (ev.ts !== undefined && (lastUserTsRef.current === null || ev.ts > lastUserTsRef.current)) {
+          lastUserTsRef.current = ev.ts;
+        }
         // A2A inbound: another agent wrote into the session we're
         // watching. Render as a user-turn tagged with the sender so
         // it's visually distinct from our own typed turns.
@@ -974,19 +1107,24 @@ export function App({
           // this turnId is moot — prune it (this also drops buffered
           // entries for OTHER clients' queued turns, which nothing
           // else would ever drain).
-          if (ev.turnId) {
-            pendingQueuedBufferRef.current.delete(ev.turnId);
-            let promoted = false;
-            setPendingQueued((prev) => {
-              const idx = prev.findIndex((p) => p.turnId === ev.turnId);
-              if (idx < 0) return prev;
-              promoted = true;
-              return prev.slice(0, idx).concat(prev.slice(idx + 1));
-            });
-            if (promoted) {
-              appendTurn({ kind: 'user', id: nextId(), text: ev.text });
-              return;
-            }
+          // Matched by turnId, or by text while our POST has not
+          // returned its turnId yet: the echo can beat the response
+          // when the running turn ends just as we send.
+          if (ev.turnId) pendingQueuedBufferRef.current.delete(ev.turnId);
+          const queued = pendingQueuedRef.current;
+          const qi = queued.findIndex((p) => ev.turnId !== undefined && p.turnId === ev.turnId);
+          if (qi >= 0) {
+            updatePendingQueued(queued.filter((_, i) => i !== qi));
+            appendTurn({ kind: 'user', id: nextId(), text: ev.text });
+            return;
+          }
+          // Our POST may still be out: the echo of a message with the
+          // same text could be ours or another client's. Show it now;
+          // when the POST returns this id, our queued row goes.
+          if (ev.turnId !== undefined && queued.some((p) => p.turnId === undefined && p.text === ev.text)) {
+            earlyEchoRef.current.add(ev.turnId);
+            appendTurn({ kind: 'user', id: nextId(), text: ev.text });
+            return;
           }
           // Case 1 — drop optimistic-already-rendered self-echo.
           const pending = pendingSelfSendsRef.current;
@@ -1019,17 +1157,18 @@ export function App({
         // event landed in the buffer (entries for other clients'
         // turns then piled up forever). The ref mutation in here is
         // idempotent, so a double-invoked updater is harmless.
-        setPendingQueued((prev) => {
+        {
+          const prev = pendingQueuedRef.current;
           const idx = prev.findIndex((p) => p.turnId === ev.turnId);
           const existing = idx >= 0 ? prev[idx] : undefined;
           if (!existing) {
             pendingQueuedBufferRef.current.set(ev.turnId, ev.ahead);
-            return prev;
+          } else {
+            const next = prev.slice();
+            next[idx] = { ...existing, queued: { ahead: ev.ahead } };
+            updatePendingQueued(next);
           }
-          const next = prev.slice();
-          next[idx] = { ...existing, queued: { ahead: ev.ahead } };
-          return next;
-        });
+        }
         refreshWork(agent, session);
         return;
       }
@@ -1039,16 +1178,23 @@ export function App({
         // if it was ours — would otherwise sit there forever, since
         // no user_message ever promotes it.
         pendingQueuedBufferRef.current.delete(ev.turnId);
-        setPendingQueued((prev) => prev.filter((p) => p.turnId !== ev.turnId));
+        if (pendingQueuedRef.current.some((p) => p.turnId === ev.turnId)) {
+          updatePendingQueued((prev) => prev.filter((p) => p.turnId !== ev.turnId));
+        } else {
+          // Our POST may not have returned this turnId yet.
+          earlyDequeuedRef.current.add(ev.turnId);
+        }
         refreshWork(agent, session);
         return;
       }
       case 'question':
+        questionSeqRef.current += 1;
         setOpenQuestion(ev.question);
         appendTurn({ kind: 'system', id: nextId(), text: questionNotice(agent, ev.question), tone: 'warn' });
         return;
       case 'question-answered':
       {
+        questionSeqRef.current += 1;
         // The event handler lives across renders (the stream loop), so
         // the open question is read from its ref, not from state.
         const q = openQuestionRef.current;
@@ -1070,9 +1216,9 @@ export function App({
         // Refetch unconditionally here too so the chip reflects the
         // latest server state including the project's frontmatter.
         apiRef.current.fetchSessionProject(agent, session).then((info) => {
-          setProject(info.project);
+          if (isCurrent(agent, session)) setProject(info.project);
         }).catch(() => {
-          setProject(null);
+          if (isCurrent(agent, session)) setProject(null);
         });
         return;
       }
@@ -1224,7 +1370,11 @@ export function App({
           verboseThinking,
           featureFlags: { projects: projectsEnabled },
         });
+        // The user may have switched while the command ran: what belongs
+        // to the session it ran in is not applied to the one on screen.
+        const stale = currentKeyRef.current !== `${agent}\u0000${session}`;
         for (const a of actions) {
+          if (stale && (a.kind === 'restoreInput' || a.kind === 'projectFocusRefresh' || a.kind === 'clearStats' || a.kind === 'clearQuestion')) continue;
           if (a.kind === 'notice') {
             appendTurn({ kind: 'system', id: nextId(), text: a.text, tone: a.tone });
           } else if (a.kind === 'exit') {
@@ -1267,7 +1417,7 @@ export function App({
             // turn_dequeued does the latter too; doing it here keeps
             // the row from flashing until the event lands.
             pendingQueuedBufferRef.current.delete(a.turnId);
-            setPendingQueued((prev) => prev.filter((p) => p.turnId !== a.turnId));
+            updatePendingQueued((prev) => prev.filter((p) => p.turnId !== a.turnId));
             setInput(a.text);
             setHistoryIndex(null);
           } else if (a.kind === 'workRefresh') {
@@ -1303,7 +1453,7 @@ export function App({
     const queuedPath = busy || streaming;
     const localId = nextId();
     if (queuedPath) {
-      setPendingQueued((prev) => [
+      updatePendingQueued((prev) => [
         ...prev,
         { localId, text: trimmed, ts: Date.now() },
       ]);
@@ -1320,7 +1470,11 @@ export function App({
         // same render as the turnId tag.
         const bufferedAhead = pendingQueuedBufferRef.current.get(turnId);
         if (bufferedAhead !== undefined) pendingQueuedBufferRef.current.delete(turnId);
-        setPendingQueued((prev) =>
+        if (earlyDequeuedRef.current.delete(turnId) || earlyEchoRef.current.delete(turnId)) {
+          updatePendingQueued((prev) => prev.filter((p) => p.localId !== localId));
+          return;
+        }
+        updatePendingQueued((prev) =>
           prev.map((p) =>
             p.localId === localId
               ? {
@@ -1336,7 +1490,7 @@ export function App({
       if (queuedPath) {
         // Remove the pending-queued entry so the user doesn't see
         // a permanently-stuck "queued" row.
-        setPendingQueued((prev) => prev.filter((p) => p.localId !== localId));
+        updatePendingQueued((prev) => prev.filter((p) => p.localId !== localId));
       } else {
         // Drop the pending dedupe entry so a future identical
         // text echoes normally.

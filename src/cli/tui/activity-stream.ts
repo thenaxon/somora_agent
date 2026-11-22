@@ -23,6 +23,9 @@ const RECONNECT_MAX_MS = 10_000;
 export function openActivityStream(
   url: string,
   onEvent: (e: ActivityEvent) => void,
+  /** Each time a connection is up, the first one included: what was
+   *  missed while there was none has to be read again. */
+  onConnect?: () => void,
 ): ActivityHandle {
   let abort: AbortController | null = null;
   let reconnectMs = RECONNECT_INITIAL_MS;
@@ -46,6 +49,8 @@ export function openActivityStream(
       schedule();
       return;
     }
+    reconnectMs = RECONNECT_INITIAL_MS;
+    onConnect?.();
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';

@@ -409,6 +409,8 @@ export type StreamEvent =
       // normal user turns.
       kind: 'user-message';
       text: string;
+      /** When the message was stored — the anchor for resync.ts. */
+      ts?: number;
       turnId?: string;
       fromAgent?: string;
       fromSession?: string;

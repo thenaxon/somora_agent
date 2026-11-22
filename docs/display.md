@@ -422,9 +422,17 @@ the client and has no work route. Update the server.
 
 **`stream closed by server` or `stream error` notices.** The live
 connection dropped. The client reconnects by itself, first after half a
-second, then with growing pauses up to ten seconds. A notice ending in
-`giving up` means the agent or session no longer exists: switch with
-`/agent` or `/session`.
+second, then with growing pauses up to ten seconds.
+
+After it is back it reads the session again. A reply that finished
+meanwhile appears in full, turns that started meanwhile follow, and a
+line says how many tool calls ran unseen. An open question shows again
+with its options.
+
+A notice ending in `giving up` means the agent or session no longer
+exists: switch with `/agent` or `/session`. A notice that the server
+refused the key means `SOMORA_KEY` is missing or wrong, see "Where the
+client connects".
 
 **No lettering in an empty session.** The terminal is narrower than 22
 columns, the locale is not UTF-8, or the lettering was already shown in
