@@ -4,7 +4,7 @@
 // except Ctrl+L, which stays the terminal's.
 //
 // Typing narrows the list by a loose match: the letters in order, not
-// necessarily next to each other ("lmn" finds "loki:main-notes"), words
+// necessarily next to each other ("amn" finds "ada:main-notes"), words
 // that start with them ranked first. Up and Down move, Enter picks, Esc
 // closes. It sits where the slash command list sits, takes as many rows,
 // and has the keys while it is open.
