@@ -24,8 +24,8 @@ now signed-in tab.
 ## Set it up
 
 `somora setup browser` does the steps below for you: it looks for
-Chromium or Chrome, offers to install it, starts it once to check it,
-and switches the browser on. It also asks about "Headed mode" below and
+Chromium or Chrome, offers to install it where one command does it,
+starts it once to check it, and switches the browser on. It also asks about "Headed mode" below and
 installs Xvfb when that needs it. By hand:
 
 1. Install Chromium or Chrome on the somora host, for example

@@ -257,7 +257,7 @@ the koala in the top-left corner to find it. It is off by default and remembered
 | **⚠** block | The turn ended in an error. |
 | Question row | A question the agent asked you, with its options. Hidden only while its card is open. |
 | `◌ history compacted …` divider | The history was compacted: before a turn, by hand, or by the engine itself. When somora compacted, the line says by how much. |
-| Link to a file | A file path in a reply. Tap it to read the file, see "Files in chat" below. |
+| Link to a file | A link in a reply to a file on the server. Tap it to read the file, see "Files in chat" below. |
 | Media line | The reply produced a picture or video. The phone shows a line naming it. Open the web client to see it. |
 | `Image from <host>` with **Show** and **Always show** | A picture from another website, held back until you allow it. See [Security](security.md#pictures-from-other-websites). |
 
@@ -266,8 +266,8 @@ The thinking row only exists when the server captures reasoning.
 
 ### Files in chat
 
-A file path in a reply is a link. Tapping it opens the file over the
-whole screen: Markdown rendered like a reply, text and code in
+A link in a reply to a file on the server, such as
+`[notes](/home/ada/notes.md)`, opens the file over the whole screen: Markdown rendered like a reply, text and code in
 monospace, pictures, video, audio and PDFs shown, anything else named
 with its size. The header has the file name and a download button.
 

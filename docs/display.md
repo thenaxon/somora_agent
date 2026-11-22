@@ -74,8 +74,8 @@ into the scrollback, and those rows can appear there twice.
 The status line is always one row. When the window is too narrow for
 all of it, the least important parts are left out first: the somora
 name, the wiki review, the display switches, the thinking depth, the project, the token
-counts. Agent and session, the work counters and the connection dot stay
-longest. A session's date prefix is left out: `ada:notes` instead of
+counts. Agent and session, the connection dot, the steer or queue mark
+and the work counters stay longest. A session's date prefix is left out: `ada:notes` instead of
 `ada:20261122-133050_notes`.
 
 When you open a session, the status line shows the last turn's model
@@ -135,7 +135,7 @@ locale is not UTF-8.
 | Enter | Sends the message or runs the slash command. |
 | Alt+Enter, Ctrl+J | Starts a new line. So does Shift+Enter on terminals that report it, and Enter after a `\` at the end of a line. |
 | Tab, Shift+Tab | Fills in the highlighted slash command. Further presses step through the same list, forwards or backwards. |
-| Up, Down | Inside a message of several lines: moves between its lines. On its first or last line, or in a one-line message: steps through what you sent before, up to 100 entries. Your unsent draft comes back at the end. |
+| Up, Down | Inside a message of several lines: moves between its lines. On its first or last line, or in a one-line message: steps through what you sent before, up to 500 entries. Your unsent draft comes back at the end. |
 | Ctrl+R | Searches what you sent before, newest first. Typing narrows the search, Ctrl+R again finds an older match, Enter puts the match into the input without sending it, Esc gives your draft back. |
 | Left, Right | Moves by one character; with Ctrl or Alt by one word. An emoji counts as one character. |
 | Home, End, Ctrl+A, Ctrl+E | Jumps to the start or end of the line. |
@@ -483,8 +483,8 @@ second, then with growing pauses up to ten seconds.
 
 After it is back it reads the session again. A reply that finished
 meanwhile appears in full, turns that started meanwhile follow, and a
-line says how many tool calls ran unseen. An open question shows again
-with its options.
+line says how many tool calls of that turn are not repeated. `/export`
+has them. An open question shows again with its options.
 
 A notice ending in `giving up` means the agent or session no longer
 exists: switch with `/agent` or `/session`. A notice that the server

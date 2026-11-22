@@ -656,8 +656,8 @@ brings it back. Nothing is ever deleted here. To free space, remove files from
 
 ## Files
 
-A file path in a reply is a link. Clicking it opens the file in a
-window. Nothing is refused for its type: what cannot be shown is
+A link in a reply to a file on the server, such as
+`[notes](/home/ada/notes.md)`, opens the file in a window. Nothing is refused for its type: what cannot be shown is
 described.
 
 | The file is | You get |
